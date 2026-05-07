@@ -22,6 +22,38 @@ The codebase is annotated with "decompilation" comments referencing `QBW32.EXE` 
 
 ---
 
+## What's New in v2.0.0 *(May 2026)*
+
+A major release rolling up Phase 9–11 plus a community walkthrough that closed several UI gaps.
+
+**Analytics & AI**
+- New analytics dashboard at `#/analytics` — KPI cards, 4 charts (12-month revenue line, expenses doughnut, A/R+A/P stacked bar, 90-day cash forecast), period selector (MTD/QTD/YTD), CSV/PDF export with branded headers (SlowBooks Pro 2026 wordmark + your company logo)
+- **AI Insights** one-shot brief (3 observations / 3 risks / 3 recommendations) on demand
+- **AI Predefined Analyses** — 11-action curated dropdown across 5 categories, replacing the earlier free-form chat (more reliable across providers)
+- **7 AI providers** supported: xAI Grok, Groq, Cloudflare Workers AI, Cloudflare Worker Gateway (self-hosted), Anthropic Claude, OpenAI, Google Gemini — bring-your-own-key, encrypted at rest with Fernet
+- **Settings → AI Insights** centralizes provider/model/key config with a curated model dropdown + Custom escape hatch
+
+**Phase 11 — Inventory, Drill-Down, Duplicate Detection, Saved Reports**
+- Real perpetual-inventory ledger with weighted-average cost, COGS journal entries, manual adjustments, reorder points
+- Items form exposes the full inventory toolset; Adjust modal handles add/remove/set-to-count with cost re-weighting
+- P&L and Balance Sheet rows are now click-through — drill into source transactions with running balance and source-doc links
+- Fuzzy duplicate detection on customer/vendor names with confirm-and-create-anyway
+- Saved Reports — name and one-click rerun favorite report configs
+
+**Auth, security, ops**
+- Single-user setup wizard collects operator name + email + company name + email + password (Phase 9.7)
+- argon2id password hashing, slowapi rate limiting (5 logins/minute), session cookie auth
+- External security audit pass: SSRF guards on Cloudflare account ID + Worker URL, CSV formula injection protection, schema-validated AI config payloads, constant-time secret compare in the Worker
+- Dark mode now actually works on every report subtotal row (missing `--gray-50` definition fixed)
+
+**Performance**
+- Analytics dashboard: 10 SQL queries, ~26 ms engine on 3000 invoices + 1500 bills
+- 119 pytest tests, runs in under 10 seconds, zero network deps
+
+See the [v2.0.0 release notes on GitHub](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases/tag/v2.0.0) for the full changelog.
+
+---
+
 ## Features
 
 ### Invoicing & Payments (Accounts Receivable)
@@ -135,7 +167,7 @@ An optional LLM layer sits on top of the analytics snapshot and produces a compa
 
 | Provider | Wire format | Default model | Free tier |
 |---|---|---|---|
-| **xAI Grok** | OpenAI-compat | `grok-4.1-fast` | $25 signup credit |
+| **xAI Grok** | OpenAI-compat | `grok-4-fast` | $25 signup credit |
 | **Groq (LPU Cloud)** | OpenAI-compat | `llama-3.3-70b-versatile` | Generous free tier, no card |
 | **Cloudflare Workers AI** | OpenAI-compat | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | 10k neurons/day, no card |
 | **Cloudflare Worker Gateway** (self-hosted) | OpenAI-compat | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | Same 10k neurons/day — **your keys stay in *your* Cloudflare account** |
@@ -143,7 +175,11 @@ An optional LLM layer sits on top of the analytics snapshot and produces a compa
 | **OpenAI** | `/v1/chat/completions` | `gpt-5.4-mini` | Paid only |
 | **Google Gemini** | `generateContent` | `gemini-2.5-flash` | Free Flash tier via AI Studio |
 
-Each provider's model string is user-editable from the **⚙ AI** button in the analytics header, so renames ("gemini-2.5-flash" → "gemini-3.0-nano" or whatever the vendors ship next quarter) are a UI change, not a code change. Cloudflare gets an extra field for your account ID since its endpoint is account-scoped. The dedicated **Cloudflare Worker Gateway** provider adds a second field for your Worker URL — see the self-hosted gateway section below.
+Each provider's model string is configurable from **Settings → AI Insights** — a curated dropdown per provider with a **Custom…** escape hatch for new model IDs the vendors ship between releases. So renames ("gemini-2.5-flash" → "gemini-3.0-nano") are a Custom-field entry, not a code change. Cloudflare gets an extra field for your account ID since its endpoint is account-scoped. The dedicated **Cloudflare Worker Gateway** provider adds a second field for your Worker URL — see the self-hosted gateway section below.
+
+![AI Insights provider configuration](screenshots/ai-insights-settings.png)
+
+> **Verified providers as of v2.0.0:** Only **Groq** has been validated end-to-end against a live key (both the AI Insights button and the predefined-analysis dropdown). The other six providers' wire formats are implemented and unit-tested but have not been exercised against live credentials. **Accepting working PRs that confirm or fix any provider's config** — open an issue or PR with provider name, working model ID, and any quirks discovered (e.g., headers, payload shape, error mapping).
 
 **Settings encryption.** API keys are stored in the `settings` table under `ai_api_key`, encrypted with **Fernet** (AES-128-CBC + HMAC-SHA256) via `app/services/crypto.py`. Ciphertext rows carry the prefix `fernet:v1:` so legacy plaintext rows are detected and migrated gracefully. The master key is resolved in priority order:
 
@@ -186,49 +222,35 @@ For installations where you don't want **any** AI credentials stored inside Slow
 
 **What it does *not* protect against:** a compromised Slowbooks install still has the shared secret, so it can still invoke *your* Worker — rotate the secret if you suspect compromise; abnormal Worker traffic shows up in the Cloudflare dashboard immediately.
 
-#### AI Q&A Assistant — Tool Calling (Phase 9.5b)
+#### AI Predefined Analyses
 
-Beyond the static insights brief, the analytics page has a **chat assistant** powered by LLM function/tool calling. Users ask arbitrary questions about their books and the LLM autonomously calls read-only query tools to answer them:
+Beyond the headline insights brief, the analytics page exposes a **curated dropdown of 11 predefined analyses** spanning the full ledger surface. Each action pre-fetches its data server-side via the existing `app/services/ai_tools.py` helpers and sends a focused **one-shot** prompt to the LLM (no tool calling, no multi-turn). This avoids the brittle "model emits legacy `<function=...>` syntax" path that some Llama-on-Groq combos still hit, so it works reliably across every provider.
 
-> *"How much did I spend at Jack in the Box in 2025?"*
-> *"What are my unpaid invoices from ABC Corp?"*
-> *"Show me my top 5 customers by revenue"*
-> *"What were my HSA-tagged payments in 2024?"*
+![Analytics with AI predefined analysis output](screenshots/analytics-dashboard.png)
 
-The chat panel sits directly under the AI Insights card and supports multi-turn conversations with visible tool-call history (click "Used N tools" to expand and see which queries the LLM made).
+**Categories and actions** (registered in `app/services/ai_actions.py`):
 
-**16 read-only tools** are registered in `app/services/ai_tools.py`:
+| Category | Action | Tool used |
+|---|---|---|
+| **Customers & Sales** | Top customers by revenue | `get_sales_by_customer` |
+| | Unpaid invoices summary | `search_invoices` |
+| | A/R aging | `get_aging_report` |
+| **Vendors & Bills** | Expenses by category | `get_expenses_by_category` |
+| | Unpaid bills summary | `search_bills` |
+| | A/P aging | `get_aging_report` |
+| **Banking & Cash** | Cash position by account | `list_accounts` + `get_account_balance` |
+| | Recent payment activity | `search_payments` |
+| **Financial Reports** | P&L analysis | `get_pl_summary` |
+| | Balance sheet analysis | `get_balance_sheet` |
+| **Tax** | Sales tax position | `get_tax_summary` |
 
-| Tool | Purpose |
-|---|---|
-| `search_bills` | Filter bills by vendor name, date range, status |
-| `search_invoices` | Filter invoices by customer name, date range, status |
-| `search_transactions` | Search journal entries by memo/reference |
-| `list_vendors` | List vendors (with name filter) |
-| `list_customers` | List customers (with name filter) |
-| `list_accounts` | List chart of accounts (with type filter) |
-| `get_account_balance` | Get current balance of a specific account |
-| `get_pl_summary` | Current P&L (income, expense, net) |
-| `get_balance_sheet` | Current balance sheet (assets, liabilities, equity) |
-| `get_tax_summary` | Sales tax collected + expenses by category |
-| `get_sales_by_customer` | Total revenue grouped by customer |
-| `get_expenses_by_category` | Total expenses grouped by account |
-| `get_aging_report` | A/R and A/P aging by bucket (current/30/60/90) |
-| `get_current_date` | Server date for "today" / relative-date queries |
-| `search_payments` | Customer payments by customer/date |
-| `search_bill_payments` | Vendor bill payments by vendor/date |
+The page-level period selector (MTD / QTD / YTD) flows through to date-bounded actions automatically; "as of today" actions ignore it. Adding a new action is a single `ActionSpec` registration — point it at one of the existing tool functions and define a one-line framing prompt.
 
-Every tool is **strictly read-only**: it builds `db.query()` calls that cannot insert, update, or delete. The tool loop runs up to 8 iterations per question — if the LLM hasn't produced a final answer after 8 tool calls, it returns "Max tool calls reached" rather than looping forever.
+**Endpoints:**
+- `GET  /api/analytics/ai-actions` — list catalogue grouped by category
+- `POST /api/analytics/ai-actions/{key}?period=…` — run one analysis; returns `{action_key, label, category, analysis, data, provider, model, period}`
 
-**Wire formats:** `call_with_tools()` in `app/services/ai_service.py` supports all three tool-calling formats used by the 7 providers:
-- **OpenAI-compat** (Grok, Groq, Cloudflare, OpenAI): `choices[0].message.tool_calls`
-- **Anthropic** (`/v1/messages`): `content[].type=tool_use`
-- **Gemini** (`generateContent`): `candidates[0].content.parts[].functionCall`
-
-**Endpoint:**
-- `POST /api/analytics/ai-query?question=...` — ask a question; returns `{provider, model, final_response, tool_calls, call_count, success}`
-
-Results are not cached (each question may be distinct). If you ask the same question twice you'll run the loop twice.
+The 16 underlying read-only tool functions in `ai_tools.py` are still available (and unit-tested) for any future code path that wants tool calling. The **`POST /api/analytics/ai-query`** endpoint that drove the legacy chat panel is retained as a power-user API but is no longer wired into the UI.
 
 **Test coverage:** 119 pytest tests cover AI security, analytics, auth flow, CORS, CSV safety, attachments, IIF import, invoice posting/editing, reporting, rate limiting, inventory posting (COGS, weighted-avg cost, voids), drill-down queries, duplicate detection, and saved reports — all running in under 10 seconds with zero network dependencies.
 
@@ -274,6 +296,9 @@ curl http://localhost:3001/api/analytics/export.pdf > snapshot.pdf
 - **IIF Import/Export** — Full QuickBooks 2003 Pro interoperability (see below)
 
 ### Inventory, Drill-Down & Duplicate Detection (Phase 11)
+
+![Inventory tracking on the item form](screenshots/inventory-tracking.png)
+
 - **Real inventory tracking** — Items can be marked `track_inventory=True` to hit a perpetual-inventory ledger. Every purchase (bill) and sale (invoice) writes a row to `inventory_movements` and updates `quantity_on_hand` + weighted-average `avg_cost`
 - **Automatic COGS journal entries** — Selling an inventory item posts `DR COGS / CR Inventory Asset` at the current weighted-avg cost. Voids reverse the entry
 - **Weighted-average cost** — Standard perpetual-inventory model: `new_avg = (old_qty × old_avg + received_qty × received_cost) / (old_qty + received_qty)`
@@ -281,7 +306,9 @@ curl http://localhost:3001/api/analytics/export.pdf > snapshot.pdf
 - **Inventory valuation** — `GET /api/items/valuation` sums `qty × avg_cost` across all tracked items
 - **Manual adjustments** — `POST /api/items/{id}/adjust` for count corrections, shrinkage, spoilage with an offsetting JE to #5900 (Inventory Adjustments) or COGS
 - **Drill-down reporting** — `GET /api/reports/account-transactions?account_id=X` returns every journal entry hitting an account in the date range, with source-doc links (`/#/invoices/42`, `/#/bills/17`, etc.) so the SPA can jump from a P&L row to the underlying transaction
-- **Fuzzy duplicate detection** — Customer/vendor creation warns with 409 on similar names (difflib similarity ≥ 0.85 after normalizing case, punctuation, and business suffixes like "Inc", "LLC", "Corp"). Pass `?force=true` to override, or use `GET /api/customers/check-duplicate?name=...` for a pre-submit preview
+- **Fuzzy duplicate detection** — Customer/vendor creation warns with 409 on similar names (difflib similarity ≥ 0.85 after normalizing case, punctuation, and business suffixes like "Inc", "LLC", "Corp"). The form shows a confirm-and-create-anyway dialog with the matched names + similarity %; pass `?force=true` to override programmatically, or use `GET /api/customers/check-duplicate?name=...` for a pre-submit preview
+
+![Duplicate detection warning](screenshots/duplicate-detection.png)
 - **Saved reports** — Full CRUD on named `(report_type, parameters)` tuples at `/api/saved-reports`. Lets users one-click rerun their favorite P&L, Balance Sheet, or account drill-down without re-entering dates
 
 ### Security & Authentication (Phase 9.7)
@@ -806,8 +833,23 @@ You can use, modify, and run Slowbooks Pro for any personal, educational, or int
 ## Contributors
 
 - [VonHoltenCodes](https://github.com/VonHoltenCodes) — Creator
-- [PNWImport](https://github.com/PNWImport) — Security hardening (auth, CORS, path traversal, atomic writes, non-root Docker, rate limiting), analytics engine, AI insights with 7-provider support, Cloudflare Worker gateway
+- [PNWImport](https://github.com/PNWImport) — Security hardening (auth, CORS, path traversal, atomic writes, non-root Docker, rate limiting), analytics engine, AI insights with 7-provider support, Cloudflare Worker gateway, Phase 11 inventory ledger, drill-down reports, fuzzy duplicate detection, saved reports
 - [jake-378](https://github.com/jake-378) — Backup UI fixes, report period selectors, invoice terms autofill, date validation fixes
 - [WC3D](https://github.com/WC3D) — Jinja2 XSS security fix
+
+### v2.0.0 walkthrough patches
+
+The v2.0.0 release pass surfaced several UI gaps where Phase 11 backend was complete but the frontend wasn't wired up. Closed during a live walkthrough with [Claude Code](https://claude.ai/code):
+- Setup wizard collects operator name + email + company info (was password-only)
+- AI provider config moved from a modal to a Settings sub-page with curated model dropdown + Custom escape hatch
+- Free-form chat panel replaced with 11 predefined AI analyses (more reliable across providers, especially Groq)
+- Items form gained the full Phase 11 inventory toolset (track checkbox, qty, reorder point, asset account, Adjust modal)
+- Customers/Vendors gained the duplicate-warning confirm dialog
+- Reports gained the Saved Reports list + Save button
+- P&L and Balance Sheet rows are now click-through to source transactions
+- PDF/CSV exports gained branded headers (SlowBooks Pro 2026 wordmark + company logo)
+- Several dark-mode CSS fixes (`--text-main` typo, missing `--gray-50` definition)
+
+**Looking for help validating the other 6 AI providers** — only Groq has been confirmed end-to-end against a live key. PRs welcome that confirm or fix xAI Grok, Cloudflare Workers AI, Anthropic Claude, OpenAI, or Google Gemini configs.
 
 *Built by [VonHoltenCodes](https://github.com/VonHoltenCodes) with [Claude Code](https://claude.ai/code) as co-author.*

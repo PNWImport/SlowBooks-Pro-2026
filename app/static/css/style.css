@@ -1420,7 +1420,7 @@ tr.clickable { cursor: pointer; }
 .ai-insights-body h3,
 .ai-insights-body h4 {
     margin: 10px 0 4px;
-    color: var(--text-heading, var(--text-main, #1a1a28));
+    color: var(--text-heading, var(--text-primary));
     font-size: 12px;
     font-weight: 700;
     text-transform: uppercase;
@@ -1475,6 +1475,90 @@ tr.clickable { cursor: pointer; }
     font-weight: 600;
 }
 
+/* AI Predefined Analyses panel — same visual family as .ai-insights-card */
+.ai-actions-card {}
+
+.ai-actions-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.ai-actions-form {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.ai-actions-form select {
+    flex: 1;
+    min-width: 220px;
+    padding: 6px 10px;
+    font-size: 13px;
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    background: var(--panel-bg);
+    color: var(--text-primary);
+}
+
+.ai-actions-form select:focus {
+    outline: 2px solid #a855f7;
+    outline-offset: -1px;
+}
+
+.ai-actions-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.ai-actions-meta strong {
+    color: var(--text-primary);
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 12px;
+}
+
+.ai-actions-body {
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.6;
+}
+
+.ai-actions-body h3,
+.ai-actions-body h4 {
+    margin: 10px 0 4px;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.ai-actions-body ul {
+    margin: 4px 0 8px 18px;
+    padding: 0;
+}
+
+.ai-actions-body li { margin: 2px 0; }
+.ai-actions-body p { margin: 4px 0; }
+
+.ai-actions-empty,
+.ai-actions-busy {
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 8px 0;
+}
+
 .ai-settings-form .form-field {
     display: flex;
     flex-direction: column;
@@ -1496,7 +1580,7 @@ tr.clickable { cursor: pointer; }
     border: 1px solid var(--panel-border);
     border-radius: 4px;
     background: var(--panel-bg);
-    color: var(--text-main, #1a1a28);
+    color: var(--text-primary);
 }
 
 .ai-settings-form input:focus,
@@ -1729,7 +1813,7 @@ tr.clickable { cursor: pointer; }
     border: 1px solid var(--panel-border);
     border-radius: 4px;
     background: var(--panel-bg);
-    color: var(--text-main, #1a1a28);
+    color: var(--text-primary);
 }
 
 .ai-chat-form input:focus {
