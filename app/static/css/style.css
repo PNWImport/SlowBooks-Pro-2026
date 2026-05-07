@@ -148,6 +148,23 @@ body {
     background: rgba(0,0,0,0.05);
 }
 
+/* Theme toggle — moon (light mode) and sun (dark mode) get a colored glow
+   so the click target is obvious instead of disappearing into the toolbar. */
+#theme-toggle {
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 12px;
+    color: #4a6fa8;                                  /* cool blue moon */
+    text-shadow: 0 0 6px rgba(74, 111, 168, 0.45);
+    transition: color 0.15s, text-shadow 0.15s;
+}
+#theme-toggle:hover {
+    color: #2e4d80;
+    text-shadow: 0 0 10px rgba(74, 111, 168, 0.7);
+    background: rgba(74, 111, 168, 0.08);
+    border-color: #b0c0d8;
+}
+
 .topbar-right {
     margin-left: auto;
     display: flex;

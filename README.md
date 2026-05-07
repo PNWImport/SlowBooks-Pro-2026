@@ -6,7 +6,7 @@ Free and open source. Runs on Windows, macOS, and Linux. No Intuit activation se
 
 **Get started:** `docker compose up` — see **[INSTALL.md](INSTALL.md)** for all install options.
 
-![Slowbooks Pro 2026 — Splash Screen](screenshots/splash.png)
+![Slowbooks Pro 2026 — Company Snapshot](screenshots/dashboard-light.png)
 
 ---
 
