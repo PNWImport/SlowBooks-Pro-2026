@@ -4,8 +4,8 @@ extraction across all 3 wire formats, and tool execution against seeded data.
 Network is fully mocked (httpx.Client replaced with a scripted fake) so the
 tests stay offline and deterministic.
 """
+
 import json
-from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,7 +18,6 @@ from app.services.ai_service import (
     AIProviderError,
 )
 
-
 # ---------------------------------------------------------------------------
 # Wire-format extraction — unit tests
 # ---------------------------------------------------------------------------
@@ -27,20 +26,22 @@ from app.services.ai_service import (
 def test_extract_openai_tool_calls():
     """OpenAI format: choices[0].message.tool_calls — arguments are JSON strings."""
     body = {
-        "choices": [{
-            "message": {
-                "tool_calls": [
-                    {
-                        "id": "c_1",
-                        "type": "function",
-                        "function": {
-                            "name": "list_customers",
-                            "arguments": '{"limit": 5, "search": "Acme"}',
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "id": "c_1",
+                            "type": "function",
+                            "function": {
+                                "name": "list_customers",
+                                "arguments": '{"limit": 5, "search": "Acme"}',
+                            },
                         },
-                    },
-                ],
-            },
-        }],
+                    ],
+                },
+            }
+        ],
     }
     calls = _extract_tool_calls("openai", body)
     assert len(calls) == 1
@@ -70,13 +71,20 @@ def test_extract_anthropic_tool_use_blocks():
 def test_extract_gemini_function_call():
     """Gemini format: candidates[0].content.parts[].functionCall"""
     body = {
-        "candidates": [{
-            "content": {
-                "parts": [
-                    {"functionCall": {"name": "list_vendors", "args": {"limit": 3}}},
-                ],
-            },
-        }],
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "functionCall": {
+                                "name": "list_vendors",
+                                "args": {"limit": 3},
+                            }
+                        },
+                    ],
+                },
+            }
+        ],
     }
     calls = _extract_tool_calls("gemini", body)
     assert len(calls) == 1
@@ -104,16 +112,19 @@ def test_extract_unknown_wire_format_returns_empty():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("url", [
-    "http://127.0.0.1/v1/chat",         # plain http + loopback
-    "https://127.0.0.1/",               # loopback
-    "https://10.0.0.5/",                # RFC1918
-    "https://192.168.1.5/",             # RFC1918
-    "https://169.254.169.254/latest",   # AWS metadata
-    "https://localhost/",               # localhost
-    "https://user:pass@evil.com/",      # embedded creds
-    "https://example.com/" + "x" * 3000,  # > 2048 chars
-])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1/v1/chat",  # plain http + loopback
+        "https://127.0.0.1/",  # loopback
+        "https://10.0.0.5/",  # RFC1918
+        "https://192.168.1.5/",  # RFC1918
+        "https://169.254.169.254/latest",  # AWS metadata
+        "https://localhost/",  # localhost
+        "https://user:pass@evil.com/",  # embedded creds
+        "https://example.com/" + "x" * 3000,  # > 2048 chars
+    ],
+)
 def test_validate_worker_url_rejects_dangerous_urls(url):
     with pytest.raises(ValueError):
         validate_worker_url(url)
@@ -157,23 +168,31 @@ _FAKE_TOOLS = {
 def test_call_with_tools_openai_roundtrip_with_one_tool_call():
     """OpenAI path: 1st response asks for a tool, 2nd response gives final text."""
     responses = [
-        _mock_response({
-            "choices": [{
-                "message": {
-                    "tool_calls": [{
-                        "id": "t1",
-                        "type": "function",
-                        "function": {
-                            "name": "list_customers",
-                            "arguments": '{"limit": 2}',
+        _mock_response(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "t1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "list_customers",
+                                        "arguments": '{"limit": 2}',
+                                    },
+                                }
+                            ],
                         },
-                    }],
-                },
-            }],
-        }),
-        _mock_response({
-            "choices": [{"message": {"content": "You have 2 customers."}}],
-        }),
+                    }
+                ],
+            }
+        ),
+        _mock_response(
+            {
+                "choices": [{"message": {"content": "You have 2 customers."}}],
+            }
+        ),
     ]
     client = _fake_client(responses)
 
@@ -199,16 +218,24 @@ def test_call_with_tools_openai_roundtrip_with_one_tool_call():
 def test_call_with_tools_anthropic_roundtrip():
     """Anthropic path: same structure, different wire format."""
     responses = [
-        _mock_response({
-            "content": [
-                {"type": "tool_use", "name": "list_customers", "input": {"limit": 3}},
-            ],
-            "stop_reason": "tool_use",
-        }),
-        _mock_response({
-            "content": [{"type": "text", "text": "Found 3."}],
-            "stop_reason": "end_turn",
-        }),
+        _mock_response(
+            {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "list_customers",
+                        "input": {"limit": 3},
+                    },
+                ],
+                "stop_reason": "tool_use",
+            }
+        ),
+        _mock_response(
+            {
+                "content": [{"type": "text", "text": "Found 3."}],
+                "stop_reason": "end_turn",
+            }
+        ),
     ]
     client = _fake_client(responses)
     tool_executor = MagicMock(return_value={"count": 3})
@@ -231,18 +258,33 @@ def test_call_with_tools_anthropic_roundtrip():
 def test_call_with_tools_gemini_roundtrip():
     """Gemini path: functionCall in parts → functionResponse in history."""
     responses = [
-        _mock_response({
-            "candidates": [{
-                "content": {"parts": [
-                    {"functionCall": {"name": "list_customers", "args": {"limit": 1}}},
-                ]},
-            }],
-        }),
-        _mock_response({
-            "candidates": [{
-                "content": {"parts": [{"text": "One customer named A."}]},
-            }],
-        }),
+        _mock_response(
+            {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "functionCall": {
+                                        "name": "list_customers",
+                                        "args": {"limit": 1},
+                                    }
+                                },
+                            ]
+                        },
+                    }
+                ],
+            }
+        ),
+        _mock_response(
+            {
+                "candidates": [
+                    {
+                        "content": {"parts": [{"text": "One customer named A."}]},
+                    }
+                ],
+            }
+        ),
     ]
     client = _fake_client(responses)
     tool_executor = MagicMock(return_value={"count": 1})
@@ -264,16 +306,26 @@ def test_call_with_tools_gemini_roundtrip():
 def test_call_with_tools_max_iterations_stops_loop():
     """If the LLM keeps asking for tools, the loop bails at max_calls."""
     # Every response asks for the same tool forever
-    stuck_response = _mock_response({
-        "choices": [{
-            "message": {
-                "tool_calls": [{
-                    "id": "t", "type": "function",
-                    "function": {"name": "list_customers", "arguments": "{}"},
-                }],
-            },
-        }],
-    })
+    stuck_response = _mock_response(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "t",
+                                "type": "function",
+                                "function": {
+                                    "name": "list_customers",
+                                    "arguments": "{}",
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+    )
     responses = [stuck_response] * 10  # more than max_calls
     client = _fake_client(responses)
     tool_executor = MagicMock(return_value={"count": 0})
@@ -313,12 +365,14 @@ def test_call_with_tools_propagates_http_error():
 def test_call_with_tools_api_key_not_leaked_in_errors():
     """When the provider echoes our key in an error body, the redactor hides it."""
     secret = "sk-DO-NOT-LEAK-12345"
-    client = _fake_client([
-        _mock_response(
-            {"error": f"auth failed for {secret}"},
-            status=401,
-        ),
-    ])
+    client = _fake_client(
+        [
+            _mock_response(
+                {"error": f"auth failed for {secret}"},
+                status=401,
+            ),
+        ]
+    )
     tool_executor = MagicMock()
 
     with pytest.raises(AIProviderError) as exc_info:
@@ -342,6 +396,7 @@ def test_call_with_tools_api_key_not_leaked_in_errors():
 
 def test_list_customers_tool_returns_seeded_customer(db_session, seed_customer):
     from app.services.ai_tools import list_customers
+
     result = list_customers(db_session)
     assert result["count"] >= 1
     names = [c["name"] for c in result["results"]]
@@ -350,6 +405,7 @@ def test_list_customers_tool_returns_seeded_customer(db_session, seed_customer):
 
 def test_list_customers_respects_name_filter(db_session, seed_customer):
     from app.services.ai_tools import list_customers
+
     hit = list_customers(db_session, name_filter="Test")
     assert hit["count"] >= 1
     miss = list_customers(db_session, name_filter="zzzzzunique")
@@ -358,6 +414,7 @@ def test_list_customers_respects_name_filter(db_session, seed_customer):
 
 def test_get_current_date_tool_returns_iso_today(db_session):
     from app.services.ai_tools import get_current_date
+
     result = get_current_date(db_session)
     # Returned as "current_date" plus a full timestamp
     assert "current_date" in result
@@ -366,12 +423,14 @@ def test_get_current_date_tool_returns_iso_today(db_session):
 
 def test_call_tool_dispatches_to_registered_function(db_session, seed_customer):
     from app.services.ai_tools import call_tool
+
     result = call_tool("list_customers", db_session)
     assert "count" in result
 
 
 def test_call_tool_rejects_unknown_tool(db_session):
     from app.services.ai_tools import call_tool
+
     result = call_tool("format_hard_drive", db_session)
     assert "error" in result
 
@@ -400,32 +459,43 @@ def test_ai_config_get_returns_provider_list(client):
     assert "providers" in body
     # Should list all 7 providers
     provider_keys = {p["key"] for p in body["providers"]}
-    assert {"openai", "anthropic", "gemini", "grok", "groq", "cloudflare"}.issubset(provider_keys)
+    assert {"openai", "anthropic", "gemini", "grok", "groq", "cloudflare"}.issubset(
+        provider_keys
+    )
 
 
 def test_ai_config_rejects_bad_cloudflare_account_id(client):
-    r = client.put("/api/analytics/ai-config", json={
-        "provider": "cloudflare",
-        "cloudflare_account_id": "GGGG-not-hex",
-    })
+    r = client.put(
+        "/api/analytics/ai-config",
+        json={
+            "provider": "cloudflare",
+            "cloudflare_account_id": "GGGG-not-hex",
+        },
+    )
     assert r.status_code == 400
 
 
 def test_ai_config_rejects_ssrf_worker_url(client):
-    r = client.put("/api/analytics/ai-config", json={
-        "provider": "cloudflare_worker",
-        "worker_url": "https://169.254.169.254/latest/meta-data/",
-    })
+    r = client.put(
+        "/api/analytics/ai-config",
+        json={
+            "provider": "cloudflare_worker",
+            "worker_url": "https://169.254.169.254/latest/meta-data/",
+        },
+    )
     assert r.status_code == 400
 
 
 def test_ai_config_never_returns_raw_api_key(client, db_session):
     """The GET response must carry has_api_key as a bool, never the key itself."""
     # Minimal put with a key
-    client.put("/api/analytics/ai-config", json={
-        "provider": "openai",
-        "api_key": "sk-very-secret-12345",
-    })
+    client.put(
+        "/api/analytics/ai-config",
+        json={
+            "provider": "openai",
+            "api_key": "sk-very-secret-12345",
+        },
+    )
     r = client.get("/api/analytics/ai-config")
     assert r.status_code == 200
     body = r.json()

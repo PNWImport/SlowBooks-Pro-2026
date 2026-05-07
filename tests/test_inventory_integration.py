@@ -12,17 +12,11 @@ Regression tests for the 10 integration gaps found by the spiderweb audit:
   9. reverse_sale at historical cost (not current avg_cost)
   10. Saved reports size cap
 """
-from datetime import date
+
 from decimal import Decimal
 
 from app.models.items import Item, ItemType, InventoryMovement, MovementType
-from app.models.contacts import Vendor, Customer
-from app.models.invoices import Invoice
-from app.models.estimates import Estimate, EstimateLine
-from app.models.recurring import RecurringInvoice, RecurringInvoiceLine
-from app.models.purchase_orders import PurchaseOrder, PurchaseOrderLine
-from app.models.credit_memos import CreditMemo
-
+from app.models.contacts import Vendor
 
 # -------- Helpers --------
 
@@ -51,36 +45,48 @@ def _tracked_item(db_session, seed_accounts, name="Widget", rate="25.00"):
 
 
 def _seed_stock(client, vendor_id, item_id, qty, unit_cost, bill_number="B-SEED"):
-    r = client.post("/api/bills", json={
-        "vendor_id": vendor_id,
-        "bill_number": bill_number,
-        "date": "2026-04-01",
-        "terms": "Net 30",
-        "tax_rate": "0",
-        "lines": [{
-            "item_id": item_id,
-            "description": "Stock seed",
-            "quantity": str(qty),
-            "rate": str(unit_cost),
-        }],
-    })
+    r = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": vendor_id,
+            "bill_number": bill_number,
+            "date": "2026-04-01",
+            "terms": "Net 30",
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": item_id,
+                    "description": "Stock seed",
+                    "quantity": str(qty),
+                    "rate": str(unit_cost),
+                }
+            ],
+        },
+    )
     assert r.status_code == 201, r.text
     return r.json()
 
 
-def _create_invoice(client, customer_id, item_id, qty, unit_rate="25.00", date_="2026-04-15"):
-    r = client.post("/api/invoices", json={
-        "customer_id": customer_id,
-        "date": date_,
-        "terms": "Net 30",
-        "tax_rate": "0",
-        "lines": [{
-            "item_id": item_id,
-            "description": "Sold",
-            "quantity": str(qty),
-            "rate": str(unit_rate),
-        }],
-    })
+def _create_invoice(
+    client, customer_id, item_id, qty, unit_rate="25.00", date_="2026-04-15"
+):
+    r = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": customer_id,
+            "date": date_,
+            "terms": "Net 30",
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": item_id,
+                    "description": "Sold",
+                    "quantity": str(qty),
+                    "rate": str(unit_rate),
+                }
+            ],
+        },
+    )
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -103,15 +109,20 @@ def test_invoice_edit_increases_qty_posts_additional_sale(
 
     # Edit from qty=2 to qty=5. The delta is +3; inventory should drop
     # another 3 units.
-    r = client.put(f"/api/invoices/{inv['id']}", json={
-        "tax_rate": "0",
-        "lines": [{
-            "item_id": item.id,
-            "description": "Sold (edited)",
-            "quantity": "5",
-            "rate": "25.00",
-        }],
-    })
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": item.id,
+                    "description": "Sold (edited)",
+                    "quantity": "5",
+                    "rate": "25.00",
+                }
+            ],
+        },
+    )
     assert r.status_code == 200, r.text
 
     db_session.expire_all()
@@ -133,15 +144,20 @@ def test_invoice_edit_decreases_qty_reverses_sale(
     assert Decimal(str(item.quantity_on_hand)) == Decimal("5")
 
     # Reduce to qty=2 — should return 3 units
-    r = client.put(f"/api/invoices/{inv['id']}", json={
-        "tax_rate": "0",
-        "lines": [{
-            "item_id": item.id,
-            "description": "Sold less",
-            "quantity": "2",
-            "rate": "25.00",
-        }],
-    })
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": item.id,
+                    "description": "Sold less",
+                    "quantity": "2",
+                    "rate": "25.00",
+                }
+            ],
+        },
+    )
     assert r.status_code == 200, r.text
 
     db_session.expire_all()
@@ -184,17 +200,22 @@ def test_estimate_convert_triggers_inventory(
     _seed_stock(client, vendor.id, item.id, qty=10, unit_cost="10.00")
 
     # Create an estimate
-    r = client.post("/api/estimates", json={
-        "customer_id": seed_customer.id,
-        "date": "2026-04-15",
-        "tax_rate": "0",
-        "lines": [{
-            "item_id": item.id,
-            "description": "Pending sale",
-            "quantity": "4",
-            "rate": "25.00",
-        }],
-    })
+    r = client.post(
+        "/api/estimates",
+        json={
+            "customer_id": seed_customer.id,
+            "date": "2026-04-15",
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": item.id,
+                    "description": "Pending sale",
+                    "quantity": "4",
+                    "rate": "25.00",
+                }
+            ],
+        },
+    )
     assert r.status_code == 201, r.text
     est = r.json()
     est_id = est["id"]
@@ -241,19 +262,24 @@ def test_bill_for_inventory_item_without_asset_account_rejected(
     db_session.delete(inv_acct)
     db_session.commit()
 
-    r = client.post("/api/bills", json={
-        "vendor_id": vendor.id,
-        "bill_number": "B-BAD",
-        "date": "2026-04-01",
-        "terms": "Net 30",
-        "tax_rate": "0",
-        "lines": [{
-            "item_id": item.id,
-            "description": "Stock",
-            "quantity": "5",
-            "rate": "10.00",
-        }],
-    })
+    r = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": vendor.id,
+            "bill_number": "B-BAD",
+            "date": "2026-04-01",
+            "terms": "Net 30",
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": item.id,
+                    "description": "Stock",
+                    "quantity": "5",
+                    "rate": "10.00",
+                }
+            ],
+        },
+    )
     assert r.status_code == 400
     assert "inventory-tracked" in r.json()["detail"]
 
@@ -261,9 +287,7 @@ def test_bill_for_inventory_item_without_asset_account_rejected(
 # -------- Test 5: PO convert-to-bill posts a full JE --------
 
 
-def test_po_convert_to_bill_posts_balanced_journal(
-    client, db_session, seed_accounts
-):
+def test_po_convert_to_bill_posts_balanced_journal(client, db_session, seed_accounts):
     """Before Phase 11 audit fix, PO→Bill created a Bill with NO JE at all
     (orphan accounting record). Verify a proper balanced JE is posted."""
     from app.models.transactions import TransactionLine
@@ -272,17 +296,22 @@ def test_po_convert_to_bill_posts_balanced_journal(
     item = _tracked_item(db_session, seed_accounts, name="PO Widget")
 
     # Create a PO
-    r = client.post("/api/purchase-orders", json={
-        "vendor_id": vendor.id,
-        "date": "2026-04-01",
-        "tax_rate": "0",
-        "lines": [{
-            "item_id": item.id,
-            "description": "Stock",
-            "quantity": "5",
-            "rate": "12.00",
-        }],
-    })
+    r = client.post(
+        "/api/purchase-orders",
+        json={
+            "vendor_id": vendor.id,
+            "date": "2026-04-01",
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": item.id,
+                    "description": "Stock",
+                    "quantity": "5",
+                    "rate": "12.00",
+                }
+            ],
+        },
+    )
     assert r.status_code == 201, r.text
     po_id = r.json()["id"]
 
@@ -292,6 +321,7 @@ def test_po_convert_to_bill_posts_balanced_journal(
 
     # Verify the bill has a linked transaction
     from app.models.bills import Bill
+
     bill = db_session.query(Bill).filter_by(id=bill_id).first()
     assert bill.transaction_id is not None, "PO→Bill convert must post a journal entry"
 
@@ -366,11 +396,14 @@ def test_reverse_sale_uses_historical_cost_not_current(
 
 def test_saved_reports_rejects_oversized_parameters(client):
     big = {"huge": "x" * 70_000}  # > 64KB
-    r = client.post("/api/saved-reports", json={
-        "name": "Too Big",
-        "report_type": "profit_loss",
-        "parameters": big,
-    })
+    r = client.post(
+        "/api/saved-reports",
+        json={
+            "name": "Too Big",
+            "report_type": "profit_loss",
+            "parameters": big,
+        },
+    )
     assert r.status_code == 400
     assert "bytes" in r.json()["detail"]
 
@@ -391,17 +424,22 @@ def test_credit_memo_returns_stock_to_inventory(
     assert Decimal(str(item.quantity_on_hand)) == Decimal("6")
 
     # Issue a credit memo for 2 units (returned)
-    r = client.post("/api/credit-memos", json={
-        "customer_id": seed_customer.id,
-        "date": "2026-04-20",
-        "tax_rate": "0",
-        "lines": [{
-            "item_id": item.id,
-            "description": "Returned",
-            "quantity": "2",
-            "rate": "25.00",
-        }],
-    })
+    r = client.post(
+        "/api/credit-memos",
+        json={
+            "customer_id": seed_customer.id,
+            "date": "2026-04-20",
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": item.id,
+                    "description": "Returned",
+                    "quantity": "2",
+                    "rate": "25.00",
+                }
+            ],
+        },
+    )
     assert r.status_code == 201, r.text
 
     db_session.expire_all()

@@ -277,9 +277,7 @@ PROVIDERS: Dict[str, ProviderSpec] = {
         free_tier_hint="Paid only (no free tier)",
         # OpenAI naming changes per release — verify against
         # https://platform.openai.com/docs/models. Use Custom… for new ones.
-        model_choices=(
-            "gpt-5.4-mini",
-        ),
+        model_choices=("gpt-5.4-mini",),
     ),
     "gemini": ProviderSpec(
         key="gemini",
@@ -486,11 +484,11 @@ def _openai_style_request(
 # only one whose URL is user-supplied; that one runs through
 # validate_worker_url() and is re-validated here at call time.
 _PROVIDER_URL_PREFIXES = {
-    "grok":       "https://api.x.ai/",
-    "groq":       "https://api.groq.com/",
-    "openai":     "https://api.openai.com/",
-    "anthropic":  "https://api.anthropic.com/",
-    "gemini":     "https://generativelanguage.googleapis.com/",
+    "grok": "https://api.x.ai/",
+    "groq": "https://api.groq.com/",
+    "openai": "https://api.openai.com/",
+    "anthropic": "https://api.anthropic.com/",
+    "gemini": "https://generativelanguage.googleapis.com/",
     "cloudflare": "https://api.cloudflare.com/",
     # cloudflare_worker has no static prefix — see _check_outbound_url
 }
@@ -522,12 +520,10 @@ def _check_outbound_url(provider_key: str, url: str) -> str:
     if not prefix:
         raise AIProviderError(f"{provider_key}: unknown provider")
     if not url.startswith(prefix):
-        raise AIProviderError(
-            f"{provider_key}: outbound URL not on allowlist"
-        )
+        raise AIProviderError(f"{provider_key}: outbound URL not on allowlist")
     # Return the matched-prefix URL via concatenation so static analyzers
     # see the value as derived from a hardcoded constant + the suffix.
-    return prefix + url[len(prefix):]
+    return prefix + url[len(prefix) :]
 
 
 def build_request(

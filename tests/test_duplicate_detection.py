@@ -3,8 +3,8 @@
 Verifies the fuzzy-match heuristic catches common variations (case, punctuation,
 business suffixes) and returns a 409 with suggestions unless ?force=true.
 """
-from app.services.duplicate_detection import normalize_name, similarity, find_duplicates
 
+from app.services.duplicate_detection import normalize_name, similarity, find_duplicates
 
 # -------- unit tests on the service --------
 

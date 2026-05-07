@@ -351,7 +351,11 @@ def _ai_error_detail(exc: AIProviderError) -> str:
     instead of str(exc) so CodeQL's stack-trace-exposure analysis can see
     that the exception object itself doesn't flow into the response body.
     """
-    msg = exc.args[0] if exc.args and isinstance(exc.args[0], str) else "AI provider error"
+    msg = (
+        exc.args[0]
+        if exc.args and isinstance(exc.args[0], str)
+        else "AI provider error"
+    )
     return msg[:500]
 
 

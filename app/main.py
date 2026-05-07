@@ -14,7 +14,6 @@
 # that had our licensed copy died in 2024. We just want to print invoices.
 # ============================================================================
 
-import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -67,8 +66,10 @@ from app.routes import stripe_payments, public
 
 # Phase 8: QuickBooks Online
 from app.routes import qbo
+
 # Phase 9: Forum Bug Fixes & Missing Features
 from app.routes import journal, deposits, cc_charges, checks
+
 # Phase 10: Quick Wins + Medium Effort Features
 from app.routes import bank_rules, budgets, attachments, email_templates
 

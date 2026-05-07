@@ -8,14 +8,12 @@ Exercises the perpetual-inventory engine end-to-end:
   - Manual adjustments change qty and post an offsetting JE
   - Low-stock endpoint returns items at or below their reorder point
 """
+
 from decimal import Decimal
 
 from app.models.items import Item, ItemType, InventoryMovement, MovementType
 from app.models.contacts import Vendor
-from app.models.invoices import Invoice
-from app.models.bills import Bill
 from app.models.transactions import TransactionLine
-
 
 # -------------------------------------------------------------------------
 # Helpers
@@ -40,37 +38,49 @@ def _mk_tracked_item(db_session, accounts, name="Widget", rate="25.00"):
     return it
 
 
-def _create_bill_for_inventory(client, vendor_id, item_id, qty, unit_cost, bill_number="B-1"):
-    r = client.post("/api/bills", json={
-        "vendor_id": vendor_id,
-        "bill_number": bill_number,
-        "date": "2026-04-01",
-        "terms": "Net 30",
-        "tax_rate": "0",
-        "lines": [{
-            "item_id": item_id,
-            "description": "Stock receipt",
-            "quantity": str(qty),
-            "rate": str(unit_cost),
-        }],
-    })
+def _create_bill_for_inventory(
+    client, vendor_id, item_id, qty, unit_cost, bill_number="B-1"
+):
+    r = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": vendor_id,
+            "bill_number": bill_number,
+            "date": "2026-04-01",
+            "terms": "Net 30",
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": item_id,
+                    "description": "Stock receipt",
+                    "quantity": str(qty),
+                    "rate": str(unit_cost),
+                }
+            ],
+        },
+    )
     assert r.status_code == 201, r.text
     return r.json()
 
 
 def _create_invoice_for_inventory(client, customer_id, item_id, qty, unit_rate):
-    r = client.post("/api/invoices", json={
-        "customer_id": customer_id,
-        "date": "2026-04-15",
-        "terms": "Net 30",
-        "tax_rate": "0",
-        "lines": [{
-            "item_id": item_id,
-            "description": "Sold widget",
-            "quantity": str(qty),
-            "rate": str(unit_rate),
-        }],
-    })
+    r = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": customer_id,
+            "date": "2026-04-15",
+            "terms": "Net 30",
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": item_id,
+                    "description": "Sold widget",
+                    "quantity": str(qty),
+                    "rate": str(unit_rate),
+                }
+            ],
+        },
+    )
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -87,7 +97,9 @@ def _seed_vendor(db_session):
 # -------------------------------------------------------------------------
 
 
-def test_non_tracked_item_has_no_inventory_ledger(client, db_session, seed_accounts, seed_customer):
+def test_non_tracked_item_has_no_inventory_ledger(
+    client, db_session, seed_accounts, seed_customer
+):
     """Services and non-inventory items don't touch the inventory ledger."""
     service = Item(
         name="Consulting",
@@ -100,7 +112,9 @@ def test_non_tracked_item_has_no_inventory_ledger(client, db_session, seed_accou
     db_session.commit()
     db_session.refresh(service)
 
-    _create_invoice_for_inventory(client, seed_customer.id, service.id, qty=2, unit_rate=100)
+    _create_invoice_for_inventory(
+        client, seed_customer.id, service.id, qty=2, unit_rate=100
+    )
     assert db_session.query(InventoryMovement).count() == 0
 
 
@@ -119,7 +133,9 @@ def test_purchase_then_sale_posts_cogs_at_avg_cost(
     assert Decimal(str(item.avg_cost)) == Decimal("10")
 
     # Sell 3 units
-    _create_invoice_for_inventory(client, seed_customer.id, item.id, qty=3, unit_rate="25.00")
+    _create_invoice_for_inventory(
+        client, seed_customer.id, item.id, qty=3, unit_rate="25.00"
+    )
 
     db_session.expire_all()
     item = db_session.query(Item).filter_by(id=item.id).first()
@@ -152,8 +168,12 @@ def test_weighted_average_cost_updates_on_second_purchase(
     vendor = _seed_vendor(db_session)
     item = _mk_tracked_item(db_session, seed_accounts)
 
-    _create_bill_for_inventory(client, vendor.id, item.id, qty=10, unit_cost="10.00", bill_number="B-1")
-    _create_bill_for_inventory(client, vendor.id, item.id, qty=10, unit_cost="14.00", bill_number="B-2")
+    _create_bill_for_inventory(
+        client, vendor.id, item.id, qty=10, unit_cost="10.00", bill_number="B-1"
+    )
+    _create_bill_for_inventory(
+        client, vendor.id, item.id, qty=10, unit_cost="14.00", bill_number="B-2"
+    )
 
     db_session.expire_all()
     item = db_session.query(Item).filter_by(id=item.id).first()
@@ -170,7 +190,9 @@ def test_invoice_void_reverses_inventory(
     item = _mk_tracked_item(db_session, seed_accounts)
     _create_bill_for_inventory(client, vendor.id, item.id, qty=10, unit_cost="10.00")
 
-    inv = _create_invoice_for_inventory(client, seed_customer.id, item.id, qty=4, unit_rate="25.00")
+    inv = _create_invoice_for_inventory(
+        client, seed_customer.id, item.id, qty=4, unit_rate="25.00"
+    )
 
     db_session.expire_all()
     item = db_session.query(Item).filter_by(id=item.id).first()
@@ -184,9 +206,7 @@ def test_invoice_void_reverses_inventory(
     assert Decimal(str(item.quantity_on_hand)) == Decimal("10")
 
 
-def test_manual_adjustment_up_and_down(
-    client, db_session, seed_accounts
-):
+def test_manual_adjustment_up_and_down(client, db_session, seed_accounts):
     """POST /adjust with positive and negative deltas updates qty + writes a JE."""
     item = _mk_tracked_item(db_session, seed_accounts, name="Stock Part")
 
@@ -195,10 +215,13 @@ def test_manual_adjustment_up_and_down(
     _create_bill_for_inventory(client, vendor.id, item.id, qty=5, unit_cost="20.00")
 
     # Adjust up by 3 at default (item avg_cost)
-    r = client.post(f"/api/items/{item.id}/adjust", json={
-        "quantity_delta": "3",
-        "memo": "Stock count correction",
-    })
+    r = client.post(
+        f"/api/items/{item.id}/adjust",
+        json={
+            "quantity_delta": "3",
+            "memo": "Stock count correction",
+        },
+    )
     assert r.status_code == 200, r.text
 
     db_session.expire_all()
@@ -206,10 +229,13 @@ def test_manual_adjustment_up_and_down(
     assert Decimal(str(item.quantity_on_hand)) == Decimal("8")
 
     # Adjust down by 2
-    r = client.post(f"/api/items/{item.id}/adjust", json={
-        "quantity_delta": "-2",
-        "memo": "Shrinkage",
-    })
+    r = client.post(
+        f"/api/items/{item.id}/adjust",
+        json={
+            "quantity_delta": "-2",
+            "memo": "Shrinkage",
+        },
+    )
     assert r.status_code == 200
 
     db_session.expire_all()
@@ -217,9 +243,7 @@ def test_manual_adjustment_up_and_down(
     assert Decimal(str(item.quantity_on_hand)) == Decimal("6")
 
 
-def test_adjust_rejects_non_tracked_item(
-    client, db_session, seed_accounts
-):
+def test_adjust_rejects_non_tracked_item(client, db_session, seed_accounts):
     service = Item(
         name="Labor",
         item_type=ItemType.LABOR,
@@ -241,12 +265,30 @@ def test_low_stock_endpoint_returns_items_under_reorder(
     # Item A: reorder 10, qty 2 → shortage 8 (worst)
     # Item B: reorder 5, qty 5  → shortage 0 (tied)
     # Item C: reorder 20, qty 30 → not low, excluded
-    a = Item(name="A", item_type=ItemType.PRODUCT, rate=0, track_inventory=True,
-             reorder_point=Decimal("10"), quantity_on_hand=Decimal("2"))
-    b = Item(name="B", item_type=ItemType.PRODUCT, rate=0, track_inventory=True,
-             reorder_point=Decimal("5"), quantity_on_hand=Decimal("5"))
-    c = Item(name="C", item_type=ItemType.PRODUCT, rate=0, track_inventory=True,
-             reorder_point=Decimal("20"), quantity_on_hand=Decimal("30"))
+    a = Item(
+        name="A",
+        item_type=ItemType.PRODUCT,
+        rate=0,
+        track_inventory=True,
+        reorder_point=Decimal("10"),
+        quantity_on_hand=Decimal("2"),
+    )
+    b = Item(
+        name="B",
+        item_type=ItemType.PRODUCT,
+        rate=0,
+        track_inventory=True,
+        reorder_point=Decimal("5"),
+        quantity_on_hand=Decimal("5"),
+    )
+    c = Item(
+        name="C",
+        item_type=ItemType.PRODUCT,
+        rate=0,
+        track_inventory=True,
+        reorder_point=Decimal("20"),
+        quantity_on_hand=Decimal("30"),
+    )
     db_session.add_all([a, b, c])
     db_session.commit()
 
@@ -260,9 +302,7 @@ def test_low_stock_endpoint_returns_items_under_reorder(
     assert r.json()[0]["name"] == "A"
 
 
-def test_valuation_sums_across_tracked_items(
-    client, db_session, seed_accounts
-):
+def test_valuation_sums_across_tracked_items(client, db_session, seed_accounts):
     vendor = _seed_vendor(db_session)
     item = _mk_tracked_item(db_session, seed_accounts)
     _create_bill_for_inventory(client, vendor.id, item.id, qty=5, unit_cost="10.00")

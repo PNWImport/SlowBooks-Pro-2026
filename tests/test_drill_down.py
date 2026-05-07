@@ -4,24 +4,27 @@ Verifies /api/reports/account-transactions returns every journal line hitting
 a given account in the date range, with source-doc linkage so the SPA can
 jump from a P&L row to the invoice behind it.
 """
-from decimal import Decimal
 
 from app.models.accounts import Account
-from app.models.invoices import Invoice
 
 
 def _mk_invoice(client, customer_id, *, amount, date_="2026-04-01", tax_rate="0"):
-    r = client.post("/api/invoices", json={
-        "customer_id": customer_id,
-        "date": date_,
-        "terms": "Net 30",
-        "tax_rate": tax_rate,
-        "lines": [{
-            "description": "Test line",
-            "quantity": "1",
-            "rate": amount,
-        }],
-    })
+    r = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": customer_id,
+            "date": date_,
+            "terms": "Net 30",
+            "tax_rate": tax_rate,
+            "lines": [
+                {
+                    "description": "Test line",
+                    "quantity": "1",
+                    "rate": amount,
+                }
+            ],
+        },
+    )
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -81,7 +84,9 @@ def test_drill_down_empty_for_account_with_no_activity(
     client, db_session, seed_accounts
 ):
     """An account with no activity in the range returns an empty entries list (not 404)."""
-    acct = db_session.query(Account).filter_by(account_number="3000").first()  # Owner's Equity
+    acct = (
+        db_session.query(Account).filter_by(account_number="3000").first()
+    )  # Owner's Equity
     r = client.get(
         f"/api/reports/account-transactions"
         f"?account_id={acct.id}&start_date=2020-01-01&end_date=2020-12-31"

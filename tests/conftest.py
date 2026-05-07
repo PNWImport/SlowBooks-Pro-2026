@@ -61,7 +61,6 @@ from app.models import saved_reports as _m_saved_reports  # noqa: F401,E402
 
 from app.main import app  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Per-test in-memory engine — every test gets a clean slate
 # ---------------------------------------------------------------------------
@@ -79,7 +78,9 @@ def db_engine():
     # Point the app module at this engine so SessionLocal-based code (audit
     # hooks, etc.) also land in the same DB.
     db_module.engine = engine
-    db_module.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db_module.SessionLocal = sessionmaker(
+        autocommit=False, autoflush=False, bind=engine
+    )
     yield engine
     engine.dispose()
 
