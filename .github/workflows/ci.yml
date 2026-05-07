@@ -60,10 +60,14 @@ jobs:
       - name: System deps for WeasyPrint
         run: |
           sudo apt-get update
+          # libjpeg62-turbo was dropped from Ubuntu 24.04 (noble); Pillow
+          # ships bundled JPEG support so we don't need a system libjpeg
+          # for the runtime path. The remaining packages are what
+          # WeasyPrint's cairo/pango stack pulls in.
           sudo apt-get install -y --no-install-recommends \
             libcairo2 libpango-1.0-0 libpangocairo-1.0-0 \
-            libgdk-pixbuf-2.0-0 libffi-dev libjpeg62-turbo \
-            libpng16-16 libxml2 libxslt1.1
+            libgdk-pixbuf-2.0-0 libffi-dev \
+            libxml2 libxslt1.1
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
