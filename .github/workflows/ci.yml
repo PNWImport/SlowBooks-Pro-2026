@@ -70,7 +70,10 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
       - name: Run pytest with coverage
         env:
-          DATABASE_URL: sqlite:///:memory:
+          # Quoted because the value contains colons (sqlite:///:memory:)
+          # — unquoted, YAML mis-parses "sqlite:" as a nested mapping key
+          # and the entire workflow fails validation at startup.
+          DATABASE_URL: "sqlite:///:memory:"
           SESSION_SECRET_KEY: ci-secret-key
           RATE_LIMIT_ENABLED: "0"
         run: |
