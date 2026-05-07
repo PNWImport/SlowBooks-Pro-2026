@@ -27,20 +27,27 @@ _BACKUP_FILENAME_RE = re.compile(r"^[A-Za-z0-9_.-]+\.(sql|dump|backup)$")
 
 
 def _safe_backup_filename(filename: str) -> str | None:
-    """Return filename if it's a safe basename for a backup file, else None.
+    """Return a safe basename for a backup file, or None if invalid.
 
-    Rejects: empty, path separators, parent-dir traversal, leading dots,
-    anything that doesn't match _BACKUP_FILENAME_RE.
+    Uses os.path.basename() to strip any path components — this is a
+    sanitizer recognized by static analyzers (CodeQL py/path-injection)
+    so the returned value is treated as path-safe at downstream sinks.
+    Then enforces the strict regex / length / leading-dot rules.
     """
     if not filename or len(filename) > 255:
         return None
-    if os.sep in filename or (os.altsep and os.altsep in filename):
+    # os.path.basename strips any directory component; if the input
+    # contained separators, the result will differ from the input and we
+    # reject it (keeps "files only" semantics rather than silently
+    # accepting "evil/foo.sql" as "foo.sql").
+    base = os.path.basename(filename)
+    if base != filename:
         return None
-    if filename.startswith(".") or ".." in filename:
+    if base.startswith(".") or ".." in base:
         return None
-    if not _BACKUP_FILENAME_RE.match(filename):
+    if not _BACKUP_FILENAME_RE.match(base):
         return None
-    return filename
+    return base
 
 
 def _parse_db_url(url: str) -> dict:

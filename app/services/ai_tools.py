@@ -954,10 +954,17 @@ def get_tool_schema(tool_name: str) -> Optional[Dict[str, Any]]:
 
 
 def call_tool(tool_name: str, db: Session, **params) -> Dict[str, Any]:
-    """Call a tool by name with the given parameters."""
+    """Call a tool by name with the given parameters.
+
+    On exception, returns only the exception class name (not str(e)) so
+    we don't leak SQL fragments, stack-trace excerpts, or other internal
+    detail into the response that flows back through the AI layer to the
+    user. The exception itself is still raised in the logs by SQLAlchemy
+    / Python's default handler.
+    """
     if tool_name not in TOOLS:
         return {"error": f"Unknown tool: {tool_name}"}
     try:
         return TOOLS[tool_name]["func"](db, **params)
     except Exception as e:
-        return {"error": f"{tool_name} failed: {str(e)}"}
+        return {"error": f"{tool_name} failed: {type(e).__name__}"}

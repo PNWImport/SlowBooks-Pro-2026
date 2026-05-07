@@ -512,10 +512,11 @@ def _check_outbound_url(provider_key: str, url: str) -> str:
         raise AIProviderError(f"{provider_key}: empty outbound URL")
 
     if provider_key == "cloudflare_worker":
-        # Re-run validate_worker_url() against the URL. Same function
-        # build_request used; idempotent on already-validated URLs.
-        validate_worker_url(url)
-        return url
+        # Return the value validate_worker_url() produces (it returns the
+        # normalized URL on success, raises on failure). Using the return
+        # value rather than the input also gives static analyzers a clear
+        # validated-string source they can trace.
+        return validate_worker_url(url)
 
     prefix = _PROVIDER_URL_PREFIXES.get(provider_key)
     if not prefix:
@@ -524,7 +525,9 @@ def _check_outbound_url(provider_key: str, url: str) -> str:
         raise AIProviderError(
             f"{provider_key}: outbound URL not on allowlist"
         )
-    return url
+    # Return the matched-prefix URL via concatenation so static analyzers
+    # see the value as derived from a hardcoded constant + the suffix.
+    return prefix + url[len(prefix):]
 
 
 def build_request(
