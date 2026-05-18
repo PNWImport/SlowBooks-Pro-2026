@@ -66,6 +66,12 @@ class PayRunType(str, enum.Enum):
     BONUS = "bonus"
 
 
+class EmployeeRole(str, enum.Enum):
+    ADMIN = "admin"
+    MANAGER = "manager"
+    EMPLOYEE = "employee"
+
+
 class Employee(Base):
     __tablename__ = "employees"
 
@@ -103,6 +109,15 @@ class Employee(Base):
     hire_date = Column(Date, nullable=True)
     is_active = Column(Boolean, default=True)
     notes = Column(Text, nullable=True)
+
+    # HR / self-service (Tier 3)
+    email = Column(String(200), nullable=True)
+    role = Column(Enum(EmployeeRole), default=EmployeeRole.EMPLOYEE)
+    manager_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    # Secret used for token-based access to the self-service portal — the same
+    # pattern as the public invoice-payment page.
+    portal_token = Column(String(64), nullable=True, unique=True)
+    everify_case_number = Column(String(30), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

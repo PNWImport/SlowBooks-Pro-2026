@@ -28,6 +28,9 @@ class EmployeeCreate(BaseModel):
     work_state: Optional[str] = None
     residence_state: Optional[str] = None
     wc_class_code: Optional[str] = None
+    email: Optional[str] = None
+    role: str = "employee"
+    manager_id: Optional[int] = None
     hire_date: Optional[date] = None
     notes: Optional[str] = None
 
@@ -53,6 +56,9 @@ class EmployeeUpdate(BaseModel):
     work_state: Optional[str] = None
     residence_state: Optional[str] = None
     wc_class_code: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    manager_id: Optional[int] = None
     hire_date: Optional[date] = None
     is_active: Optional[bool] = None
     notes: Optional[str] = None
@@ -80,6 +86,9 @@ class EmployeeResponse(BaseModel):
     work_state: Optional[str] = None
     residence_state: Optional[str] = None
     wc_class_code: Optional[str] = None
+    email: Optional[str] = None
+    role: str = "employee"
+    manager_id: Optional[int] = None
     is_active: bool = True
     hire_date: Optional[date] = None
     model_config = {"from_attributes": True}

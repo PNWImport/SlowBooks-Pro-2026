@@ -37,6 +37,7 @@ from app.models import (  # noqa: F401
     email_log,
     email_templates,
     estimates,
+    hr,
     invoices,
     items,
     payments,

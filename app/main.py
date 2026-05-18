@@ -50,6 +50,8 @@ from app.routes import bank_rules, budgets, attachments, email_templates
 from app.routes import time_entries, pto, tax_forms
 # Tier 2: deductions, garnishments
 from app.routes import deductions
+# Tier 3: onboarding + employee self-service portal
+from app.routes import onboarding, portal
 
 from app.config import CORS_ALLOW_ORIGINS
 from app.database import SessionLocal
@@ -122,6 +124,9 @@ app.include_router(pto.router)
 app.include_router(tax_forms.router)
 # Tier 2: deductions, garnishments
 app.include_router(deductions.router)
+# Tier 3: onboarding + employee self-service portal
+app.include_router(onboarding.router)
+app.include_router(portal.router)
 
 # Register audit log hooks
 register_audit_hooks(SessionLocal)

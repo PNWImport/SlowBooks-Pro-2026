@@ -35,6 +35,8 @@ from app.models.pto import PTOPolicy, PTOAccrual, PTORequest
 from app.models.bank_accounts import EmployeeBankAccount
 # Tier 2: deductions and garnishments
 from app.models.deductions import DeductionType, EmployeeDeduction, GarnishmentOrder
+# Tier 3: HR onboarding
+from app.models.hr import OnboardingTask
 
 # Phase 8: QuickBooks Online
 from app.models.qbo_mapping import QBOMapping
@@ -71,6 +73,8 @@ __all__ = [
     "TimeEntry", "PTOPolicy", "PTOAccrual", "PTORequest", "EmployeeBankAccount",
     # Tier 2: deductions and garnishments
     "DeductionType", "EmployeeDeduction", "GarnishmentOrder",
+    # Tier 3: HR onboarding
+    "OnboardingTask",
     # Phase 8
     "QBOMapping",
     # Phase 10
