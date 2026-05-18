@@ -151,6 +151,7 @@ _AUTH_EXEMPT_PREFIXES = (
     "/static/",
     "/api/auth/",
     "/pay/",  # public Stripe customer-facing pay page
+    "/portal/",  # employee self-service portal — token-based auth, no session
 )
 _AUTH_EXEMPT_EXACT = {
     "/",
