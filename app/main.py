@@ -73,23 +73,23 @@ from app.routes import journal, deposits, cc_charges, checks
 # Phase 10: Quick Wins + Medium Effort Features
 from app.routes import bank_rules, budgets, attachments, email_templates
 
-# Phase 11: Inventory tracking + drill-down reports + saved reports
-from app.routes import saved_reports
-
-# Tier 1: Full payroll / HR system
-from app.routes import time_entries, pto, tax_forms
-
-# Tier 2: deductions and garnishments
-from app.routes import deductions
-
-# Tier 3: onboarding + employee self-service portal
-from app.routes import onboarding, portal
-
 # Phase 9: Analytics (real-time business intelligence)
 from app.routes import analytics
 
 # Phase 9.7: Single-user authentication
 from app.routes import auth as auth_routes
+
+# Phase 11: Inventory tracking + drill-down reports + saved reports
+from app.routes import saved_reports
+
+# Tier 1: Full payroll / HR system (onboarding, time entries, PTO)
+from app.routes import time_entries, pto, tax_forms
+
+# Tier 2: Advanced payroll (deductions and garnishments)
+from app.routes import deductions
+
+# Tier 3: HR admin + employee self-service portal
+from app.routes import onboarding, portal
 from app.services.auth import get_session_secret
 
 from app.config import CORS_ALLOW_ORIGINS
@@ -253,15 +253,15 @@ app.include_router(email_templates.router)
 # Phase 11: Saved Reports (inventory endpoints live on the items router)
 app.include_router(saved_reports.router)
 
-# Tier 1: Full payroll / HR system
+# Tier 1: Onboarding, time entries, PTO management
 app.include_router(time_entries.router)
 app.include_router(pto.router)
+
+# Tier 2: Advanced deductions, garnishments, and tax forms UI
+app.include_router(deductions.router)
 app.include_router(tax_forms.router)
 
-# Tier 2: deductions and garnishments
-app.include_router(deductions.router)
-
-# Tier 3: onboarding + employee self-service portal
+# Tier 3: Employee onboarding workflows + self-service portal
 app.include_router(onboarding.router)
 app.include_router(portal.router)
 
