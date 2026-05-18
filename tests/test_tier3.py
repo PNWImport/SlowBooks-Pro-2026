@@ -19,7 +19,6 @@ from app.models.pto import PTOPolicy, PTORequest, PTOType, PTORequestStatus, PTO
 from app.models.bank_accounts import EmployeeBankAccount, BankAccountKind, DepositType
 from app.routes.payroll import employee_ytd
 
-
 # --- Tier 3: Tax Forms -------------------------------------------------------
 
 
@@ -69,14 +68,22 @@ def test_w3_endpoint_aggregates_all_employees(client: any, db_session: Session):
     """W-3 endpoint aggregates W-2 data across all active employees."""
     # Create two employees
     emp1 = Employee(
-        first_name="Alice", last_name="A",
-        pay_type="hourly", pay_rate=Decimal("25"),
-        pay_frequency="biweekly", filing_status="single", is_active=True,
+        first_name="Alice",
+        last_name="A",
+        pay_type="hourly",
+        pay_rate=Decimal("25"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
     )
     emp2 = Employee(
-        first_name="Bob", last_name="B",
-        pay_type="hourly", pay_rate=Decimal("30"),
-        pay_frequency="biweekly", filing_status="married", is_active=True,
+        first_name="Bob",
+        last_name="B",
+        pay_type="hourly",
+        pay_rate=Decimal("30"),
+        pay_frequency="biweekly",
+        filing_status="married",
+        is_active=True,
     )
     db_session.add_all([emp1, emp2])
     db_session.commit()
@@ -97,9 +104,13 @@ def test_w3_endpoint_aggregates_all_employees(client: any, db_session: Session):
 def test_form_940_calculates_futa(client: any, db_session: Session):
     """Form 940 endpoint calculates FUTA (federal unemployment tax)."""
     emp = Employee(
-        first_name="Charlie", last_name="C",
-        pay_type="hourly", pay_rate=Decimal("20"),
-        pay_frequency="biweekly", filing_status="single", is_active=True,
+        first_name="Charlie",
+        last_name="C",
+        pay_type="hourly",
+        pay_rate=Decimal("20"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
     )
     db_session.add(emp)
     db_session.commit()
@@ -119,9 +130,13 @@ def test_form_940_calculates_futa(client: any, db_session: Session):
 def test_form_941_quarterly_aggregation(client: any, db_session: Session):
     """Form 941 endpoint aggregates pay stubs for the quarter."""
     emp = Employee(
-        first_name="Dave", last_name="D",
-        pay_type="hourly", pay_rate=Decimal("22"),
-        pay_frequency="biweekly", filing_status="single", is_active=True,
+        first_name="Dave",
+        last_name="D",
+        pay_type="hourly",
+        pay_rate=Decimal("22"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
     )
     db_session.add(emp)
     db_session.commit()
@@ -156,9 +171,13 @@ def test_form_941_invalid_quarter(client: any):
 def test_portal_token_generation(client: any, db_session: Session):
     """Employee portal token can be generated and regenerated."""
     emp = Employee(
-        first_name="Eve", last_name="E",
-        pay_type="hourly", pay_rate=Decimal("24"),
-        pay_frequency="biweekly", filing_status="single", is_active=True,
+        first_name="Eve",
+        last_name="E",
+        pay_type="hourly",
+        pay_rate=Decimal("24"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
     )
     db_session.add(emp)
     db_session.commit()
@@ -183,9 +202,13 @@ def test_portal_token_generation(client: any, db_session: Session):
 def test_portal_dashboard_requires_valid_token(client: any, db_session: Session):
     """Portal dashboard is accessible with valid token, rejects invalid."""
     emp = Employee(
-        first_name="Frank", last_name="F",
-        pay_type="hourly", pay_rate=Decimal("26"),
-        pay_frequency="biweekly", filing_status="single", is_active=True,
+        first_name="Frank",
+        last_name="F",
+        pay_type="hourly",
+        pay_rate=Decimal("26"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
     )
     db_session.add(emp)
     db_session.commit()
@@ -207,10 +230,15 @@ def test_portal_dashboard_requires_valid_token(client: any, db_session: Session)
 def test_portal_w4_update(client: any, db_session: Session):
     """Employee can update W-4 fields via portal."""
     emp = Employee(
-        first_name="Grace", last_name="G",
-        pay_type="hourly", pay_rate=Decimal("28"),
-        pay_frequency="biweekly", filing_status="single",
-        multiple_jobs=False, dependents_amount=0, is_active=True,
+        first_name="Grace",
+        last_name="G",
+        pay_type="hourly",
+        pay_rate=Decimal("28"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        multiple_jobs=False,
+        dependents_amount=0,
+        is_active=True,
     )
     db_session.add(emp)
     db_session.commit()
@@ -250,9 +278,13 @@ def test_portal_w4_update(client: any, db_session: Session):
 def test_portal_bank_account_encryption(client: any, db_session: Session):
     """Bank account data is encrypted when stored via portal."""
     emp = Employee(
-        first_name="Hank", last_name="H",
-        pay_type="hourly", pay_rate=Decimal("30"),
-        pay_frequency="biweekly", filing_status="single", is_active=True,
+        first_name="Hank",
+        last_name="H",
+        pay_type="hourly",
+        pay_rate=Decimal("30"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
     )
     db_session.add(emp)
     db_session.commit()
@@ -288,9 +320,13 @@ def test_portal_bank_account_encryption(client: any, db_session: Session):
 def test_portal_pto_request(client: any, db_session: Session, seed_accounts):
     """Employee can submit PTO requests via portal."""
     emp = Employee(
-        first_name="Ivy", last_name="I",
-        pay_type="hourly", pay_rate=Decimal("32"),
-        pay_frequency="biweekly", filing_status="single", is_active=True,
+        first_name="Ivy",
+        last_name="I",
+        pay_type="hourly",
+        pay_rate=Decimal("32"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
     )
     db_session.add(emp)
     db_session.commit()
@@ -331,11 +367,7 @@ def test_portal_pto_request(client: any, db_session: Session, seed_accounts):
     assert r.status_code in [200, 303]
 
     # Verify request was created
-    reqs = (
-        db_session.query(PTORequest)
-        .filter_by(employee_id=emp.id)
-        .all()
-    )
+    reqs = db_session.query(PTORequest).filter_by(employee_id=emp.id).all()
     assert len(reqs) == 1
     req = reqs[0]
     assert req.start_date == start
@@ -348,9 +380,13 @@ def test_portal_pto_request(client: any, db_session: Session, seed_accounts):
 def test_portal_invalid_bank_account_routing(client: any, db_session: Session):
     """Portal rejects bank accounts with invalid routing numbers."""
     emp = Employee(
-        first_name="Jack", last_name="J",
-        pay_type="hourly", pay_rate=Decimal("25"),
-        pay_frequency="biweekly", filing_status="single", is_active=True,
+        first_name="Jack",
+        last_name="J",
+        pay_type="hourly",
+        pay_rate=Decimal("25"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
     )
     db_session.add(emp)
     db_session.commit()
@@ -384,11 +420,15 @@ def test_tier3_complete_workflow(client: any, db_session: Session, seed_accounts
     """Complete Tier 3 workflow: create employee, generate forms, use portal."""
     # 1. Create employee
     emp = Employee(
-        first_name="Kelly", last_name="K",
+        first_name="Kelly",
+        last_name="K",
         ssn_last_four="9876",
-        pay_type="hourly", pay_rate=Decimal("30"),
-        pay_frequency="biweekly", filing_status="single",
-        email="kelly@test.local", is_active=True,
+        pay_type="hourly",
+        pay_rate=Decimal("30"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        email="kelly@test.local",
+        is_active=True,
     )
     db_session.add(emp)
     db_session.commit()

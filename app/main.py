@@ -109,6 +109,7 @@ def create_tables():
     """Create all tables on app startup."""
     Base.metadata.create_all(bind=engine)
 
+
 # ---- Rate limiting (Phase 9.7) ----
 # limiter is defined in app.services.rate_limit so routes can import it
 # without circular-importing the app module. Toggle via RATE_LIMIT_ENABLED

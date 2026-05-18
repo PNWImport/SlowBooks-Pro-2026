@@ -648,6 +648,7 @@ def export_nacha(
 
 # --- Tier 3: Tax Form Generation -----------------------------------------------
 
+
 @router.post("/forms/w2/{emp_id}", response_class=Response)
 def generate_w2_form(
     emp_id: int,
@@ -676,7 +677,9 @@ def generate_w2_form(
         "box_6": str(ytd["medicare"] * Decimal("1.45")),  # Medicare tax withheld
         "box_12a_code": "D",
         "box_12a_amount": "0",  # Would be 401k, HSA, etc.
-        "employee_ssn": f"XXX-XX-{emp.ssn_last_four}" if emp.ssn_last_four else "XXX-XX-XXXX",
+        "employee_ssn": (
+            f"XXX-XX-{emp.ssn_last_four}" if emp.ssn_last_four else "XXX-XX-XXXX"
+        ),
         "employee_name": f"{emp.first_name} {emp.last_name}",
         "employer_ein": config.EMPLOYER_EIN or "XX-XXXXXXX",
         "employer_name": config.COMPANY_NAME,
