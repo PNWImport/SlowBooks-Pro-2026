@@ -1,9 +1,13 @@
 """tier1 payroll — modern W-4, pay frequency, time tracking, PTO, bank accounts
 
-Revision ID: f6a7b8c9d0e1
-Revises: e5f6a7b8c9d0
+Revision ID: f7a8b9c0d1e2
+Revises: f6a7b8c9d0e1
 Create Date: 2026-05-17 12:00:00.000000
 
+The original ID `f6a7b8c9d0e1` collided with the Phase 11 inventory
+migration (Alembic picked one alphabetically). Renamed during the
+2026-05-21 repo cleanup so the chain is now linear:
+inventory (f6a7b8c9d0e1) -> tier1 (f7a8b9c0d1e2) -> tier2 -> tier3.
 """
 from typing import Sequence, Union
 
@@ -13,8 +17,8 @@ from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'f6a7b8c9d0e1'
-down_revision: Union[str, None] = 'e5f6a7b8c9d0'
+revision: str = 'f7a8b9c0d1e2'
+down_revision: Union[str, None] = 'f6a7b8c9d0e1'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

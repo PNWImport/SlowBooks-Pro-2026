@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
 """
-End-to-end test of Tier 1-3 admin UI pages.
+Manual end-to-end smoke test for the Tier 1-3 admin UI.
+
+This is NOT a unit test — it hits a running app over HTTP, so it needs
+the server up on http://127.0.0.1:8000. Lives under scripts/ on purpose
+so the pytest auto-collector (pinned to tests/) doesn't try to run it.
+
 Validates that:
-1. Pages are accessible and render
-2. API endpoints return data
-3. JavaScript files load without errors
-4. Navigation works between pages
+  1. SPA pages are reachable and render
+  2. API endpoints return data
+  3. JavaScript files load without errors
+  4. Navigation works between pages
+
+Usage:
+    uvicorn app.main:app --port 8000 &
+    python scripts/integration_test_frontend.py
 """
 
 import json

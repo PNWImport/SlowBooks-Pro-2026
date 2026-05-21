@@ -1,9 +1,13 @@
 """tier2 payroll — pre/post-tax deductions, garnishments, multi-state stubs
 
 Revision ID: a7b8c9d0e1f2
-Revises: f6a7b8c9d0e1
+Revises: f7a8b9c0d1e2
 Create Date: 2026-05-17 15:00:00.000000
 
+down_revision was originally `f6a7b8c9d0e1`, the shared ID that the
+tier1 and inventory migrations both claimed. After the cleanup that
+renamed tier1 -> f7a8b9c0d1e2, this points at the new tier1 ID so the
+chain is linear: inventory -> tier1 -> tier2 -> tier3.
 """
 from typing import Sequence, Union
 
@@ -14,7 +18,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = 'a7b8c9d0e1f2'
-down_revision: Union[str, None] = 'f6a7b8c9d0e1'
+down_revision: Union[str, None] = 'f7a8b9c0d1e2'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

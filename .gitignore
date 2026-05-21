@@ -29,3 +29,14 @@ htmlcov/
 
 # User-uploaded attachments / logos — runtime data, not source
 app/static/uploads/
+
+# pg_dump / pg_restore drop location — runtime data, not source
+backups/
+
+# OS-level cruft
+.DS_Store
+Thumbs.db
+
+# Build artifacts from pip installs done in this directory
+*.egg
+
