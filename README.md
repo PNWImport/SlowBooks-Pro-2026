@@ -367,17 +367,22 @@ curl http://localhost:3001/api/analytics/export.pdf > snapshot.pdf
 ![Duplicate detection warning](screenshots/duplicate-detection.png)
 - **Saved reports** — Full CRUD on named `(report_type, parameters)` tuples at `/api/saved-reports`. Lets users one-click rerun their favorite P&L, Balance Sheet, or account drill-down without re-entering dates
 
-### Security & Authentication (Phase 9.7)
-- **Single-user authentication** — Password-protected access with setup wizard on first run. Session-based auth with secure cookie (`strict` SameSite, 30-day TTL)
-- **Security headers** — X-Content-Type-Options, X-Frame-Options (DENY), Referrer-Policy, Permissions-Policy on all responses
-- **CORS lockdown** — No wildcard origins; defaults to localhost, configurable via `CORS_ALLOW_ORIGINS` env var
-- **Rate limiting** — Configurable via slowapi; disabled in tests, toggle via `RATE_LIMIT_ENABLED`
-- **Path traversal protection** — Backup download/restore and attachment uploads validated with `is_relative_to()`
-- **Sensitive key filtering** — Password hashes and session secrets never returned from the settings API
-- **Atomic secret writes** — Session key and encryption master key use `mkstemp` + `os.replace` to prevent race conditions
-- **Encrypted API keys** — AI provider keys encrypted at rest with Fernet (AES-128-CBC + HMAC-SHA256)
-- **Non-root Docker** — Container runs as `slowbooks` user (UID 1000), not root
-- **Pinned dependencies** — All `requirements.txt` entries have upper-bound version caps
+### Security & Authentication (Phase 9.7 + hardening pass)
+- **Single-user authentication** — Argon2id-hashed password, session cookie (`same_site=strict`, 30-day TTL, `Secure` when `FORCE_HTTPS=true`)
+- **App-level HTTPS** — `HTTPSRedirectMiddleware` + HSTS (2-year, includeSubDomains, preload) when `FORCE_HTTPS=true` (default in production)
+- **Startup fail-hard checks** — process exits in production if `PAYROLL_ENCRYPTION_SECRET` is the dev default, `DATABASE_URL` lacks `sslmode`, or `FORCE_HTTPS=false`
+- **Security headers** — `Content-Security-Policy` (frame-ancestors none, object-src none, form-action self), X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy, Permissions-Policy on all responses (routes can opt into stricter values via setdefault semantics)
+- **CORS lockdown** — explicit origin allowlist (no wildcards), localhost by default, configurable via `CORS_ALLOW_ORIGINS`
+- **Rate limiting** — slowapi; 5/min on login, 30/10 per minute on portal GET/POST; toggle via `RATE_LIMIT_ENABLED`
+- **Path traversal protection** — backup and attachment endpoints validated with `Path.is_relative_to()`
+- **Field-level encryption** — bank routing/account numbers Fernet-encrypted at rest (AES-128-CBC + HMAC, PBKDF2-SHA256 480k iterations), versioned ciphertext supports zero-downtime key rotation via `PAYROLL_ENCRYPTION_SECRET_PREV`
+- **Portal token hardening** — 192-bit `secrets.token_urlsafe(24)` with 90-day idle + 1-year hard expiry; portal pages emit `Referrer-Policy: no-referrer` and `Cache-Control: no-store`
+- **Sensitive key filtering** — password hashes and session secrets never returned from the settings API
+- **Atomic secret writes** — session key uses `mkstemp` + `os.replace()` to prevent race conditions
+- **Non-root Docker** — container runs as `slowbooks` user (UID 1000)
+- **Pinned dependencies** — all `requirements.txt` entries have upper-bound version caps
+
+See [docs/security-hardening.md](docs/security-hardening.md) for the full engineering log.
 
 ### System & Administration
 - **Dark Mode** — Toggle between QB2003 Blue theme and dark mode (Alt+D or toolbar button). Persists in localStorage
@@ -408,6 +413,22 @@ curl http://localhost:3001/api/analytics/export.pdf > snapshot.pdf
 - **Backup Script** — `scripts/backup.sh` — pg_dump with gzip compression, keeps last 30 backups
 - **Recurring Invoice Cron** — `scripts/run_recurring.py` — Standalone script for generating due recurring invoices
 - **IRS Mock Data** — `scripts/seed_irs_mock_data.py` — Seeds realistic test data from IRS Publication 583 (Henry Brown's Auto Body Shop: 8 customers, 13 vendors, 10 invoices, 5 payments, 3 estimates)
+
+---
+
+## Documentation
+
+Detailed references live under `docs/`:
+
+| Doc | Covers |
+|-----|--------|
+| [docs/payroll-hr-module.md](docs/payroll-hr-module.md) | Tier 1-3 payroll/HR module — models, routes, UI pages, pending items |
+| [docs/security-hardening.md](docs/security-hardening.md) | Production-readiness security pass — what changed, why, and how it's tested |
+| [docs/wiring-audit.md](docs/wiring-audit.md) | Frontend ↔ backend disconnect audit methodology and findings |
+| [docs/setup-qbo.md](docs/setup-qbo.md) | QuickBooks Online OAuth + sync setup |
+| [docs/setup-stripe.md](docs/setup-stripe.md) | Stripe payment processing setup |
+| [INSTALL.md](INSTALL.md) | Install / first-run / upgrade guide |
+| [SECURITY.md](SECURITY.md) | Public security policy and responsible disclosure |
 
 ---
 
