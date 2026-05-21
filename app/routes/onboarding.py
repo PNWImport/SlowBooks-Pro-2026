@@ -19,6 +19,7 @@ from app.schemas.hr import (
     OnboardingChecklistResponse,
 )
 from app.services.onboarding import seed_onboarding_tasks, checklist_summary
+from app.services.settings_service import get_all_settings
 from app.services.new_hire_report import (
     compute_new_hire_report,
     generate_new_hire_report_pdf,
@@ -157,7 +158,9 @@ def new_hire_report(emp_id: int, db: Session = Depends(get_db)):
 @router.get("/{emp_id}/new-hire-report/pdf")
 def new_hire_report_pdf(emp_id: int, db: Session = Depends(get_db)):
     try:
-        pdf = generate_new_hire_report_pdf(db, emp_id, _employer())
+        pdf = generate_new_hire_report_pdf(
+            db, emp_id, _employer(), company_settings=get_all_settings(db)
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return Response(

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Employee Portal{% endblock %} — Slowbooks Pro 2026</title>
+    <title>{% block title %}Employee Portal{% endblock %} — {{ company_name }}</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -28,8 +28,14 @@
             color: white;
             padding: 24px;
         }
+        .portal-header { display: flex; align-items: center; gap: 16px; }
+        .portal-header .portal-brand { flex: 1; }
         .portal-header h1 { font-size: 20px; margin-bottom: 4px; }
         .portal-header .subtitle { font-size: 13px; opacity: 0.85; }
+        .portal-header .company-logo {
+            max-height: 56px; max-width: 140px; background: rgba(255,255,255,0.92);
+            padding: 6px 10px; border-radius: 4px;
+        }
         .portal-nav {
             display: flex;
             flex-wrap: wrap;
@@ -154,8 +160,13 @@
 <body>
     <div class="portal-card">
         <div class="portal-header">
-            <h1>Employee Portal</h1>
-            <div class="subtitle">{{ emp.full_name }}</div>
+            <div class="portal-brand">
+                <h1>{{ company_name }}</h1>
+                <div class="subtitle">Employee Portal &middot; {{ emp.full_name }}</div>
+            </div>
+            {% if company_logo_url %}
+            <img class="company-logo" src="{{ company_logo_url }}" alt="{{ company_name }} logo">
+            {% endif %}
         </div>
         <nav class="portal-nav">
             <a href="/portal/{{ token }}"{% if active == 'dashboard' %} class="active"{% endif %}>Dashboard</a>

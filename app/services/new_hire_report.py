@@ -7,7 +7,11 @@
 from datetime import date, timedelta
 
 from app.models.payroll import Employee
-from app.services.pdf_service import _jinja_env, _safe_url_fetcher
+from app.services.pdf_service import (
+    _company_logo_data_uri,
+    _jinja_env,
+    _safe_url_fetcher,
+)
 
 # Statutory reporting window after the hire date.
 NEW_HIRE_REPORT_DEADLINE_DAYS = 20
@@ -49,11 +53,21 @@ def compute_new_hire_report(db, employee_id: int, employer: dict) -> dict:
     }
 
 
-def generate_new_hire_report_pdf(db, employee_id: int, employer: dict) -> bytes:
-    """Render the new-hire report as a filable PDF."""
+def generate_new_hire_report_pdf(
+    db, employee_id: int, employer: dict, company_settings: dict | None = None
+) -> bytes:
+    """Render the new-hire report as a filable PDF.
+
+    `company_settings` is the same shape `pdf_service` uses elsewhere; passing
+    it in lets us drop the employer's logo in the report header alongside the
+    typed company name. Falls back gracefully when no logo is configured.
+    """
     from weasyprint import HTML
 
     data = compute_new_hire_report(db, employee_id, employer)
+    logo_data_uri = _company_logo_data_uri(company_settings or {})
     template = _jinja_env.get_template("new_hire_report.html")
-    html_str = template.render(report=data, today=date.today())
+    html_str = template.render(
+        report=data, today=date.today(), company_logo_data_uri=logo_data_uri
+    )
     return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()

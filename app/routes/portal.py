@@ -14,11 +14,12 @@ from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.services.rate_limit import limiter
 from app.models.bank_accounts import BankAccountKind, DepositType, EmployeeBankAccount
 from app.models.payroll import Employee, FilingStatus
 from app.models.pto import PTOAccrual, PTOPolicy, PTORequest, PTOType
 from app.services.encryption import encrypt
+from app.services.rate_limit import limiter
+from app.services.settings_service import get_all_settings
 
 router = APIRouter(tags=["portal"])
 
@@ -78,10 +79,26 @@ _PORTAL_HEADERS = {
 }
 
 
-def _render(name: str, **ctx) -> HTMLResponse:
-    """Render a portal template to an HTMLResponse with no-referrer headers."""
+def _branding(db: Session) -> dict:
+    """Company name + logo URL for the portal template header.
+
+    The portal is what employees see when they click their pay-stub link;
+    branding it with the *employer's* name and logo (not "Slowbooks Pro")
+    is what makes it look like an HR portal instead of a generic SaaS.
+    """
+    settings = get_all_settings(db)
+    return {
+        "company_name": settings.get("company_name") or "Employer",
+        "company_logo_url": settings.get("company_logo_path") or "",
+    }
+
+
+def _render(name: str, db: Session, **ctx) -> HTMLResponse:
+    """Render a portal template with no-referrer headers and company branding."""
     template = _jinja_env.get_template(f"portal/{name}")
-    return HTMLResponse(template.render(**ctx), headers=_PORTAL_HEADERS)
+    return HTMLResponse(
+        template.render(**_branding(db), **ctx), headers=_PORTAL_HEADERS
+    )
 
 
 def _portal_redirect(url: str) -> RedirectResponse:
@@ -105,6 +122,7 @@ def portal_dashboard(request: Request, token: str, db: Session = Depends(get_db)
     emp = _get_employee(token, db)
     return _render(
         "dashboard.html",
+        db,
         token=token,
         emp=emp,
         stub_count=_processed_stub_count(emp),
@@ -122,7 +140,7 @@ def portal_paystubs(request: Request, token: str, db: Session = Depends(get_db))
         if stub.pay_run and stub.pay_run.status.value == "processed"
     ]
     stubs.sort(key=lambda s: s.pay_run.pay_date, reverse=True)
-    return _render("paystubs.html", token=token, emp=emp, stubs=stubs)
+    return _render("paystubs.html", db, token=token, emp=emp, stubs=stubs)
 
 
 @router.get("/portal/{token}/profile")
@@ -134,6 +152,7 @@ def portal_profile(
     emp = _get_employee(token, db)
     return _render(
         "profile.html",
+        db,
         token=token,
         emp=emp,
         filing_statuses=list(FilingStatus),
@@ -198,6 +217,7 @@ def portal_bank(
     )
     return _render(
         "bank.html",
+        db,
         token=token,
         emp=emp,
         accounts=accounts,
@@ -277,6 +297,7 @@ def portal_pto(
     )
     return _render(
         "pto.html",
+        db,
         token=token,
         emp=emp,
         accruals=accruals,

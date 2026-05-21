@@ -26,6 +26,9 @@
 <body>
     <div class="header">
         <div>
+            {% if company_logo_data_uri %}
+            <img src="{{ company_logo_data_uri }}" alt="" style="max-height:54px;max-width:170px;margin-bottom:8px"><br>
+            {% endif %}
             <div class="company-name">{{ report.employer.name or 'Employer' }}</div>
             <div class="company-info">
                 {% if report.employer.address %}{{ report.employer.address }}<br>{% endif %}
