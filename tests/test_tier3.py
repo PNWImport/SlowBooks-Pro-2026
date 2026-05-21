@@ -7,17 +7,14 @@ Tests the complete Tier 3 payroll/HR system:
 - Portal workflows (W-4, bank accounts, PTO requests)
 """
 
-import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
-import pytest
 from sqlalchemy.orm import Session
 
-from app.models.payroll import Employee, PayRun, PayStub
+from app.models.payroll import Employee
 from app.models.pto import PTOPolicy, PTORequest, PTOType, PTORequestStatus, PTOAccrual
-from app.models.bank_accounts import EmployeeBankAccount, BankAccountKind, DepositType
-from app.routes.payroll import employee_ytd
+from app.models.bank_accounts import EmployeeBankAccount, BankAccountKind
 from app.services.encryption import encrypt, decrypt
 
 # --- Tier 3: Tax Forms -------------------------------------------------------
@@ -440,7 +437,7 @@ def test_tier3_complete_workflow(client: any, db_session: Session, seed_accounts
     w2 = r.json()
     assert w2["employee_name"] == "Kelly K"
 
-    r = client.post(f"/api/payroll/forms/w3/2026")
+    r = client.post("/api/payroll/forms/w3/2026")
     assert r.status_code == 200
     w3 = r.json()
     assert "number_of_w2s" in w3
