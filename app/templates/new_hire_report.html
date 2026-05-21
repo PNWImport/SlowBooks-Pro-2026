@@ -47,8 +47,7 @@
         <tr><td class="label">Name</td><td>{{ report.employee_name }}</td></tr>
         <tr><td class="label">SSN (last 4)</td><td>***-**-{{ report.ssn_last_four or '____' }}</td></tr>
         <tr><td class="label">Address</td><td>
-            {{ report.address.address1 or '' }}
-            {% if report.address.address2 %}, {{ report.address.address2 }}{% endif %}<br>
+            {{ report.address.address1 or '' }}{% if report.address.address2 %}, {{ report.address.address2 }}{% endif %}<br>
             {{ report.address.city or '' }}, {{ report.address.state or '' }} {{ report.address.zip or '' }}
         </td></tr>
         <tr><td class="label">Work State</td><td>{{ report.work_state or '' }}</td></tr>
