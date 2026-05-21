@@ -421,6 +421,104 @@ def test_time_entries_feed_pay_run(client, db_session, seed_accounts):
     assert run["stubs"][0]["regular_hours"] == 16.0
 
 
+def test_time_entry_summary_endpoint_aggregates_by_employee(
+    client, db_session, seed_accounts
+):
+    """GET /api/time-entries/summary aggregates approved unpaid hours per
+    employee within a date range — feeds the pay-run form's preview."""
+    emp = _create_employee(client, pay_type="hourly", pay_rate=25)
+
+    # Two approved entries in range, one approved out of range, one draft.
+    for d in ("2026-06-02", "2026-06-04"):
+        te = client.post(
+            "/api/time-entries",
+            json={"employee_id": emp["id"], "date": d, "hours_regular": 6},
+        ).json()
+        client.post(
+            f"/api/time-entries/{te['id']}/approve", json={"approved_by": "boss"}
+        )
+
+    out_of_range = client.post(
+        "/api/time-entries",
+        json={"employee_id": emp["id"], "date": "2026-07-15", "hours_regular": 8},
+    ).json()
+    client.post(
+        f"/api/time-entries/{out_of_range['id']}/approve", json={"approved_by": "boss"}
+    )
+
+    client.post(
+        "/api/time-entries",
+        json={"employee_id": emp["id"], "date": "2026-06-03", "hours_regular": 4},
+    )  # draft, never approved
+
+    r = client.get(
+        "/api/time-entries/summary" "?period_start=2026-06-01&period_end=2026-06-14"
+    )
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["employee_id"] == emp["id"]
+    assert (
+        row["regular"] == 12.0
+    )  # 6 + 6, NOT 6+6+4 (draft excluded) or 6+6+8 (out of range)
+    assert row["entry_count"] == 2
+    assert row["total"] == 12.0
+
+
+def test_time_entries_swept_into_pay_run_arent_paid_again(
+    client, db_session, seed_accounts
+):
+    """Once approved entries are rolled into a processed pay run they get a
+    pay_run_id and the next pay-run creation skips them."""
+    emp = _create_employee(client, pay_type="hourly", pay_rate=20)
+
+    for d in ("2026-08-03", "2026-08-04"):
+        te = client.post(
+            "/api/time-entries",
+            json={"employee_id": emp["id"], "date": d, "hours_regular": 8},
+        ).json()
+        client.post(
+            f"/api/time-entries/{te['id']}/approve", json={"approved_by": "boss"}
+        )
+
+    first = client.post(
+        "/api/payroll",
+        json={
+            "period_start": "2026-08-01",
+            "period_end": "2026-08-15",
+            "pay_date": "2026-08-20",
+            "stubs": [{"employee_id": emp["id"], "use_time_entries": True}],
+        },
+    ).json()
+    assert first["stubs"][0]["gross_pay"] == 320.0  # 16h * $20
+
+    # Same period again — entries are already swept, so summary returns nothing.
+    r = client.get(
+        "/api/time-entries/summary" "?period_start=2026-08-01&period_end=2026-08-15"
+    )
+    assert r.status_code == 200
+    assert r.json() == []
+
+    second = client.post(
+        "/api/payroll",
+        json={
+            "period_start": "2026-08-01",
+            "period_end": "2026-08-15",
+            "pay_date": "2026-08-25",
+            "stubs": [{"employee_id": emp["id"], "use_time_entries": True}],
+        },
+    ).json()
+    assert second["stubs"][0]["gross_pay"] == 0.0  # no unpaid entries left
+
+
+def test_time_entry_summary_rejects_inverted_range(client):
+    r = client.get(
+        "/api/time-entries/summary" "?period_start=2026-06-30&period_end=2026-06-01"
+    )
+    assert r.status_code == 400
+
+
 # ---------------------------------------------------------------------------
 # Integration — PTO
 # ---------------------------------------------------------------------------

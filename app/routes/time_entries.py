@@ -153,3 +153,60 @@ def classify_hours(data: ClassifyRequest):
     weeks = [[Decimal(str(h)) for h in week] for week in data.weeks]
     result = classify_period(weeks, data.state)
     return {k: float(v) for k, v in result.items()}
+
+
+@router.get("/summary")
+def pay_period_summary(
+    period_start: date = Query(...),
+    period_end: date = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Hours-by-employee summary for an upcoming pay period.
+
+    Only approved entries that haven't been swept into a pay run yet
+    (pay_run_id IS NULL) are included — same filter the pay-run create
+    flow applies when `use_time_entries=true`. The SPA uses this to
+    pre-fill / preview the "Calculate Payroll" form.
+    """
+    if period_end < period_start:
+        raise HTTPException(status_code=400, detail="period_end before period_start")
+
+    rows = (
+        db.query(TimeEntry)
+        .filter(
+            TimeEntry.status == TimeEntryStatus.APPROVED,
+            TimeEntry.pay_run_id.is_(None),
+            TimeEntry.date >= period_start,
+            TimeEntry.date <= period_end,
+        )
+        .all()
+    )
+
+    by_emp: dict[int, dict] = {}
+    for te in rows:
+        bucket = by_emp.setdefault(
+            te.employee_id,
+            {
+                "employee_id": te.employee_id,
+                "employee_name": te.employee.full_name if te.employee else None,
+                "regular": Decimal("0"),
+                "overtime": Decimal("0"),
+                "doubletime": Decimal("0"),
+                "entry_count": 0,
+            },
+        )
+        bucket["regular"] += Decimal(str(te.hours_regular or 0))
+        bucket["overtime"] += Decimal(str(te.hours_overtime or 0))
+        bucket["doubletime"] += Decimal(str(te.hours_doubletime or 0))
+        bucket["entry_count"] += 1
+
+    return [
+        {
+            **b,
+            "regular": float(b["regular"]),
+            "overtime": float(b["overtime"]),
+            "doubletime": float(b["doubletime"]),
+            "total": float(b["regular"] + b["overtime"] + b["doubletime"]),
+        }
+        for b in by_emp.values()
+    ]
