@@ -364,7 +364,7 @@ const EmployeesPage = {
     async _deleteBankAccount(empId, acctId) {
         if (!confirm('Delete this bank account?')) return;
         try {
-            await API.delete(`/employees/${empId}/bank-accounts/${acctId}`);
+            await API.del(`/employees/${empId}/bank-accounts/${acctId}`);
             toast('Bank account deleted');
             EmployeesPage._loadBankAccounts(empId);
         } catch (err) {
@@ -453,7 +453,7 @@ const EmployeesPage = {
     async _deleteDocument(empId, docId) {
         if (!confirm('Delete this document?')) return;
         try {
-            await API.delete(`/employees/${empId}/documents/${docId}`);
+            await API.del(`/employees/${empId}/documents/${docId}`);
             toast('Document deleted');
             EmployeesPage._loadDocuments(empId);
         } catch (err) {

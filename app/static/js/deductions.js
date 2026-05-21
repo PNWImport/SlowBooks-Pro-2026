@@ -311,7 +311,7 @@ const DeductionsPage = {
     async deleteDeduction(id, empId) {
         if (!confirm('Remove this deduction?')) return;
         try {
-            await API.delete(`/deductions/employee/${id}`);
+            await API.del(`/deductions/employee/${id}`);
             toast('Deduction removed');
             await DeductionsPage.loadDeductions(empId);
         } catch (err) { toast(err.message, 'error'); }

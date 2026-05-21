@@ -635,3 +635,114 @@ def test_encryption_returns_none_for_garbage():
     assert decrypt("v1:not-a-real-fernet-token") is None
     assert decrypt("") is None
     assert decrypt(None) is None
+
+
+# --- Tier 3: Frontend → Backend wiring -----------------------------------
+
+
+def test_pto_policy_get_by_id_endpoint_exists(client: any, db_session: Session):
+    """GET /api/pto/policies/{id} is wired up — pto.js calls it to edit a policy."""
+    policy = PTOPolicy(
+        name="Vacation",
+        pto_type=PTOType.VACATION,
+        accrual_rate=Decimal("1.5"),
+        is_active=True,
+    )
+    db_session.add(policy)
+    db_session.commit()
+
+    r = client.get(f"/api/pto/policies/{policy.id}")
+    assert r.status_code == 200
+    assert r.json()["name"] == "Vacation"
+
+    r404 = client.get("/api/pto/policies/99999")
+    assert r404.status_code == 404
+
+
+def test_pto_policy_put_endpoint_updates(client: any, db_session: Session):
+    """PUT /api/pto/policies/{id} is wired up — pto.js posts to it on edit."""
+    policy = PTOPolicy(
+        name="Old Name",
+        pto_type=PTOType.VACATION,
+        accrual_rate=Decimal("1.0"),
+        is_active=True,
+    )
+    db_session.add(policy)
+    db_session.commit()
+
+    r = client.put(
+        f"/api/pto/policies/{policy.id}",
+        json={
+            "name": "Renamed Policy",
+            "pto_type": "vacation",
+            "accrual_method": "per_pay_period",
+            "accrual_rate": 2.5,
+            "max_carryover": 40,
+        },
+    )
+    assert r.status_code == 200
+    db_session.refresh(policy)
+    assert policy.name == "Renamed Policy"
+    assert float(policy.accrual_rate) == 2.5
+
+
+def test_pto_request_approve_alias_decisions_request(client: any, db_session: Session):
+    """POST /requests/{id}/approve forwards into the decision logic with status=approved."""
+    emp = Employee(
+        first_name="Approve",
+        last_name="Test",
+        pay_type="hourly",
+        pay_rate=Decimal("20"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
+    )
+    db_session.add(emp)
+    db_session.commit()
+
+    req = PTORequest(
+        employee_id=emp.id,
+        start_date=date.today(),
+        end_date=date.today() + timedelta(days=2),
+        hours=Decimal("16"),
+        pto_type=PTOType.VACATION,
+        status=PTORequestStatus.PENDING,
+    )
+    db_session.add(req)
+    db_session.commit()
+
+    r = client.post(f"/api/pto/requests/{req.id}/approve")
+    assert r.status_code == 200
+    db_session.refresh(req)
+    assert req.status == PTORequestStatus.APPROVED
+
+
+def test_pto_request_reject_alias_decisions_request(client: any, db_session: Session):
+    """POST /requests/{id}/reject forwards into the decision logic with status=denied."""
+    emp = Employee(
+        first_name="Reject",
+        last_name="Test",
+        pay_type="hourly",
+        pay_rate=Decimal("20"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
+    )
+    db_session.add(emp)
+    db_session.commit()
+
+    req = PTORequest(
+        employee_id=emp.id,
+        start_date=date.today(),
+        end_date=date.today() + timedelta(days=2),
+        hours=Decimal("16"),
+        pto_type=PTOType.VACATION,
+        status=PTORequestStatus.PENDING,
+    )
+    db_session.add(req)
+    db_session.commit()
+
+    r = client.post(f"/api/pto/requests/{req.id}/reject")
+    assert r.status_code == 200
+    db_session.refresh(req)
+    assert req.status == PTORequestStatus.DENIED

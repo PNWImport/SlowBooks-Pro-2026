@@ -38,6 +38,33 @@ def list_policies(db: Session = Depends(get_db)):
     return db.query(PTOPolicy).order_by(PTOPolicy.name).all()
 
 
+@router.get("/policies/{policy_id}", response_model=PTOPolicyResponse)
+def get_policy(policy_id: int, db: Session = Depends(get_db)):
+    policy = db.query(PTOPolicy).filter(PTOPolicy.id == policy_id).first()
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    return policy
+
+
+@router.put("/policies/{policy_id}", response_model=PTOPolicyResponse)
+def update_policy(policy_id: int, data: PTOPolicyCreate, db: Session = Depends(get_db)):
+    policy = db.query(PTOPolicy).filter(PTOPolicy.id == policy_id).first()
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    try:
+        policy.pto_type = PTOType(data.pto_type)
+        policy.accrual_method = AccrualMethod(data.accrual_method)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid value: {e}")
+    policy.name = data.name
+    policy.accrual_rate = data.accrual_rate
+    policy.max_carryover = data.max_carryover
+    policy.max_balance = data.max_balance
+    db.commit()
+    db.refresh(policy)
+    return policy
+
+
 @router.post("/policies", response_model=PTOPolicyResponse, status_code=201)
 def create_policy(data: PTOPolicyCreate, db: Session = Depends(get_db)):
     try:
@@ -213,3 +240,16 @@ def decide_request(
     db.commit()
     db.refresh(req)
     return PTORequestResponse.model_validate(req)
+
+
+# Convenience aliases the SPA buttons hit directly. They forward into
+# decide_request() with a fixed status so the approval logic — including the
+# accrual draw-down — lives in exactly one place.
+@router.post("/requests/{request_id}/approve", response_model=PTORequestResponse)
+def approve_request(request_id: int, db: Session = Depends(get_db)):
+    return decide_request(request_id, PTORequestDecision(status="approved"), db)
+
+
+@router.post("/requests/{request_id}/reject", response_model=PTORequestResponse)
+def reject_request(request_id: int, db: Session = Depends(get_db)):
+    return decide_request(request_id, PTORequestDecision(status="denied"), db)
