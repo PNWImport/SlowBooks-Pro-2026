@@ -248,25 +248,25 @@ def test_collector_finds_something():
 # - Legacy paths superseded by newer endpoints (kept for backwards compat)
 _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("POST", "/api/stripe/webhook"),
-    ("GET",  "/api/qbo/callback"),
+    ("GET", "/api/qbo/callback"),
     ("POST", "/api/deductions/types/seed-standard"),
     ("POST", "/api/payroll/gross-up"),
     ("POST", "/api/payroll/{run_id}/nacha"),
     ("POST", "/api/time-entries/classify"),
     # Legacy: superseded by /api/payroll/forms/* — kept until next major release.
     # Migration tracker in docs/todo.md.
-    ("GET",  "/api/tax-forms/w2"),
-    ("GET",  "/api/tax-forms/w2/{employee_id}"),
-    ("GET",  "/api/tax-forms/w2/{employee_id}/pdf"),
-    ("GET",  "/api/tax-forms/940"),
-    ("GET",  "/api/tax-forms/940/pdf"),
-    ("GET",  "/api/tax-forms/941"),
-    ("GET",  "/api/tax-forms/941/pdf"),
-    ("GET",  "/api/tax-forms/1099"),
-    ("GET",  "/api/tax-forms/1099/{vendor_id}/pdf"),
-    ("GET",  "/api/tax-forms/1096/pdf"),
-    ("GET",  "/api/tax-forms/sui"),
-    ("GET",  "/api/tax-forms/liability"),
+    ("GET", "/api/tax-forms/w2"),
+    ("GET", "/api/tax-forms/w2/{employee_id}"),
+    ("GET", "/api/tax-forms/w2/{employee_id}/pdf"),
+    ("GET", "/api/tax-forms/940"),
+    ("GET", "/api/tax-forms/940/pdf"),
+    ("GET", "/api/tax-forms/941"),
+    ("GET", "/api/tax-forms/941/pdf"),
+    ("GET", "/api/tax-forms/1099"),
+    ("GET", "/api/tax-forms/1099/{vendor_id}/pdf"),
+    ("GET", "/api/tax-forms/1096/pdf"),
+    ("GET", "/api/tax-forms/sui"),
+    ("GET", "/api/tax-forms/liability"),
     # Legacy JSON-mode tax form endpoints — superseded by /pdf variants.
     # Kept for machine readers / future e-file integration.
     ("POST", "/api/payroll/forms/w2/{emp_id}"),
@@ -278,25 +278,25 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("POST", "/api/pto/requests/{request_id}/decision"),
     # Admin / scripting utilities the SPA doesn't surface.
     ("POST", "/api/tax/mappings"),
-    ("GET",  "/api/tax/mappings"),
+    ("GET", "/api/tax/mappings"),
     ("POST", "/api/analytics/ai-query"),
     # Drill-down analytics endpoints. SPA uses /api/analytics/dashboard
     # which returns the bundled response. The per-card endpoints stay
     # for future "refresh this card" UI + API consumers.
-    ("GET",  "/api/analytics/revenue"),
-    ("GET",  "/api/analytics/expenses"),
-    ("GET",  "/api/analytics/cash-flow"),
-    ("GET",  "/api/analytics/profitability"),
+    ("GET", "/api/analytics/revenue"),
+    ("GET", "/api/analytics/expenses"),
+    ("GET", "/api/analytics/cash-flow"),
+    ("GET", "/api/analytics/profitability"),
     # Singular paystub fetch — SPA renders paystubs via the bulk list +
     # PDF endpoints. This route exists for direct linking / API consumers.
-    ("GET",  "/api/payroll/{run_id}/paystub/{stub_id}"),
+    ("GET", "/api/payroll/{run_id}/paystub/{stub_id}"),
     # AP aging — Reports menu currently surfaces AR aging only. AP aging
     # appears on the analytics dashboard as a chart; standalone report
     # endpoint stays for future Reports-menu addition.
-    ("GET",  "/api/reports/ap-aging"),
+    ("GET", "/api/reports/ap-aging"),
     # Inventory item movement history — endpoint ready, "Movements" tab
     # on the item details modal is on the future-work list (docs/todo.md).
-    ("GET",  "/api/items/{item_id}/movements"),
+    ("GET", "/api/items/{item_id}/movements"),
     # Backup restore — dangerous; deliberately not exposed in the SPA.
     # Run via CLI: `python -m app.services.backup restore <file>`.
     ("POST", "/api/backups/restore"),
@@ -316,9 +316,9 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("DELETE", "/api/deductions/garnishments/{order_id}"),
     # DocumentAudit hash-chain viewer/verifier — endpoints ready, the
     # admin UI ("Compliance" tab) is future work (docs/todo.md).
-    ("GET",  "/api/document-audits"),
-    ("GET",  "/api/document-audits/{audit_id}"),
-    ("GET",  "/api/document-audits/verify/{content_hash}"),
+    ("GET", "/api/document-audits"),
+    ("GET", "/api/document-audits/{audit_id}"),
+    ("GET", "/api/document-audits/verify/{content_hash}"),
 }
 
 

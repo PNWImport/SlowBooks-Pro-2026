@@ -8,7 +8,6 @@
 
 import base64
 import mimetypes
-from io import BytesIO
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader

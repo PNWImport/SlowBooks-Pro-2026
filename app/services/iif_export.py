@@ -26,7 +26,7 @@ from app.models.contacts import Customer, Vendor
 from app.models.items import Item
 from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
 from app.models.payments import Payment, PaymentAllocation
-from app.models.estimates import Estimate, EstimateLine, EstimateStatus
+from app.models.estimates import Estimate, EstimateLine
 
 
 def _iif_date(d: date) -> str:
@@ -120,7 +120,7 @@ def export_accounts(db: Session) -> str:
 
     accounts = (
         db.query(Account)
-        .filter(Account.is_active == True)
+        .filter(Account.is_active)
         .order_by(Account.account_number)
         .all()
     )
@@ -167,7 +167,7 @@ def export_customers(db: Session) -> str:
 
     customers = (
         db.query(Customer)
-        .filter(Customer.is_active == True)
+        .filter(Customer.is_active)
         .order_by(Customer.name)
         .all()
     )
@@ -241,7 +241,7 @@ def export_vendors(db: Session) -> str:
     )
 
     vendors = (
-        db.query(Vendor).filter(Vendor.is_active == True).order_by(Vendor.name).all()
+        db.query(Vendor).filter(Vendor.is_active).order_by(Vendor.name).all()
     )
 
     lines = header
@@ -293,7 +293,7 @@ def export_items(db: Session) -> str:
         ]
     )
 
-    items = db.query(Item).filter(Item.is_active == True).order_by(Item.name).all()
+    items = db.query(Item).filter(Item.is_active).order_by(Item.name).all()
 
     lines = header
     for item in items:
@@ -398,7 +398,6 @@ def export_invoices(db: Session, date_from: date = None, date_to: date = None) -
             amt = Decimal(str(il.amount or 0))
             if amt == 0:
                 continue
-            item_name = il.item.name if il.item else ""
             acct_name = ""
             if il.item and il.item.income_account_id:
                 acct_name = _resolve_account_name(db, il.item.income_account_id)
@@ -467,7 +466,7 @@ def export_payments(db: Session, date_from: date = None, date_to: date = None) -
             joinedload(Payment.deposit_to_account),
             joinedload(Payment.allocations).joinedload(PaymentAllocation.invoice),
         )
-        .filter(Payment.is_voided == False)
+        .filter(not Payment.is_voided)
     )
 
     if date_from:

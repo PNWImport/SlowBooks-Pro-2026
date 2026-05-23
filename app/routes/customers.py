@@ -16,7 +16,7 @@ def list_customers(
 ):
     q = db.query(Customer)
     if active_only:
-        q = q.filter(Customer.is_active == True)
+        q = q.filter(Customer.is_active)
     if search:
         q = q.filter(Customer.name.ilike(f"%{search}%"))
     return q.order_by(Customer.name).all()

@@ -5,8 +5,6 @@
 
 import logging
 import re
-import subprocess
-from datetime import datetime
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
@@ -29,7 +27,7 @@ def _base_url():
 
 def list_companies(db: Session) -> list[dict]:
     companies = (
-        db.query(Company).filter(Company.is_active == True).order_by(Company.name).all()
+        db.query(Company).filter(Company.is_active).order_by(Company.name).all()
     )
     return [
         {

@@ -2,7 +2,6 @@
 # Check Printing — Generate check PDFs (standard 3-per-page format)
 # ============================================================================
 
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -10,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.payments import Payment
-from app.models.bills import BillPayment, BillPaymentAllocation, Bill
+from app.models.bills import BillPayment, Bill
 from app.models.contacts import Customer, Vendor
 from app.services.pdf_service import generate_check_pdf
 from app.routes.settings import _get_all as get_settings

@@ -29,7 +29,6 @@ from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.services.accounting import (
     create_journal_entry,
     get_ar_account_id,
-    get_sales_tax_account_id,
     get_default_income_account_id,
 )
 

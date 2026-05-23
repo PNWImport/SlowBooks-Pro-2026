@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date
 from calendar import monthrange
 
 from fastapi import APIRouter, Depends
@@ -33,7 +33,7 @@ def get_dashboard(db: Session = Depends(get_db)):
     )
 
     customer_count = (
-        db.query(func.count(Customer.id)).filter(Customer.is_active == True).scalar()
+        db.query(func.count(Customer.id)).filter(Customer.is_active).scalar()
     )
 
     recent_invoices = (
@@ -43,7 +43,7 @@ def get_dashboard(db: Session = Depends(get_db)):
         db.query(Payment).order_by(Payment.created_at.desc()).limit(5).all()
     )
 
-    bank_balances = db.query(BankAccount).filter(BankAccount.is_active == True).all()
+    bank_balances = db.query(BankAccount).filter(BankAccount.is_active).all()
 
     # Feature 1: Total payables (bills)
     total_payables = 0.0

@@ -36,7 +36,6 @@ from app.services.accounting import (
     get_default_income_account_id,
     get_sales_tax_account_id,
     compute_line_totals,
-    due_date_from_terms,
 )
 from app.services.settings_service import get_all_settings as get_settings
 from app.services.closing_date import check_closing_date
@@ -730,7 +729,7 @@ def apply_late_fees(db: Session = Depends(get_db)):
                 "description": f"Late fee - Invoice #{inv.invoice_number}",
             },
         ]
-        txn = create_journal_entry(
+        create_journal_entry(
             db,
             today,
             f"Late fee - Invoice #{inv.invoice_number}",

@@ -3,7 +3,7 @@
 # Logs all INSERT/UPDATE/DELETE operations to the audit_log table
 # ============================================================================
 
-from datetime import datetime, timezone
+from datetime import datetime
 from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
@@ -17,11 +17,11 @@ from app.models.audit import AuditLog
 # (and risks the same recursion if a future migration adds an `id` set
 # via trigger). Keep this set in sync with new audit-style models.
 _SKIP_TABLES = {
-    "audit_log",        # primary audit table (recursion guard)
+    "audit_log",  # primary audit table (recursion guard)
     "portal_accesses",  # portal cookie / token claim access log
-    "login_attempts",   # admin failed-login tracking
+    "login_attempts",  # admin failed-login tracking
     "document_audits",  # hash-chain document audit
-    "email_log",        # outbound email send log
+    "email_log",  # outbound email send log
 }
 
 

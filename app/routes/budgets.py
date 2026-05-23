@@ -3,9 +3,8 @@
 # Phase 10: Quick Wins + Medium Effort Features
 # ============================================================================
 
-from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func as sqlfunc
 
@@ -84,7 +83,6 @@ def budget_variance(
     db: Session = Depends(get_db),
 ):
     """Compare budget vs actual TransactionLine sums per account per month."""
-    from datetime import date
 
     # Get all budgets for the year
     budgets = db.query(Budget).filter(Budget.year == year).all()

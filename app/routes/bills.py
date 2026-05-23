@@ -14,7 +14,7 @@ from app.models.bills import Bill, BillLine, BillStatus
 from app.models.contacts import Vendor
 from app.models.items import Item
 from app.models.accounts import Account
-from app.schemas.bills import BillCreate, BillUpdate, BillResponse
+from app.schemas.bills import BillCreate, BillResponse
 from app.services.accounting import create_journal_entry, compute_line_totals
 from app.services.closing_date import check_closing_date
 

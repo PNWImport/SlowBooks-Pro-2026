@@ -3,7 +3,6 @@
 # Feature 11: Create, list, download, restore backups
 # ============================================================================
 
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -16,7 +15,6 @@ from app.models.backups import Backup
 from app.services.backup_service import (
     create_backup,
     restore_backup,
-    list_backup_files,
     BACKUP_DIR,
 )
 

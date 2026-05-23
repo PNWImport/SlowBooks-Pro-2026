@@ -15,7 +15,7 @@
 # before relying on this for actual payroll.
 # ============================================================================
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 
 CENT = Decimal("0.01")

@@ -9,7 +9,6 @@
 # record mapping with returned QBO ID + SyncToken.
 # ============================================================================
 
-from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
@@ -101,7 +100,7 @@ def export_accounts(db: Session) -> dict:
     exported = 0
     errors = []
 
-    accounts = db.query(Account).filter(Account.is_active == True).all()
+    accounts = db.query(Account).filter(Account.is_active).all()
 
     # Sort by parent (null parent_id first)
     accounts.sort(key=lambda a: (a.parent_id or 0, a.id))
@@ -158,7 +157,7 @@ def export_customers(db: Session) -> dict:
     exported = 0
     errors = []
 
-    customers = db.query(Customer).filter(Customer.is_active == True).all()
+    customers = db.query(Customer).filter(Customer.is_active).all()
 
     for cust in customers:
         try:
@@ -228,7 +227,7 @@ def export_vendors(db: Session) -> dict:
     exported = 0
     errors = []
 
-    vendors = db.query(Vendor).filter(Vendor.is_active == True).all()
+    vendors = db.query(Vendor).filter(Vendor.is_active).all()
 
     for vend in vendors:
         try:
@@ -287,7 +286,7 @@ def export_items(db: Session) -> dict:
     exported = 0
     errors = []
 
-    items = db.query(Item).filter(Item.is_active == True).all()
+    items = db.query(Item).filter(Item.is_active).all()
 
     for item in items:
         try:
@@ -326,7 +325,7 @@ def export_items(db: Session) -> dict:
                     db.query(Account)
                     .filter(
                         Account.account_type == AccountType.INCOME,
-                        Account.is_active == True,
+                        Account.is_active,
                     )
                     .first()
                 )

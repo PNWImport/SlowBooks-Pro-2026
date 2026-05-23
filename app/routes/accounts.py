@@ -15,7 +15,7 @@ def list_accounts(
 ):
     q = db.query(Account)
     if active_only:
-        q = q.filter(Account.is_active == True)
+        q = q.filter(Account.is_active)
     if account_type:
         q = q.filter(Account.account_type == account_type)
     return q.order_by(Account.account_number).all()

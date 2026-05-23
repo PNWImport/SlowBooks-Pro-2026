@@ -10,7 +10,6 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func as sqlfunc
 
 from app.database import get_db
 from app.models.banking import (
@@ -38,7 +37,7 @@ router = APIRouter(prefix="/api/banking", tags=["banking"])
 def list_bank_accounts(db: Session = Depends(get_db)):
     return (
         db.query(BankAccount)
-        .filter(BankAccount.is_active == True)
+        .filter(BankAccount.is_active)
         .order_by(BankAccount.name)
         .all()
     )
@@ -248,7 +247,7 @@ def complete_reconciliation(recon_id: int, db: Session = Depends(get_db)):
         db.query(BankTransaction)
         .filter(BankTransaction.bank_account_id == recon.bank_account_id)
         .filter(BankTransaction.date <= recon.statement_date)
-        .filter(BankTransaction.reconciled == True)
+        .filter(BankTransaction.reconciled)
         .all()
     )
     cleared_total = sum(t.amount for t in txns)

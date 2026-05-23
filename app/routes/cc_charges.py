@@ -3,7 +3,6 @@
 # DR Expense Account, CR Credit Card Payable (2100)
 # ============================================================================
 
-from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,10 +10,10 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.accounts import Account
-from app.schemas.cc_charges import CCChargeCreate, CCChargeResponse
+from app.schemas.cc_charges import CCChargeCreate
 from app.services.accounting import create_journal_entry
 from app.services.closing_date import check_closing_date
-from app.models.transactions import Transaction, TransactionLine
+from app.models.transactions import Transaction
 
 router = APIRouter(prefix="/api/cc-charges", tags=["cc-charges"])
 
@@ -36,12 +35,11 @@ def list_cc_charges(db: Session = Depends(get_db)):
     results = []
     for txn in txns:
         expense_line = None
-        cc_line = None
         for line in txn.lines:
             if line.debit > 0:
                 expense_line = line
             elif line.credit > 0:
-                cc_line = line
+                pass
         acct = (
             db.query(Account).filter(Account.id == expense_line.account_id).first()
             if expense_line

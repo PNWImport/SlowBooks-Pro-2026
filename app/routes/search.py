@@ -28,7 +28,7 @@ def unified_search(q: str = Query(min_length=2), db: Session = Depends(get_db)):
     customers = (
         db.query(Customer)
         .filter(
-            Customer.is_active == True,
+            Customer.is_active,
             (
                 Customer.name.ilike(pattern)
                 | Customer.company.ilike(pattern)
@@ -48,7 +48,7 @@ def unified_search(q: str = Query(min_length=2), db: Session = Depends(get_db)):
     vendors = (
         db.query(Vendor)
         .filter(
-            Vendor.is_active == True,
+            Vendor.is_active,
             (Vendor.name.ilike(pattern) | Vendor.company.ilike(pattern)),
         )
         .limit(LIMIT_PER)
@@ -63,7 +63,7 @@ def unified_search(q: str = Query(min_length=2), db: Session = Depends(get_db)):
     items = (
         db.query(Item)
         .filter(
-            Item.is_active == True,
+            Item.is_active,
             (Item.name.ilike(pattern) | Item.description.ilike(pattern)),
         )
         .limit(LIMIT_PER)

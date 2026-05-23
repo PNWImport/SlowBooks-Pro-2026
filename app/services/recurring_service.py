@@ -49,7 +49,7 @@ def generate_due_invoices(db: Session, as_of: date = None) -> list[int]:
     recurrings = (
         db.query(RecurringInvoice)
         .filter(
-            RecurringInvoice.is_active == True,
+            RecurringInvoice.is_active,
             RecurringInvoice.next_due <= as_of,
         )
         .all()

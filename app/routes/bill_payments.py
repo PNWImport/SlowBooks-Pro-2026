@@ -71,7 +71,7 @@ def create_bill_payment(data: BillPaymentCreate, db: Session = Depends(get_db)):
             )
         if alloc_data.amount > float(bill.balance_due):
             raise HTTPException(
-                status_code=400, detail=f"Allocation exceeds bill balance"
+                status_code=400, detail="Allocation exceeds bill balance"
             )
 
         db.add(

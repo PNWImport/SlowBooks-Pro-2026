@@ -119,7 +119,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         amount=amount,
         method="stripe",
         reference=session_id,
-        notes=f"Online payment via Stripe Checkout",
+        notes="Online payment via Stripe Checkout",
     )
     db.add(payment)
     db.flush()

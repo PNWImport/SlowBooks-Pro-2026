@@ -623,7 +623,6 @@ def test_audit_log_covers_new_entities_but_skips_audit_tables(
     must NOT, so we don't double-record the same event.
     """
     from app.models.audit import AuditLog
-    from app.models.reseller_permit import ResellerPermit
     from app.models.portal_access import PortalAccess
 
     # 1) Insert a ResellerPermit — should land in audit_log.
@@ -645,13 +644,17 @@ def test_audit_log_covers_new_entities_but_skips_audit_tables(
         .filter_by(table_name="reseller_permits", record_id=permit_id)
         .all()
     )
-    assert any(a.action == "INSERT" for a in permit_audits), (
-        "ResellerPermit INSERT must be audited"
-    )
+    assert any(
+        a.action == "INSERT" for a in permit_audits
+    ), "ResellerPermit INSERT must be audited"
 
     # 2) Insert a PortalAccess row directly — should NOT land in audit_log.
     pa = PortalAccess(
-        employee_id=None, ip="1.2.3.4", user_agent="test", path="/portal/", success=False
+        employee_id=None,
+        ip="1.2.3.4",
+        user_agent="test",
+        path="/portal/",
+        success=False,
     )
     db_session.add(pa)
     db_session.commit()
@@ -660,9 +663,9 @@ def test_audit_log_covers_new_entities_but_skips_audit_tables(
     portal_audits = (
         db_session.query(AuditLog).filter_by(table_name="portal_accesses").all()
     )
-    assert portal_audits == [], (
-        "portal_accesses is itself an audit table — must not double-log into audit_log"
-    )
+    assert (
+        portal_audits == []
+    ), "portal_accesses is itself an audit table — must not double-log into audit_log"
 
 
 def test_portal_cookieless_profile_save_via_cookie(client: any, db_session: Session):

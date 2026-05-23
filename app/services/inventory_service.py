@@ -309,7 +309,7 @@ def record_adjustment(
                         "account_id": offset_id,
                         "debit": Decimal("0"),
                         "credit": amount,
-                        "description": f"Inventory adjustment gain",
+                        "description": "Inventory adjustment gain",
                     },
                 ]
             else:
@@ -319,7 +319,7 @@ def record_adjustment(
                         "account_id": offset_id,
                         "debit": amount,
                         "credit": Decimal("0"),
-                        "description": f"Inventory adjustment loss",
+                        "description": "Inventory adjustment loss",
                     },
                     {
                         "account_id": asset_id,
@@ -452,7 +452,7 @@ def current_valuation(db: Session) -> dict:
     """Return aggregate inventory valuation: total_value, item_count, low_stock_count."""
     items = (
         db.query(Item)
-        .filter(Item.track_inventory == True, Item.is_active == True)
+        .filter(Item.track_inventory, Item.is_active)
         .all()
     )  # noqa
     total_value = Decimal("0")

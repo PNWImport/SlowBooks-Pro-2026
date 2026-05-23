@@ -180,7 +180,7 @@ def get_qbo_client(db: Session) -> QuickBooks:
     _refresh_if_needed(db)
 
     s = get_all_qbo_settings(db)
-    environment = s.get("qbo_environment", "sandbox")
+    s.get("qbo_environment", "sandbox")
 
     auth_client = _make_auth_client(db)
     auth_client.access_token = s["qbo_access_token"]

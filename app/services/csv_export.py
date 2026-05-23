@@ -15,7 +15,7 @@ from app.models.accounts import Account
 
 
 def export_customers(db: Session) -> str:
-    customers = db.query(Customer).filter(Customer.is_active == True).all()
+    customers = db.query(Customer).filter(Customer.is_active).all()
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(
@@ -53,7 +53,7 @@ def export_customers(db: Session) -> str:
 
 
 def export_vendors(db: Session) -> str:
-    vendors = db.query(Vendor).filter(Vendor.is_active == True).all()
+    vendors = db.query(Vendor).filter(Vendor.is_active).all()
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(
@@ -91,7 +91,7 @@ def export_vendors(db: Session) -> str:
 
 
 def export_items(db: Session) -> str:
-    items = db.query(Item).filter(Item.is_active == True).all()
+    items = db.query(Item).filter(Item.is_active).all()
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["ID", "Name", "Type", "Description", "Rate", "Cost", "Taxable"])

@@ -3,7 +3,6 @@
 # Classic QB "Make Deposits" workflow
 # ============================================================================
 
-from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -37,7 +36,6 @@ def list_pending_deposits(db: Session = Depends(get_db)):
     )
 
     # Also find credits (deposits already made) to exclude net-zero items
-    credit_by_txn = {}
     credit_lines = (
         db.query(TransactionLine)
         .filter(TransactionLine.account_id == uf_id)

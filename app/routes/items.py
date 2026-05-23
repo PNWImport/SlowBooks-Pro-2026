@@ -28,7 +28,7 @@ def list_items(
 ):
     q = db.query(Item)
     if active_only:
-        q = q.filter(Item.is_active == True)
+        q = q.filter(Item.is_active)
     if item_type:
         q = q.filter(Item.item_type == item_type)
     if search:

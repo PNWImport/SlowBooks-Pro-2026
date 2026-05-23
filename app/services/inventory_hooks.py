@@ -13,14 +13,13 @@
 # ============================================================================
 
 from decimal import Decimal
-from typing import Any, Iterable, Optional
+from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.items import Item, InventoryMovement, MovementType
+from app.models.items import Item, MovementType
 from app.services.inventory_service import (
     record_sale,
-    record_purchase,
     reverse_sale,
     _append_movement,
 )

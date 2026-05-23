@@ -16,7 +16,7 @@ def list_vendors(
 ):
     q = db.query(Vendor)
     if active_only:
-        q = q.filter(Vendor.is_active == True)
+        q = q.filter(Vendor.is_active)
     if search:
         q = q.filter(Vendor.name.ilike(f"%{search}%"))
     return q.order_by(Vendor.name).all()

@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/recurring", tags=["recurring"])
 def list_recurring(active_only: bool = False, db: Session = Depends(get_db)):
     q = db.query(RecurringInvoice)
     if active_only:
-        q = q.filter(RecurringInvoice.is_active == True)
+        q = q.filter(RecurringInvoice.is_active)
     recs = q.order_by(RecurringInvoice.next_due).all()
     results = []
     for r in recs:

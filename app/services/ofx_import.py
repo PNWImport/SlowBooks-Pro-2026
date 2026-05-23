@@ -123,7 +123,7 @@ def import_transactions(
 
             rules = (
                 db.query(BankRule)
-                .filter(BankRule.is_active == True)
+                .filter(BankRule.is_active)
                 .order_by(BankRule.priority.desc())
                 .all()
             )

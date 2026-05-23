@@ -4,7 +4,6 @@
 
 from app.models.hr import (
     OnboardingTask,
-    OnboardingTaskType,
     OnboardingTaskStatus,
     DEFAULT_ONBOARDING_TASKS,
 )

@@ -920,7 +920,6 @@ def collection_letters(data: CollectionLetterRequest, db: Session = Depends(get_
     generated = 0
     emailed = 0
     errors = []
-    pdfs = []
 
     for cid, invs in by_customer.items():
         customer = db.query(Customer).filter(Customer.id == cid).first()
@@ -974,9 +973,9 @@ def report_1099_summary(
     if not year:
         year = date.today().year
 
-    from app.models.bills import Bill, BillPayment, BillPaymentAllocation
+    from app.models.bills import BillPayment, BillPaymentAllocation
 
-    vendors_1099 = db.query(Vendor).filter(Vendor.is_1099_vendor == True).all()
+    vendors_1099 = db.query(Vendor).filter(Vendor.is_1099_vendor).all()
     if not vendors_1099:
         return {"year": year, "items": [], "total": 0, "vendors_above_threshold": 0}
 

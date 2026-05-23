@@ -3,14 +3,13 @@
 # Feature: Allow users to create/view/void manual journal entries
 # ============================================================================
 
-from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.transactions import Transaction, TransactionLine
+from app.models.transactions import Transaction
 from app.models.accounts import Account
 from app.schemas.journal import JournalEntryCreate, JournalEntryResponse
 from app.services.accounting import create_journal_entry

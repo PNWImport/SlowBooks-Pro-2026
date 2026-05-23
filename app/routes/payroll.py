@@ -30,7 +30,7 @@ from app.models.deductions import (
     CalcMethod,
 )
 from app.models.accounts import Account
-from app.schemas.payroll import PayRunCreate, PayRunResponse, YTDResponse
+from app.schemas.payroll import PayRunCreate, PayRunResponse
 from app.schemas.deductions import GrossUpRequest, GrossUpResponse
 from app.services.payroll_service import calculate_withholdings
 from app.services.accounting import create_journal_entry
@@ -151,7 +151,7 @@ def _employee_deductions(db: Session, employee_id: int, gross: Decimal) -> tuple
         db.query(EmployeeDeduction)
         .filter(
             EmployeeDeduction.employee_id == employee_id,
-            EmployeeDeduction.is_active == True,
+            EmployeeDeduction.is_active,
         )  # noqa: E712
         .all()
     )
@@ -179,7 +179,7 @@ def _garnishment_specs(db: Session, employee_id: int) -> list:
         db.query(GarnishmentOrder)
         .filter(
             GarnishmentOrder.employee_id == employee_id,
-            GarnishmentOrder.is_active == True,
+            GarnishmentOrder.is_active,
         )  # noqa: E712
         .all()
     )
@@ -714,7 +714,7 @@ def generate_w3_form(
     Returns a PDF file with aggregate W-2 data for all employees.
     """
     # Aggregate all employee YTD totals for the year
-    employees = db.query(Employee).filter(Employee.is_active == True).all()
+    employees = db.query(Employee).filter(Employee.is_active).all()
 
     total_gross = Decimal("0")
     total_federal = Decimal("0")
@@ -759,7 +759,7 @@ def generate_form_940(
     Returns a PDF file with federal unemployment tax information.
     """
     # Aggregate FUTA data for all employees
-    employees = db.query(Employee).filter(Employee.is_active == True).all()
+    employees = db.query(Employee).filter(Employee.is_active).all()
 
     total_wages_subject_to_futa = Decimal("0")
     total_futa_tax = Decimal("0")
