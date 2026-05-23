@@ -134,7 +134,20 @@ class Employee(Base):
     portal_token = Column(String(64), nullable=True, unique=True)
     portal_token_last_used = Column(DateTime(timezone=True), nullable=True)
     portal_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+    # E-Verify case tracking. The actual federal E-Verify system is a
+    # separate vendor-gated enrollment, so this is a record-keeping shim:
+    # an operator who submits a case via the official portal (or via a
+    # third-party service like Equifax) records the case number + status
+    # here so it lives next to the employee for audit and DHS inspection.
     everify_case_number = Column(String(30), nullable=True)
+    # Status mirrors the official E-Verify lifecycle:
+    #   not_submitted, pending, photo_match_required, tnc (tentative
+    #   non-confirmation), employment_authorized, final_non_confirmation,
+    #   case_closed
+    everify_status = Column(String(30), nullable=True)
+    everify_submitted_at = Column(DateTime(timezone=True), nullable=True)
+    everify_closed_at = Column(DateTime(timezone=True), nullable=True)
+    everify_notes = Column(Text, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(

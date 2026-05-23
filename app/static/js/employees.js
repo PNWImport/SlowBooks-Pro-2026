@@ -201,6 +201,12 @@ const EmployeesPage = {
                 </div>
 
                 <hr>
+                <h4>E-Verify</h4>
+                <div id="emp-everify-section-${id}">
+                    <p>Loading E-Verify…</p>
+                </div>
+
+                <hr>
                 <h4>YTD Totals</h4>
                 <div id="emp-ytd-section-${id}">
                     <p>Loading YTD totals…</p>
@@ -223,39 +229,174 @@ const EmployeesPage = {
 
         // Load all sections asynchronously after modal opens
         EmployeesPage._loadPortal(id);
+        EmployeesPage._loadEverify(id);
         EmployeesPage._loadYTD(id);
         EmployeesPage._loadBankAccounts(id);
         EmployeesPage._loadDocuments(id);
+    },
+
+    async _loadEverify(id) {
+        const el = document.getElementById(`emp-everify-section-${id}`);
+        if (!el) return;
+        try {
+            const data = await API.get(`/employees/${id}/everify`);
+            el.innerHTML = EmployeesPage._renderEverify(id, data);
+        } catch (err) {
+            el.innerHTML = `<p class="text-muted">E-Verify unavailable: ${escapeHtml(err.message)}</p>`;
+        }
+    },
+
+    _renderEverify(id, data) {
+        const STATUS_LABELS = {
+            not_submitted: 'Not submitted',
+            pending: 'Pending',
+            photo_match_required: 'Photo match required',
+            tnc: 'Tentative non-confirmation (TNC)',
+            employment_authorized: 'Employment authorized',
+            final_non_confirmation: 'Final non-confirmation',
+            case_closed: 'Case closed',
+        };
+        const STATUS_COLORS = {
+            employment_authorized: '#1f7a36',
+            final_non_confirmation: '#a4242b',
+            tnc: '#a4242b',
+            photo_match_required: '#a8761f',
+            pending: '#336699',
+        };
+        const status = data.status || 'not_submitted';
+        const color = STATUS_COLORS[status] || '#666';
+        return `
+            <p style="margin:0 0 6px 0">
+                <strong>Status:</strong> <span style="color:${color};font-weight:600">${escapeHtml(STATUS_LABELS[status] || status)}</span>
+            </p>
+            <p style="font-size:12px;color:#666;margin:0 0 4px 0">
+                Case #: ${escapeHtml(data.case_number || '—')}
+                ${data.submitted_at ? `&nbsp;·&nbsp;Submitted ${escapeHtml(data.submitted_at.slice(0, 10))}` : ''}
+                ${data.closed_at ? `&nbsp;·&nbsp;Closed ${escapeHtml(data.closed_at.slice(0, 10))}` : ''}
+            </p>
+            ${data.notes ? `<p style="font-size:12px;color:#666;margin:0 0 6px 0;white-space:pre-wrap">${escapeHtml(data.notes)}</p>` : ''}
+            <button class="btn btn-sm btn-secondary" onclick="EmployeesPage._showEverifyForm(${id})">Update E-Verify case</button>
+            <p style="font-size:11px;color:#999;margin-top:6px">
+                Record-keeping only — submit cases via the federal E-Verify portal.
+            </p>`;
+    },
+
+    async _showEverifyForm(id) {
+        let data = {};
+        try { data = await API.get(`/employees/${id}/everify`); }
+        catch (_) { /* fall through with empty defaults */ }
+        const status = data.status || 'not_submitted';
+        const opts = [
+            ['not_submitted', 'Not submitted'],
+            ['pending', 'Pending'],
+            ['photo_match_required', 'Photo match required'],
+            ['tnc', 'Tentative non-confirmation (TNC)'],
+            ['employment_authorized', 'Employment authorized'],
+            ['final_non_confirmation', 'Final non-confirmation'],
+            ['case_closed', 'Case closed'],
+        ].map(([v, l]) => `<option value="${v}"${status === v ? ' selected' : ''}>${escapeHtml(l)}</option>`).join('');
+        openModal('Update E-Verify Case', `
+            <form onsubmit="EmployeesPage._saveEverify(event, ${id})">
+                <div class="form-grid">
+                    <div class="form-group"><label>Case number</label>
+                        <input name="case_number" value="${escapeHtml(data.case_number || '')}" placeholder="e.g. 2026123456789"></div>
+                    <div class="form-group"><label>Status</label>
+                        <select name="status">${opts}</select></div>
+                </div>
+                <div class="form-group"><label>Notes</label>
+                    <textarea name="notes" rows="3" placeholder="Internal note (e.g. photo match received, TNC contested)">${escapeHtml(data.notes || '')}</textarea></div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>`);
+    },
+
+    async _saveEverify(e, id) {
+        e.preventDefault();
+        const f = e.target;
+        const body = {
+            case_number: f.case_number.value,
+            status: f.status.value,
+            notes: f.notes.value,
+        };
+        try {
+            await API.put(`/employees/${id}/everify`, body);
+            toast('E-Verify case updated');
+            closeModal();
+            EmployeesPage._loadEverify(id);
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     async _loadPortal(id) {
         const el = document.getElementById(`emp-portal-section-${id}`);
         if (!el) return;
         try {
-            const data = await API.get(`/employees/${id}/portal-token`);
-            const url = data.portal_url || data.url || data.token || JSON.stringify(data);
-            el.innerHTML = `
-                <p>Portal URL: <a href="${escapeHtml(url)}" target="_blank">${escapeHtml(url)}</a></p>
-                <button class="btn btn-sm btn-secondary" onclick="EmployeesPage._regeneratePortalToken(${id})">Regenerate Token</button>`;
+            const [token, access] = await Promise.all([
+                API.get(`/employees/${id}/portal-token`),
+                API.get(`/employees/${id}/portal-access?limit=10`).catch(() => []),
+            ]);
+            el.innerHTML = EmployeesPage._renderPortalSection(id, token, access);
         } catch (err) {
             el.innerHTML = `<p class="text-muted">Portal token unavailable: ${escapeHtml(err.message)}</p>
                 <button class="btn btn-sm btn-secondary" onclick="EmployeesPage._regeneratePortalToken(${id})">Generate Token</button>`;
         }
     },
 
+    _renderPortalSection(id, token, access) {
+        const url = token.portal_url || '';
+        const expires = token.expires_at ? new Date(token.expires_at) : null;
+        const lastUsed = token.last_used_at ? new Date(token.last_used_at) : null;
+        const now = new Date();
+        const daysUntilExpiry = expires ? Math.round((expires - now) / 86400000) : null;
+        const daysSinceUsed = lastUsed ? Math.round((now - lastUsed) / 86400000) : null;
+        const expiryClass = daysUntilExpiry !== null && daysUntilExpiry < 30
+            ? 'style="color:#c0392b;font-weight:600"' : '';
+
+        let html = `
+            <p style="margin:0 0 4px 0">Portal URL: <a href="${escapeHtml(url)}" target="_blank">${escapeHtml(url)}</a></p>
+            <p style="font-size:12px;color:#666;margin:0 0 4px 0">
+                <span ${expiryClass}>Expires ${expires ? expires.toISOString().slice(0,10) : 'never'}${daysUntilExpiry !== null ? ` (${daysUntilExpiry} days)` : ''}</span>
+                &nbsp;·&nbsp;
+                Last used ${lastUsed ? `${daysSinceUsed} day${daysSinceUsed === 1 ? '' : 's'} ago (${lastUsed.toISOString().slice(0,10)})` : '<em>never</em>'}
+            </p>
+            <button class="btn btn-sm btn-secondary" onclick="EmployeesPage._regeneratePortalToken(${id})">Rotate Token</button>`;
+
+        if (Array.isArray(access) && access.length > 0) {
+            html += `
+                <details style="margin-top:10px">
+                    <summary style="cursor:pointer;font-size:12px;color:#336699">Recent access (${access.length} most recent)</summary>
+                    <table class="data-table" style="margin-top:6px;font-size:11px">
+                        <thead><tr><th>When</th><th>IP</th><th>Path</th><th>OK?</th></tr></thead>
+                        <tbody>
+                        ${access.map(a => `
+                            <tr style="${a.success ? '' : 'color:#c0392b'}">
+                                <td>${escapeHtml((a.created_at || '').replace('T',' ').slice(0,19))}</td>
+                                <td>${escapeHtml(a.ip || '')}</td>
+                                <td>${escapeHtml(a.path || '')}</td>
+                                <td>${a.success ? '✓' : '✗'}</td>
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </details>`;
+        }
+        return html;
+    },
+
     async _regeneratePortalToken(id) {
         try {
-            const data = await API.post(`/employees/${id}/portal-token`, {});
-            const url = data.portal_url || data.url || data.token || JSON.stringify(data);
+            await API.post(`/employees/${id}/portal-token`, {});
+            toast('Portal token rotated');
+            // Re-fetch + re-render to pick up the new expires_at and reset last_used
+            EmployeesPage._loadPortal(id);
+        } catch (err) {
+            toast(err.message, 'error');
             const el = document.getElementById(`emp-portal-section-${id}`);
             if (el) {
                 el.innerHTML = `
-                    <p>Portal URL: <a href="${escapeHtml(url)}" target="_blank">${escapeHtml(url)}</a></p>
-                    <button class="btn btn-sm btn-secondary" onclick="EmployeesPage._regeneratePortalToken(${id})">Regenerate Token</button>`;
+                    <p class="text-muted">Rotate failed: ${escapeHtml(err.message)}</p>
+                    <button class="btn btn-sm btn-secondary" onclick="EmployeesPage._regeneratePortalToken(${id})">Try again</button>`;
             }
-            toast('Portal token regenerated');
-        } catch (err) {
-            toast(err.message, 'error');
         }
     },
 

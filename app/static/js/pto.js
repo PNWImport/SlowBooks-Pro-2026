@@ -4,10 +4,15 @@
  */
 const PTOPage = {
     async render() {
-        const [policies, requests] = await Promise.all([
+        const [policies, requests, accruals, employees] = await Promise.all([
             API.get('/pto/policies'),
             API.get('/pto/requests'),
+            API.get('/pto/accruals'),
+            API.get('/employees?active_only=true'),
         ]);
+        // Lookup maps so we can render employee + policy names without N+1 calls.
+        const empById = Object.fromEntries(employees.map(e => [e.id, `${e.first_name} ${e.last_name}`]));
+        const polById = Object.fromEntries(policies.map(p => [p.id, p.name]));
 
         // --- Policies section ---
         let policiesBody = '';
@@ -69,6 +74,34 @@ const PTOPage = {
                         <th>Actions</th>
                     </tr></thead>
                     <tbody>${policiesBody}</tbody>
+                </table>
+            </div>
+
+            <div class="page-header" style="margin-top:2rem">
+                <h2>Employee Accruals</h2>
+                <button class="btn btn-primary" onclick="PTOPage.showAccrualForm()">+ Enroll Employee</button>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead><tr>
+                        <th>Employee</th>
+                        <th>Policy</th>
+                        <th class="amount">Balance</th>
+                        <th class="amount">Accrued YTD</th>
+                        <th class="amount">Used YTD</th>
+                        <th>Actions</th>
+                    </tr></thead>
+                    <tbody>${accruals.length === 0 ? '<tr><td colspan="6"><em>No employees enrolled in any PTO policy yet</em></td></tr>' : accruals.map(a => `
+                        <tr>
+                            <td>${escapeHtml(empById[a.employee_id] || `Employee ${a.employee_id}`)}</td>
+                            <td>${escapeHtml(polById[a.policy_id] || `Policy ${a.policy_id}`)}</td>
+                            <td class="amount">${a.balance}</td>
+                            <td class="amount">${a.accrued_ytd}</td>
+                            <td class="amount">${a.used_ytd}</td>
+                            <td class="actions">
+                                <button class="btn btn-sm btn-secondary" onclick="PTOPage.runAccrual(${a.id})">Run Accrual</button>
+                            </td>
+                        </tr>`).join('')}</tbody>
                 </table>
             </div>
 
@@ -207,6 +240,59 @@ const PTOPage = {
         try {
             await API.post(`/pto/requests/${id}/reject`, {});
             toast('Request rejected');
+            App.navigate('#/hr/pto');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async showAccrualForm() {
+        const [policies, employees] = await Promise.all([
+            API.get('/pto/policies'),
+            API.get('/employees?active_only=true'),
+        ]);
+        if (policies.length === 0) { toast('Define a PTO policy first', 'error'); return; }
+        if (employees.length === 0) { toast('Add an employee first', 'error'); return; }
+        const polOpts = policies.map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${escapeHtml(p.pto_type)})</option>`).join('');
+        const empOpts = employees.map(e => `<option value="${e.id}">${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)}</option>`).join('');
+        openModal('Enroll Employee in PTO Policy', `
+            <form onsubmit="PTOPage.saveAccrual(event)">
+                <div class="form-grid">
+                    <div class="form-group"><label>Employee *</label>
+                        <select name="employee_id" required>${empOpts}</select></div>
+                    <div class="form-group"><label>Policy *</label>
+                        <select name="policy_id" required>${polOpts}</select></div>
+                    <div class="form-group"><label>Starting Balance (hours)</label>
+                        <input name="balance" type="number" step="0.01" value="0"></div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Enroll</button>
+                </div>
+            </form>`);
+    },
+
+    async saveAccrual(e) {
+        e.preventDefault();
+        const f = e.target;
+        const body = {
+            employee_id: parseInt(f.employee_id.value, 10),
+            policy_id: parseInt(f.policy_id.value, 10),
+            balance: parseFloat(f.balance.value) || 0,
+        };
+        try {
+            await API.post('/pto/accruals', body);
+            toast('Employee enrolled');
+            closeModal();
+            App.navigate('#/hr/pto');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async runAccrual(id) {
+        // Bonus: prompt for hours worked, since per-hour-worked policies need it.
+        const hoursStr = prompt('Hours worked this period (only used by "per_hour_worked" policies — leave blank for fixed accruals):', '');
+        const body = { hours_worked: parseFloat(hoursStr) || 0 };
+        try {
+            await API.post(`/pto/accruals/${id}/accrue`, body);
+            toast('Accrual applied');
             App.navigate('#/hr/pto');
         } catch (err) { toast(err.message, 'error'); }
     },

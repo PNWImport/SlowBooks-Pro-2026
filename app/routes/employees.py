@@ -124,7 +124,116 @@ def get_portal_token(emp_id: int, db: Session = Depends(get_db)):
         "portal_token": emp.portal_token,
         "portal_url": f"/portal/{emp.portal_token}",
         "expires_at": _iso_utc(emp.portal_token_expires_at),
+        "last_used_at": _iso_utc(emp.portal_token_last_used),
     }
+
+
+@router.get("/{emp_id}/everify")
+def get_everify(emp_id: int, db: Session = Depends(get_db)):
+    """Return the employee's E-Verify case record."""
+    emp = db.query(Employee).filter(Employee.id == emp_id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    return {
+        "employee_id": emp.id,
+        "case_number": emp.everify_case_number,
+        "status": emp.everify_status or "not_submitted",
+        "submitted_at": _iso_utc(emp.everify_submitted_at),
+        "closed_at": _iso_utc(emp.everify_closed_at),
+        "notes": emp.everify_notes,
+    }
+
+
+_EVERIFY_STATUSES = {
+    "not_submitted",
+    "pending",
+    "photo_match_required",
+    "tnc",
+    "employment_authorized",
+    "final_non_confirmation",
+    "case_closed",
+}
+
+
+@router.put("/{emp_id}/everify")
+def update_everify(
+    emp_id: int,
+    data: dict,
+    db: Session = Depends(get_db),
+):
+    """Record / update an E-Verify case for the employee.
+
+    Pure record-keeping — the actual case is submitted through the
+    federal E-Verify portal (or a vendor like Equifax). This endpoint
+    just stores what the operator entered there alongside the employee
+    so DHS inspections find it in one place.
+    """
+    emp = db.query(Employee).filter(Employee.id == emp_id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    status = (data.get("status") or "").strip().lower() or None
+    if status and status not in _EVERIFY_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of {sorted(_EVERIFY_STATUSES)}",
+        )
+
+    if "case_number" in data:
+        emp.everify_case_number = (data.get("case_number") or "").strip() or None
+    if status is not None:
+        # Auto-stamp lifecycle timestamps the first time we see each one.
+        if status != "not_submitted" and emp.everify_submitted_at is None:
+            emp.everify_submitted_at = datetime.now(timezone.utc)
+        if status in ("employment_authorized", "final_non_confirmation", "case_closed"):
+            if emp.everify_closed_at is None:
+                emp.everify_closed_at = datetime.now(timezone.utc)
+        emp.everify_status = status
+    if "notes" in data:
+        emp.everify_notes = (data.get("notes") or "").strip() or None
+
+    db.commit()
+    db.refresh(emp)
+    return {
+        "employee_id": emp.id,
+        "case_number": emp.everify_case_number,
+        "status": emp.everify_status or "not_submitted",
+        "submitted_at": _iso_utc(emp.everify_submitted_at),
+        "closed_at": _iso_utc(emp.everify_closed_at),
+        "notes": emp.everify_notes,
+    }
+
+
+@router.get("/{emp_id}/portal-access")
+def list_portal_access(
+    emp_id: int,
+    limit: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """Recent portal_accesses rows for one employee. Powers the admin
+    "who hit my portal page when?" view in the Employee Details modal."""
+    from app.models.portal_access import PortalAccess
+
+    if not db.query(Employee).filter(Employee.id == emp_id).first():
+        raise HTTPException(status_code=404, detail="Employee not found")
+    rows = (
+        db.query(PortalAccess)
+        .filter(PortalAccess.employee_id == emp_id)
+        .order_by(PortalAccess.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "created_at": _iso_utc(r.created_at),
+            "ip": r.ip,
+            "user_agent": r.user_agent,
+            "path": r.path,
+            "success": r.success,
+        }
+        for r in rows
+    ]
 
 
 @router.post("/{emp_id}/portal-token")

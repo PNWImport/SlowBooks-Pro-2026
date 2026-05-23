@@ -83,9 +83,25 @@ base-uri 'self';
 object-src 'none'
 ```
 
-`'unsafe-inline'` for scripts is the cost of the bootstrap `<script>` in
-`index.html`. Tightening to a nonce-based CSP is the next step once the
-SPA is migrated off inline scripts.
+`'unsafe-inline'` is still in `script-src` and `style-src`. Honest accounting:
+
+- **index.html** — zero inline event handlers as of the recent cleanup.
+  The 11 `onclick=`/`oninput=` attributes that used to live here moved
+  to `app/static/js/bootstrap.js`, which wires them via
+  `addEventListener` on DOMContentLoaded. The static shell page would
+  work under a stricter CSP today.
+- **JS-rendered modals** still use inline `onclick="Foo.bar(x)"` in
+  template-literal HTML strings across roughly two dozen `app/static/js/*.js`
+  files. Removing `'unsafe-inline'` would require converting each to
+  either `addEventListener` after `innerHTML`, or a delegated
+  `data-action` dispatcher at the document level. That's a real
+  multi-file refactor; tracked in `docs/todo.md`.
+- **Inline `style="..."` attributes** show up in those same JS-rendered
+  modals, which is why `style-src` also still has `'unsafe-inline'`.
+
+Defense-in-depth gap, not an active vulnerability — `autoescape=True` in
+every Jinja2 environment blocks XSS at the template level. The CSP would
+catch a hypothetical autoescape bypass; today it can't.
 
 ### Portal token expiration
 

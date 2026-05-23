@@ -1115,6 +1115,116 @@ def test_encryption_returns_none_for_garbage():
     assert decrypt(None) is None
 
 
+def test_portal_token_endpoint_returns_last_used(client: any, db_session: Session):
+    """GET /api/employees/{id}/portal-token now returns last_used_at so
+    the admin UI can show "last used N days ago"."""
+    emp = Employee(
+        first_name="Last",
+        last_name="Used",
+        pay_type="hourly",
+        pay_rate=Decimal("25"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
+    )
+    db_session.add(emp)
+    db_session.commit()
+
+    payload = client.get(f"/api/employees/{emp.id}/portal-token").json()
+    assert "last_used_at" in payload
+    # Brand-new token — last_used was stamped at mint, so should be ~now.
+    assert payload["last_used_at"] is not None
+
+
+def test_portal_access_list_endpoint(client: any, db_session: Session):
+    """GET /api/employees/{id}/portal-access lists recent access rows."""
+    emp = Employee(
+        first_name="Audit",
+        last_name="View",
+        pay_type="hourly",
+        pay_rate=Decimal("25"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
+    )
+    db_session.add(emp)
+    db_session.commit()
+
+    token = client.get(f"/api/employees/{emp.id}/portal-token").json()["portal_token"]
+    client.get(f"/portal/{token}")  # claim writes one access row
+
+    rows = client.get(f"/api/employees/{emp.id}/portal-access?limit=5").json()
+    assert isinstance(rows, list)
+    assert len(rows) >= 1
+    assert rows[0]["path"].startswith("/portal/")
+    for r in rows:
+        # success rows are linked to the employee
+        if r["success"]:
+            # employee_id in DB ; the API didn't surface it but the row
+            # is returned because we filtered by employee_id server-side
+            assert "ip" in r and "path" in r
+
+
+def test_everify_lifecycle(client: any, db_session: Session):
+    """E-Verify endpoints: read default, update case + status, read back."""
+    emp = Employee(
+        first_name="Eve",
+        last_name="Rify",
+        pay_type="hourly",
+        pay_rate=Decimal("25"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
+    )
+    db_session.add(emp)
+    db_session.commit()
+
+    # Default state
+    r = client.get(f"/api/employees/{emp.id}/everify").json()
+    assert r["status"] == "not_submitted"
+    assert r["case_number"] is None
+    assert r["submitted_at"] is None
+    assert r["closed_at"] is None
+
+    # Submit
+    r = client.put(
+        f"/api/employees/{emp.id}/everify",
+        json={"case_number": "2026123456789", "status": "pending"},
+    ).json()
+    assert r["status"] == "pending"
+    assert r["case_number"] == "2026123456789"
+    assert r["submitted_at"] is not None
+    assert r["closed_at"] is None
+
+    # Close as authorized
+    r = client.put(
+        f"/api/employees/{emp.id}/everify",
+        json={"status": "employment_authorized", "notes": "All good"},
+    ).json()
+    assert r["status"] == "employment_authorized"
+    assert r["closed_at"] is not None
+    assert r["notes"] == "All good"
+
+
+def test_everify_rejects_unknown_status(client: any, db_session: Session):
+    emp = Employee(
+        first_name="Bad",
+        last_name="Status",
+        pay_type="hourly",
+        pay_rate=Decimal("25"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
+    )
+    db_session.add(emp)
+    db_session.commit()
+    r = client.put(
+        f"/api/employees/{emp.id}/everify",
+        json={"status": "made-up-status"},
+    )
+    assert r.status_code == 400
+
+
 def test_rewrap_all_re_encrypts_old_key_ciphertext(db_session: Session):
     """rewrap_all() finds ciphertext encrypted with the previous key and
     re-encrypts it with the current key. Already-current rows are skipped."""
