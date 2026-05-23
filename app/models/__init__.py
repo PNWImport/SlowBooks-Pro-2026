@@ -30,6 +30,7 @@ from app.models.backups import Backup
 from app.models.auth import LoginAttempt
 from app.models.companies import Company
 from app.models.document_audit import DocumentAudit
+from app.models.portal_access import PortalAccess
 from app.models.payroll import Employee, PayRun, PayStub
 
 # Tier 1: Full payroll / HR system
@@ -124,4 +125,6 @@ __all__ = [
     "LoginAttempt",
     # Document audit (tax forms, regulated PDFs)
     "DocumentAudit",
+    # Portal access audit
+    "PortalAccess",
 ]

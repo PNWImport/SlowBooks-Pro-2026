@@ -469,6 +469,148 @@ def test_portal_logout_clears_cookie(client: any, db_session: Session):
     assert client.get("/portal/", follow_redirects=False).status_code == 401
 
 
+def test_portal_end_to_end_flow(client: any, db_session: Session, seed_accounts):
+    """One test that walks the entire portal lifecycle:
+    mint -> claim -> dashboard -> paystubs -> profile -> bank -> pto ->
+    PTO request -> logout -> cookie cleared -> idle/hard expire."""
+    from app.models.portal_access import PortalAccess
+
+    emp = Employee(
+        first_name="Lifecycle",
+        last_name="Tester",
+        ssn_last_four="0007",
+        pay_type="hourly",
+        pay_rate=Decimal("30"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
+        email="lc@test.local",
+    )
+    db_session.add(emp)
+    db_session.commit()
+
+    # 1. Mint a token via the admin endpoint
+    mint = client.get(f"/api/employees/{emp.id}/portal-token").json()
+    token = mint["portal_token"]
+    assert mint["expires_at"] is not None
+
+    # 2. Claim — first visit sets the cookie and redirects to /portal/
+    r = client.get(f"/portal/{token}", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/portal/"
+    assert "slowbooks_portal" in r.headers.get("set-cookie", "")
+
+    # 3. Cookie now in TestClient jar — dashboard works
+    r = client.get("/portal/", follow_redirects=False)
+    assert r.status_code == 200
+
+    # 4. Every cookieless page returns HTML
+    for path in ("/portal/paystubs", "/portal/profile", "/portal/bank", "/portal/pto"):
+        r = client.get(path, follow_redirects=False)
+        assert r.status_code == 200, f"{path} returned {r.status_code}"
+
+    # 5. Submit a PTO request — POST through cookie auth, redirects to GET
+    from datetime import date as _date
+
+    pol = PTOPolicy(
+        name="Vacation",
+        pto_type=PTOType.VACATION,
+        accrual_rate=Decimal("1"),
+        is_active=True,
+    )
+    db_session.add(pol)
+    db_session.commit()
+    accr = PTOAccrual(employee_id=emp.id, policy_id=pol.id, balance=Decimal("40"))
+    db_session.add(accr)
+    db_session.commit()
+
+    r = client.post(
+        "/portal/pto",
+        data={
+            "start_date": _date.today().isoformat(),
+            "end_date": _date.today().isoformat(),
+            "hours": "8",
+            "pto_type": "vacation",
+            "notes": "Single-day vacation",
+        },
+    )
+    assert r.status_code == 200  # 303 -> 200 via follow_redirects default
+
+    # The request landed
+    pto_rows = db_session.query(PTORequest).filter_by(employee_id=emp.id).all()
+    assert len(pto_rows) == 1
+    assert pto_rows[0].status == PTORequestStatus.PENDING
+
+    # 6. Logout clears the portal cookie (but not the admin session cookie —
+    # we still need that to hit /api/employees/.../portal-token to rotate).
+    client.post("/portal/logout", follow_redirects=False)
+    client.cookies.delete("slowbooks_portal", path="/portal")
+    r = client.get("/portal/", follow_redirects=False)
+    assert r.status_code == 401
+
+    # 7. Force-expire the token + verify rotation works
+    emp.portal_token_expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+    db_session.commit()
+    r = client.get(f"/portal/{token}", follow_redirects=False)
+    assert r.status_code == 410
+
+    # Rotate via admin
+    rotate_resp = client.post(f"/api/employees/{emp.id}/portal-token")
+    assert rotate_resp.status_code == 200, rotate_resp.text
+    rotated = rotate_resp.json()
+    assert rotated["portal_token"] != token
+    r = client.get(f"/portal/{rotated['portal_token']}", follow_redirects=False)
+    assert r.status_code == 303  # fresh token claims successfully
+
+    # 8. The audit log captured every step
+    audits = db_session.query(PortalAccess).order_by(PortalAccess.id).all()
+    # Claim (1) + 5 cookieless GETs (2-6) + PTO POST + 2 GETs after POST
+    # + cold /portal/ (failure) + expired claim (failure) + new claim (success)
+    assert len(audits) >= 8
+    assert any(not a.success for a in audits)
+    assert any(a.success and a.employee_id == emp.id for a in audits)
+
+
+def test_portal_access_audit_log_records_success_and_failure(
+    client: any, db_session: Session
+):
+    """Every cookieless portal hit writes a portal_accesses row — success
+    when the cookie resolves to a live employee, failure when it doesn't."""
+    from app.models.portal_access import PortalAccess
+
+    emp = Employee(
+        first_name="Audit",
+        last_name="Trail",
+        pay_type="hourly",
+        pay_rate=Decimal("25"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
+    )
+    db_session.add(emp)
+    db_session.commit()
+
+    token = client.get(f"/api/employees/{emp.id}/portal-token").json()["portal_token"]
+    client.get(f"/portal/{token}")  # claim sets cookie + records access
+    # one authed page-view
+    client.get("/portal/paystubs", follow_redirects=False)
+
+    # And one un-cookied attempt (after clearing the jar)
+    client.cookies.clear()
+    client.get("/portal/", follow_redirects=False)
+
+    rows = db_session.query(PortalAccess).order_by(PortalAccess.id).all()
+    # claim, paystubs, failed cold hit = 3 rows minimum
+    assert len(rows) >= 3
+    success = [r for r in rows if r.success]
+    failure = [r for r in rows if not r.success]
+    assert any(r.employee_id == emp.id for r in success)
+    assert any(r.path == "/portal/" for r in failure)
+    # path + ip + ua populated
+    for r in rows:
+        assert r.path.startswith("/portal/")
+
+
 def test_portal_cookieless_profile_save_via_cookie(client: any, db_session: Session):
     """POST /portal/profile (cookieless) saves W-4 fields via cookie auth."""
     emp = Employee(

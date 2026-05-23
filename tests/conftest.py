@@ -50,6 +50,7 @@ from app.models import (  # noqa: F401
     document_audit as document_audit_model,
     email_log,
     email_templates,
+    portal_access as portal_access_model,
     estimates,
     hr,
     invoices,

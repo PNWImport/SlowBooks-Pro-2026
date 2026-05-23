@@ -28,6 +28,7 @@ from app.config import FORCE_HTTPS
 from app.database import get_db
 from app.models.bank_accounts import BankAccountKind, DepositType, EmployeeBankAccount
 from app.models.payroll import Employee, FilingStatus
+from app.models.portal_access import PortalAccess
 from app.models.pto import PTOAccrual, PTOPolicy, PTORequest, PTOType
 from app.services.encryption import encrypt
 from app.services.rate_limit import limiter
@@ -122,23 +123,77 @@ def _set_portal_cookie(response, token: str) -> None:
     )
 
 
-def _claim(token: str, redirect_to: str, db: Session) -> RedirectResponse:
-    """Validate the URL-supplied token, stamp the cookie, redirect away."""
-    _get_employee(token, db)  # raises 404 / 410
+def _claim(
+    token: str, redirect_to: str, db: Session, request: Request | None = None
+) -> RedirectResponse:
+    """Validate the URL-supplied token, stamp the cookie, redirect away.
+
+    Records a portal_accesses row when `request` is provided — backward-
+    compat token URLs route here and the operator wants to see them in
+    the audit trail too.
+    """
+    try:
+        emp = _get_employee(token, db)
+    except HTTPException:
+        if request is not None:
+            _record_portal_access(db, request, employee_id=None, success=False)
+        raise
+    if request is not None:
+        _record_portal_access(db, request, employee_id=emp.id, success=True)
     response = _portal_redirect(redirect_to)
     _set_portal_cookie(response, token)
     return response
 
 
+def _client_ip(request: Request) -> str:
+    """X-Forwarded-For-aware client IP, capped at 45 chars for IPv6."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()[:45]
+    client = request.client
+    return (client.host if client else "")[:45]
+
+
+def _record_portal_access(
+    db: Session, request: Request, employee_id: int | None, success: bool
+) -> None:
+    """Insert one portal_accesses row. Swallows write failures so the audit
+    write can never break the request itself."""
+    try:
+        db.add(
+            PortalAccess(
+                employee_id=employee_id,
+                ip=_client_ip(request),
+                user_agent=(request.headers.get("user-agent") or "")[:255],
+                path=request.url.path[:200],
+                success=success,
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
 def _employee_from_cookie(request: Request, db: Session) -> Employee:
-    """Resolve the employee from the portal cookie, or 401 if absent / invalid."""
+    """Resolve the employee from the portal cookie, or 401 if absent / invalid.
+
+    Records a portal_accesses row on every call — success and failure both
+    show up so forensic queries can spot patterns (e.g. a sudden burst of
+    401s from one IP)."""
     token = request.cookies.get(PORTAL_COOKIE_NAME)
     if not token:
+        _record_portal_access(db, request, employee_id=None, success=False)
         raise HTTPException(
             status_code=401,
             detail="Portal session required — open the link from your email again",
         )
-    return _get_employee(token, db)
+    try:
+        emp = _get_employee(token, db)
+    except HTTPException:
+        _record_portal_access(db, request, employee_id=None, success=False)
+        raise
+    _record_portal_access(db, request, employee_id=emp.id, success=True)
+    return emp
 
 
 def _processed_stub_count(emp: Employee) -> int:
@@ -409,31 +464,31 @@ def portal_favicon(db: Session = Depends(get_db)):
 @router.get("/portal/{token}")
 @limiter.limit("30/minute")
 def portal_claim_dashboard(request: Request, token: str, db: Session = Depends(get_db)):
-    return _claim(token, "/portal/", db)
+    return _claim(token, "/portal/", db, request)
 
 
 @router.get("/portal/{token}/paystubs")
 @limiter.limit("30/minute")
 def portal_claim_paystubs(request: Request, token: str, db: Session = Depends(get_db)):
-    return _claim(token, "/portal/paystubs", db)
+    return _claim(token, "/portal/paystubs", db, request)
 
 
 @router.get("/portal/{token}/profile")
 @limiter.limit("30/minute")
 def portal_claim_profile(request: Request, token: str, db: Session = Depends(get_db)):
-    return _claim(token, "/portal/profile", db)
+    return _claim(token, "/portal/profile", db, request)
 
 
 @router.get("/portal/{token}/bank")
 @limiter.limit("30/minute")
 def portal_claim_bank(request: Request, token: str, db: Session = Depends(get_db)):
-    return _claim(token, "/portal/bank", db)
+    return _claim(token, "/portal/bank", db, request)
 
 
 @router.get("/portal/{token}/pto")
 @limiter.limit("30/minute")
 def portal_claim_pto(request: Request, token: str, db: Session = Depends(get_db)):
-    return _claim(token, "/portal/pto", db)
+    return _claim(token, "/portal/pto", db, request)
 
 
 # POST routes with token in the URL — process inline, stamp the cookie, then
