@@ -31,6 +31,21 @@
     const closeBtn = document.getElementById('modal-close-btn');
     if (closeBtn) closeBtn.addEventListener('click', () => typeof closeModal === 'function' && closeModal());
 
+    // Sign out — POSTs to /api/auth/logout, then reloads to splash.
+    // Auth is session-cookie based; the server clears the cookie and the
+    // reload bounces the user back to the login screen.
+    const logout = document.getElementById('logout-btn');
+    if (logout) logout.addEventListener('click', async () => {
+        if (!confirm('Sign out of Slowbooks?')) return;
+        try {
+            await API.post('/auth/logout', {});
+        } catch (_err) {
+            // Even on error we want to clear the local UI — the cookie may
+            // already be expired; just reload.
+        }
+        window.location.reload();
+    });
+
     // --- Global search ----------------------------------------------------
     const search = document.getElementById('global-search');
     if (search) {

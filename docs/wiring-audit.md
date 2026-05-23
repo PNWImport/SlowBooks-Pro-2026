@@ -115,9 +115,31 @@ test_pto_request_approve_alias_decisions_request  # fix #3
 test_pto_request_reject_alias_decisions_request   # fix #3
 ```
 
-The `API.delete()` → `API.del()` typos can't be unit-tested cheaply
-(would need a Playwright/Selenium harness), so the protection there is
-"the grep query above will surface any new instance in seconds."
+The big lock-in lives in **`tests/test_wiring.py`** — three tests that
+run on every push:
+
+| Test | What it asserts |
+|------|-----------------|
+| `test_every_js_api_call_resolves_to_a_route` | Every `API.get/post/put/del('…')` and `fetch('/api/…')` call in the SPA resolves to a registered FastAPI route with a matching method. Catches typos and renamed routes. |
+| `test_collector_finds_something` | Smoke test for the regex itself — if it ever drops below 20 detected calls, the parser is broken. |
+| `test_no_orphan_backend_routes` | Every backend `/api/*` route either has a SPA caller (forward or reverse direction), is portal-scoped, or is on the `_INTENTIONAL_BACKEND_ONLY` allowlist with a comment explaining why. Catches routes whose UI has been refactored away. |
+
+The collector picks up five call styles to keep the audit honest:
+
+1. `API.get/post/put/del('/path')` — the JSON helper (method known)
+2. `fetch('/api/path', { method: 'POST' })` — raw fetch for uploads + blobs
+3. Any `'/api/…'` string literal — catches `window.open('/api/checks/print')`
+4. Any leading-slash template literal — catches paths assigned to a
+   variable before being passed to `API.post(url, body)`
+5. `href="/api/…"` / `action="/api/…"` — catches modal HTML downloads
+   and admin form submissions, both in JS-rendered HTML and `index.html`
+
+It pre-substitutes `${…}` blocks with `*` so nested expressions like
+`${encodeURIComponent(x)}` don't break the regex at the embedded parens.
+
+The `API.delete()` → `API.del()` typos still can't be caught unit-test
+cheap (would need Playwright/Selenium), but the regex above will surface
+any new instance immediately on the forward-test failure.
 
 ---
 

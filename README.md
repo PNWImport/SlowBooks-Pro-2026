@@ -34,6 +34,8 @@ The codebase is annotated with "decompilation" comments referencing `QBW32.EXE` 
 
 **Hardened for production** — App-level HTTPS redirect + HSTS, Content-Security-Policy, Fernet at-rest encryption with versioned ciphertext (clean key rotation), portal token expiration (90-day idle + 1-year hard), Argon2id passwords, rate limiting on login and portal, and startup checks that fail hard on critical misconfig. See [docs/security-hardening.md](docs/security-hardening.md).
 
+**Customer details popout + reseller permits** — Click a customer row to open a single-screen details modal with addresses, autosaving notes, attached reseller permits, and recent invoices/payments. A standalone reseller-permit module tracks expiration, validates per-state formats (WA 9-digit, CA 9-12, TX 11), and one-click-opens the state's official lookup site in your default browser for verification — the verification trail (who, when) is stored locally.
+
 See the [release notes on GitHub](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases) for the full changelog.
 
 ---

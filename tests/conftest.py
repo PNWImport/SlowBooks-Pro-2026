@@ -81,6 +81,8 @@ from app.main import app  # noqa: E402
 @pytest.fixture
 def db_engine():
     """Per-test in-memory SQLite engine with full schema."""
+    from app.services.audit import register_audit_hooks
+
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -88,18 +90,30 @@ def db_engine():
     )
     Base.metadata.create_all(bind=engine)
     # Point the app module at this engine so SessionLocal-based code (audit
-    # hooks, etc.) also land in the same DB.
+    # hooks, etc.) also land in the same DB. The audit `after_flush` hook
+    # is registered against the session factory, so we must re-register it
+    # on the new factory — otherwise the audit_log mechanism is silently
+    # bypassed in tests.
     db_module.engine = engine
     db_module.SessionLocal = sessionmaker(
         autocommit=False, autoflush=False, bind=engine
     )
+    register_audit_hooks(db_module.SessionLocal)
     yield engine
     engine.dispose()
 
 
 @pytest.fixture
 def TestSession(db_engine):
-    return sessionmaker(autocommit=False, autoflush=False, bind=db_engine)
+    """Per-test session factory. The `client` fixture wires get_db to this,
+    so any audit hook the production app expects must be re-attached here
+    (the registration in main.py only fires for the original SessionLocal,
+    which conftest replaces above)."""
+    from app.services.audit import register_audit_hooks
+
+    factory = sessionmaker(autocommit=False, autoflush=False, bind=db_engine)
+    register_audit_hooks(factory)
+    return factory
 
 
 @pytest.fixture

@@ -7,6 +7,53 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### CRM-side UX additions
+- **Customer Details modal** — clicking a customer row now opens a
+  single-screen popout (no sub-tabs) with billing/shipping addresses,
+  autosaving notes, attached reseller permits, recent invoices, and
+  recent payments. Closes the "where do we put notes for everyone to
+  see?" gap.
+- **Reseller permits module** — new `#/reseller-permits` page with
+  expiring-soon strip, per-state format validation (WA 9-digit, CA
+  9-12, TX 11), copy-permit/business-name/tax-ID buttons, and a
+  unified Verify workflow that opens the state's official lookup site
+  in the default browser (`window.open('_blank', 'noopener,noreferrer')`
+  after a confirm dialog) then stamps `last_verified_at` / disables
+  with an inactive marker. Backend has CRUD + `/expiring` +
+  `/validate-format` + `/mark-verified`. Pure record-keeping — there
+  is no fake "API call" to the state; the operator does the lookup,
+  we record the verification trail.
+- **Admin Sign Out button** — topbar now has a dedicated logout button
+  that POSTs `/api/auth/logout` and reloads to the splash page. The
+  endpoint was live; only the button was missing.
+
+### Test infrastructure
+- **Bidirectional wiring audit** — `tests/test_wiring.py` already
+  asserted every JS `API.*` call resolves to a route; it now also
+  asserts every backend `/api/*` route has a JS caller (or is on the
+  `_INTENTIONAL_BACKEND_ONLY` allowlist). The catch-all collector
+  picks up template-literal paths (including paths assigned to a
+  variable before `API.post(url, …)`), `href=`/`action=` attributes
+  in JS-rendered HTML, and `window.open('/api/…')`. Pre-substitutes
+  `${…}` blocks before regex matching so nested `encodeURIComponent`
+  expressions don't break the path capture. Each allowlist entry now
+  carries a comment explaining *why* the route has no SPA caller
+  (admin-only, scheduled job, drill-down endpoint shadowed by the
+  bundled `/dashboard` response, future UI tab, etc.).
+- **Audit hook coverage in tests** — `conftest.py` was creating a
+  fresh per-test session factory but never re-attaching the
+  `after_flush` audit hook to it, so the entire audit-log mechanism
+  was silently bypassed in every existing test. The fixture now calls
+  `register_audit_hooks` on the per-test session factory. A new
+  matrix test (`test_audit_log_covers_new_entities_but_skips_audit_tables`)
+  asserts a ResellerPermit insert lands in `audit_log` and a
+  PortalAccess insert does NOT (it's already an audit-flavored table).
+- **`_SKIP_TABLES` curated** — `audit_log` was the only entry; added
+  `portal_accesses`, `login_attempts`, `document_audits`, and
+  `email_log` (every one is itself an audit/log table, and double-
+  logging into `audit_log` would just add noise and create a future
+  recursion footgun if any of them ever gains a trigger-set `id`).
+
 ### Payroll / HR UI additions
 - **Portal-token admin view** — Employee Details > Portal Access now
   shows expires-at (red when <30 days), last-used-at, and a
@@ -178,7 +225,7 @@ handler caught four real breakages:
   gitignored so dumps don't accidentally land in commits.
 
 ### Test coverage
-276 tests passing. Up from 119 at the start of this branch's work.
+295 tests passing. Up from 119 at the start of this branch's work.
 All previously-passing tests still pass.
 
 ### Docs reorganization

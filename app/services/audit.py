@@ -9,8 +9,20 @@ from sqlalchemy.orm import Session
 
 from app.models.audit import AuditLog
 
-# Tables to skip auditing
-_SKIP_TABLES = {"audit_log"}
+# Tables to skip auditing.
+# audit_log itself must be skipped to prevent infinite recursion (the
+# audit entries we're about to write would themselves trigger writes).
+# The others are already audit/log-style tables — every insert into them
+# IS the audit event, and double-logging in audit_log only adds noise
+# (and risks the same recursion if a future migration adds an `id` set
+# via trigger). Keep this set in sync with new audit-style models.
+_SKIP_TABLES = {
+    "audit_log",        # primary audit table (recursion guard)
+    "portal_accesses",  # portal cookie / token claim access log
+    "login_attempts",   # admin failed-login tracking
+    "document_audits",  # hash-chain document audit
+    "email_log",        # outbound email send log
+}
 
 
 def _serialize_value(val):

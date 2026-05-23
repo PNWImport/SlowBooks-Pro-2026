@@ -611,6 +611,60 @@ def test_portal_access_audit_log_records_success_and_failure(
         assert r.path.startswith("/portal/")
 
 
+def test_audit_log_covers_new_entities_but_skips_audit_tables(
+    client: any, db_session: Session
+):
+    """Lock-in for the audit-coverage matrix.
+
+    The SQLAlchemy after_flush hook auto-logs every model unless the
+    table is in `_SKIP_TABLES`. New entities (ResellerPermit, customer
+    notes edits, etc.) must show up in `audit_log`; audit-flavored
+    tables (portal_accesses, document_audits, login_attempts, email_log)
+    must NOT, so we don't double-record the same event.
+    """
+    from app.models.audit import AuditLog
+    from app.models.reseller_permit import ResellerPermit
+    from app.models.portal_access import PortalAccess
+
+    # 1) Insert a ResellerPermit — should land in audit_log.
+    resp = client.post(
+        "/api/reseller-permits",
+        json={
+            "entity_type": "customer",
+            "entity_id": 1,
+            "jurisdiction": "WA",
+            "permit_number": "123456789",
+        },
+    )
+    assert resp.status_code == 201
+    permit_id = resp.json()["id"]
+
+    db_session.expire_all()
+    permit_audits = (
+        db_session.query(AuditLog)
+        .filter_by(table_name="reseller_permits", record_id=permit_id)
+        .all()
+    )
+    assert any(a.action == "INSERT" for a in permit_audits), (
+        "ResellerPermit INSERT must be audited"
+    )
+
+    # 2) Insert a PortalAccess row directly — should NOT land in audit_log.
+    pa = PortalAccess(
+        employee_id=None, ip="1.2.3.4", user_agent="test", path="/portal/", success=False
+    )
+    db_session.add(pa)
+    db_session.commit()
+    db_session.expire_all()
+
+    portal_audits = (
+        db_session.query(AuditLog).filter_by(table_name="portal_accesses").all()
+    )
+    assert portal_audits == [], (
+        "portal_accesses is itself an audit table — must not double-log into audit_log"
+    )
+
+
 def test_portal_cookieless_profile_save_via_cookie(client: any, db_session: Session):
     """POST /portal/profile (cookieless) saves W-4 fields via cookie auth."""
     emp = Employee(

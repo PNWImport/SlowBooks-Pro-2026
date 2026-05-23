@@ -71,6 +71,37 @@ item, asserting (a) construction with required fields, (b) defaults,
 
 ---
 
+## Future work — flagged, not started
+
+- **Activity log / CRM timeline per customer** — calls, emails, meetings,
+  in-app notes logged against a Customer and rendered as a unified
+  chronological feed on the customer details modal. Likely model: a
+  polymorphic `ActivityEntry(entity_type, entity_id, kind, body, occurred_at,
+  created_by)`. Rationale: notes-only is too thin; ops teams need to see
+  "we called this customer last Tuesday." The audit_log table already
+  captures system-level changes — this would be human-entered activity.
+- **Email integration** — outbound real send via SMTP / SES / Postmark
+  (currently `email_log` records intent but no transport is wired). Once
+  transport lands, replies/bounces feed back into the activity log above.
+  Will need a per-company SMTP config, bounce-handling webhook, and a
+  rate-limit on auto-sent dunning / reminder emails.
+- **Inventory item movement history UI** — `GET /api/items/{id}/movements`
+  endpoint is live; needs a "Movements" tab on the item details modal.
+- **AP aging report** in the Reports menu — endpoint
+  `GET /api/reports/ap-aging` exists; only AR aging is in the menu today.
+- **DocumentAudit (hash-chain) viewer UI** — endpoints ready
+  (`/api/document-audits`, `/api/document-audits/verify/{hash}`); need an
+  admin "Compliance" tab.
+- **Audit log viewer** — endpoint `GET /api/audit` returns records; UI
+  to browse + filter by table/record/action/date.
+- **Portal time-entry submit flow** — server endpoint
+  `POST /api/time-entries/{id}/submit` exists for employee self-service;
+  portal UI page does not.
+- **Stripe upgrade / checkout** — `POST /api/stripe/create-checkout-session`
+  ready; surfacing requires a pricing-page + plan model. Single-tier today.
+
+---
+
 ## Known small bugs
 
 (none.)
