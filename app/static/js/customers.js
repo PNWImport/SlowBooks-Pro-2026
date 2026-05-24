@@ -19,7 +19,10 @@ const CustomersPage = {
             </div>`;
 
         if (customers.length === 0) {
-            html += `<div class="empty-state"><p>No customers yet</p></div>`;
+            html += `<div class="empty-state">
+                <p>No customers yet.</p>
+                <button class="btn btn-primary" onclick="CustomersPage.showForm()" style="margin-top:10px;">+ Create your first customer</button>
+            </div>`;
         } else {
             html += `<div class="table-container"><table>
                 <thead><tr>

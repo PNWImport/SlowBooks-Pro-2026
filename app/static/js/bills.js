@@ -24,7 +24,10 @@ const BillsPage = {
             </div>`;
 
         if (bills.length === 0) {
-            html += '<div class="empty-state"><p>No bills entered yet</p></div>';
+            html += `<div class="empty-state">
+                <p>No bills entered yet.</p>
+                <button class="btn btn-primary" onclick="BillsPage.showForm()" style="margin-top:10px;">+ Enter your first bill</button>
+            </div>`;
         } else {
             html += `<div class="table-container"><table>
                 <thead><tr><th>Bill #</th><th>Vendor</th><th>Date</th><th>Due</th><th>Status</th>

@@ -85,6 +85,35 @@ item, asserting (a) construction with required fields, (b) defaults,
   transport lands, replies/bounces feed back into the activity log above.
   Will need a per-company SMTP config, bounce-handling webhook, and a
   rate-limit on auto-sent dunning / reminder emails.
+- **Inbox watcher — AI-staged inbound email routing.** Higher-order feature
+  built on top of the email integration above. The operator authorizes a
+  mailbox (Microsoft Graph + Entra ID app registration, or IMAP for the
+  self-host path); a background worker polls or subscribes for new mail.
+  Each inbound message goes through:
+  1. **Parse** — pull obvious refs from subject + body: PO numbers, invoice
+     numbers, customer/vendor names, dollar amounts, dates.
+  2. **Match** — fuzzy-match parsed refs against live records (the same
+     duplicate-detection engine already at `/api/customers/check-duplicate`
+     extends to invoice-number + PO-number lookup).
+  3. **Classify + sentiment** — pass the body through the AI layer (the
+     existing 7-provider BYOK config in `app/services/ai_service.py`) to
+     tag intent (payment confirmation / dispute / inquiry / quote /
+     unrelated) plus sentiment (positive / neutral / negative). Tag goes
+     into the staged record; AI never auto-acts.
+  4. **Stage** — write a row to a new `inbound_email_queue` table with the
+     parsed refs, matched records, classification, sentiment, and the raw
+     message text + attachments. NEVER auto-apply.
+  5. **User review** — a "Mail queue" page lists the staged items grouped
+     by suggested action (Apply payment / Acknowledge dispute / Reply to
+     inquiry / Archive). Operator clicks Confirm; the action fires through
+     the existing API (e.g. `POST /api/payments` with allocation derived
+     from the matched invoice).
+  Differentiator vs Power Apps / Zapier composites: it's one click in your
+  bookkeeper, not a six-step automation built in a separate tool.
+  Pre-reqs: `inbound_email_queue` table + worker process + per-mailbox auth
+  config (Entra app registration walkthrough in setup-mail.md) + a Mail
+  queue UI page. Depends on the Email integration item above (shared SMTP
+  + IMAP wiring).
 - **Inventory item movement history UI** — `GET /api/items/{id}/movements`
   endpoint is live; needs a "Movements" tab on the item details modal.
 - **AP aging report** in the Reports menu — endpoint

@@ -16,7 +16,10 @@ const ItemsPage = {
             </div>`;
 
         if (items.length === 0) {
-            html += `<div class="empty-state"><p>No items yet</p></div>`;
+            html += `<div class="empty-state">
+                <p>No items yet.</p>
+                <button class="btn btn-primary" onclick="ItemsPage.showForm()" style="margin-top:10px;">+ Create your first item</button>
+            </div>`;
         } else {
             html += `<div class="table-container"><table>
                 <thead><tr>

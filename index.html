@@ -35,6 +35,9 @@
     </div>
 
     <div id="app">
+        <!-- Skip link for keyboard users — first tab stop, lets them jump
+             past the topbar + sidebar straight into page content. -->
+        <a href="#page-content" class="skip-link">Skip to main content</a>
         <!-- Toolbar (CQBMenuBar + CQBToolBar) -->
         <div id="topbar">
             <div class="topbar-brand">Slowbooks Pro <span>2026</span></div>
@@ -181,7 +184,7 @@
         <div id="modal" class="modal">
             <div class="modal-header">
                 <h2 id="modal-title"></h2>
-                <button class="modal-close" id="modal-close-btn">&times;</button>
+                <button class="modal-close" id="modal-close-btn" aria-label="Close dialog" type="button">&times;</button>
             </div>
             <div id="modal-body"></div>
         </div>

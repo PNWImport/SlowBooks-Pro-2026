@@ -27,7 +27,10 @@ const InvoicesPage = {
             </div>`;
 
         if (invoices.length === 0) {
-            html += `<div class="empty-state"><p>No invoices yet</p></div>`;
+            html += `<div class="empty-state">
+                <p>No invoices yet.</p>
+                <button class="btn btn-primary" onclick="InvoicesPage.showForm()" style="margin-top:10px;">+ Create your first invoice</button>
+            </div>`;
         } else {
             html += `<div class="table-container"><table>
                 <thead><tr>
@@ -46,6 +49,7 @@ const InvoicesPage = {
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="InvoicesPage.view(${inv.id})">View</button>
                         <button class="btn btn-sm btn-secondary" onclick="InvoicesPage.showForm(${inv.id})">Edit</button>
+                        ${inv.status === 'draft' ? `<button class="btn btn-sm btn-primary" onclick="InvoicesPage.markSent(${inv.id})">Mark Sent</button>` : ''}
                     </td>
                 </tr>`;
             }
@@ -221,12 +225,17 @@ const InvoicesPage = {
                             </div>
                         </div></div>
                     <div class="form-group"><label>Date *</label>
-                        <input name="date" type="date" required value="${inv.date}"></div>
+                        <input name="date" type="date" required value="${inv.date}"
+                            onchange="InvoicesPage._recomputeDueDate()"></div>
                     <div class="form-group"><label>Terms</label>
-                        <select name="terms" id="invoice-terms">
+                        <select name="terms" id="invoice-terms"
+                            onchange="InvoicesPage._recomputeDueDate()">
                             ${['Net 15','Net 30','Net 45','Net 60','Due on Receipt'].map(t =>
                                 `<option value="${t}" ${inv.terms===t?'selected':''}>${t}</option>`).join('')}
                         </select></div>
+                    <div class="form-group"><label>Due Date</label>
+                        <input name="due_date" type="date" value="${inv.due_date || ''}"
+                            title="Auto-calculated from Date + Terms. Edit to override."></div>
                     <div class="form-group"><label>PO #</label>
                         <input name="po_number" value="${escapeHtml(inv.po_number || '')}"></div>
                     <div class="form-group"><label>Tax Rate (%)</label>
@@ -258,6 +267,8 @@ const InvoicesPage = {
             </form>`);
         if (!id && inv.customer_id) InvoicesPage.customerSelected(inv.customer_id);
         InvoicesPage.recalc();
+        // Populate due_date for fresh invoices that don't already have one.
+        if (!inv.due_date) InvoicesPage._recomputeDueDate();
     },
 
     customerSelected(customerId) {
@@ -351,6 +362,29 @@ const InvoicesPage = {
         $('#inv-total').textContent = formatCurrency(subtotal + tax);
     },
 
+    // Auto-fill due_date from date + terms when either changes. Backend
+    // does the same calc server-side if due_date arrives null, but
+    // showing it inline tells the user "yes this is what we mean by
+    // Net 30" before they hit Save.
+    _recomputeDueDate() {
+        const dateEl = $('[name="date"]');
+        const termsEl = $('[name="terms"]');
+        const dueDateEl = $('[name="due_date"]');
+        if (!dateEl || !termsEl || !dueDateEl || !dateEl.value) return;
+        const daysMap = {
+            'Net 15': 15, 'Net 30': 30, 'Net 45': 45, 'Net 60': 60,
+            'Due on Receipt': 0,
+        };
+        const days = daysMap[termsEl.value];
+        if (days === undefined) return;
+        // Parse YYYY-MM-DD as local date (not UTC) to avoid DST shifts.
+        const [y, m, d] = dateEl.value.split('-').map(Number);
+        const dt = new Date(y, m - 1, d);
+        dt.setDate(dt.getDate() + days);
+        const pad = n => String(n).padStart(2, '0');
+        dueDateEl.value = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+    },
+
     async save(e, id) {
         e.preventDefault();
         const form = e.target;
@@ -369,6 +403,7 @@ const InvoicesPage = {
         const data = {
             customer_id: parseInt(form.customer_id.value),
             date: form.date.value,
+            due_date: form.due_date.value || null,
             terms: form.terms.value,
             po_number: form.po_number.value || null,
             tax_rate: (parseFloat(form.tax_rate.value) || 0) / 100,

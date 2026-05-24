@@ -360,7 +360,11 @@ const EmployeesPage = {
                 &nbsp;·&nbsp;
                 Last used ${lastUsed ? `${daysSinceUsed} day${daysSinceUsed === 1 ? '' : 's'} ago (${lastUsed.toISOString().slice(0,10)})` : '<em>never</em>'}
             </p>
-            <button class="btn btn-sm btn-secondary" onclick="EmployeesPage._regeneratePortalToken(${id})">Rotate Token</button>`;
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+                <button class="btn btn-sm btn-primary" onclick="EmployeesPage._copyPortalLink('${url.replace(/'/g, "\\'")}')">Copy Link</button>
+                <button class="btn btn-sm btn-secondary" onclick="EmployeesPage._emailPortalLink('${url.replace(/'/g, "\\'")}')">Email to Employee…</button>
+                <button class="btn btn-sm btn-secondary" onclick="EmployeesPage._regeneratePortalToken(${id})">Rotate Token</button>
+            </div>`;
 
         if (Array.isArray(access) && access.length > 0) {
             html += `
@@ -381,6 +385,34 @@ const EmployeesPage = {
                 </details>`;
         }
         return html;
+    },
+
+    _copyPortalLink(url) {
+        if (!url) { toast('No portal URL yet — generate a token first.', 'error'); return; }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(
+                () => toast('Portal link copied to clipboard'),
+                () => toast('Couldn\'t copy — select the link and copy manually.', 'error'),
+            );
+        } else {
+            toast('Clipboard API unavailable — select the URL above and copy manually.', 'error');
+        }
+    },
+
+    _emailPortalLink(url) {
+        if (!url) { toast('No portal URL yet — generate a token first.', 'error'); return; }
+        // Single-token URL — leaks via Referer if the employee clicks it on
+        // a page with outbound links. The actual portal claim flow swaps the
+        // token for an HttpOnly cookie on first hit, so the exposure window
+        // is one request. Still worth the heads-up in the mailto body.
+        const subject = encodeURIComponent('Your Slowbooks employee portal link');
+        const body = encodeURIComponent(
+            'Hi,\n\nUse the link below to access your pay stubs, W-4, and ' +
+            'time-off requests:\n\n' + url + '\n\nThe link is personal — please ' +
+            'don\'t forward it. After your first visit it becomes cookieless ' +
+            'and can\'t be reused from another device.\n\nThanks.'
+        );
+        window.location.href = `mailto:?subject=${subject}&body=${body}`;
     },
 
     async _regeneratePortalToken(id) {
