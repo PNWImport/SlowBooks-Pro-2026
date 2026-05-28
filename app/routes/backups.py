@@ -75,6 +75,24 @@ def restore(data: RestoreRequest, db: Session = Depends(get_db)):
     filepath = (BACKUP_DIR / data.filename).resolve()
     if not filepath.is_relative_to(BACKUP_DIR.resolve()):
         raise HTTPException(status_code=400, detail="Invalid filename")
+
+    # Restore overwrites the entire database — leave a breadcrumb BEFORE the
+    # operation. The audit_log itself may be replaced by the restore, so this
+    # row records intent in the CURRENT (pre-restore) DB; pair it with the
+    # backup-file's own contents for the full picture. Committed immediately
+    # so it survives even if the restore process aborts mid-way.
+    from app.services.audit import log_event
+
+    log_event(
+        db,
+        table_name="backups",
+        record_id=0,
+        action="RESTORE",
+        new_values={"filename": filepath.name},
+        source="admin",
+    )
+    db.commit()
+
     result = restore_backup(db, filepath.name)
     if not result.get("success"):
         raise HTTPException(

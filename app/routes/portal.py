@@ -146,8 +146,12 @@ def _claim(
 
 
 def _client_ip(request: Request) -> str:
-    """X-Forwarded-For-aware client IP, capped at 45 chars for IPv6."""
-    fwd = request.headers.get("x-forwarded-for", "")
+    """Client IP, capped at 45 chars for IPv6. Honors X-Forwarded-For only
+    behind a declared trusted proxy (TRUST_PROXY_HEADERS) — otherwise XFF is
+    client-spoofable and would poison the portal access audit trail."""
+    from app.config import TRUST_PROXY_HEADERS
+
+    fwd = request.headers.get("x-forwarded-for", "") if TRUST_PROXY_HEADERS else ""
     if fwd:
         return fwd.split(",")[0].strip()[:45]
     client = request.client
