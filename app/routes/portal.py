@@ -154,6 +154,23 @@ def _client_ip(request: Request) -> str:
     return (client.host if client else "")[:45]
 
 
+def _redact_portal_path(path: str) -> str:
+    """Strip the portal token out of a path before it's persisted.
+
+    Legacy /portal/<token>/... URLs carry a live bearer credential in the
+    path segment. Logging it verbatim would write a working token into
+    portal_accesses (visible in the admin audit UI and every pg_dump) —
+    anyone with read access could then impersonate the employee. Cookieless
+    route names (/portal/paystubs, /portal/profile) are short words, so a
+    length heuristic cleanly distinguishes them from a ~32-char token.
+    """
+    parts = path.split("/")
+    # ['', 'portal', '<maybe token>', ...] — redact a long 3rd segment.
+    if len(parts) >= 3 and len(parts[2]) > 20:
+        parts[2] = "REDACTED"
+    return "/".join(parts)
+
+
 def _record_portal_access(
     db: Session, request: Request, employee_id: int | None, success: bool
 ) -> None:
@@ -165,7 +182,7 @@ def _record_portal_access(
                 employee_id=employee_id,
                 ip=_client_ip(request),
                 user_agent=(request.headers.get("user-agent") or "")[:255],
-                path=request.url.path[:200],
+                path=_redact_portal_path(request.url.path)[:200],
                 success=success,
             )
         )

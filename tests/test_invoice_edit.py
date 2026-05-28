@@ -245,3 +245,88 @@ def test_editing_invoice_preserves_explicit_due_date(
     )
     assert r.status_code == 200, r.text
     assert r.json()["due_date"] == "2026-06-15"
+
+
+# ---------------------------------------------------------------------------
+# JE rounding regression (enterprise eval CRITICAL):
+# sub-cent unit rates produced an unbalanced journal entry → 500 on create.
+# AR debit used the rounded total while income credits used unrounded qty*rate.
+# ---------------------------------------------------------------------------
+
+
+def test_subcent_rate_invoice_posts_balanced_je(
+    client, db_session, seed_accounts, seed_customer
+):
+    """qty=3 @ rate=1.005 (fuel-style sub-cent price) must create a balanced
+    JE, not 500. Regression for the rounded-debit / unrounded-credit bug."""
+    from app.models.transactions import TransactionLine
+
+    r = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": seed_customer.id,
+            "date": "2026-04-01",
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "description": "fuel",
+                    "quantity": "3",
+                    "rate": "1.005",
+                    "line_order": 0,
+                }
+            ],
+        },
+    )
+    assert r.status_code == 201, r.text  # was 500 before the fix
+    txn_id = (
+        db_session.query(
+            __import__("app.models.invoices", fromlist=["Invoice"]).Invoice
+        )
+        .filter_by(id=r.json()["id"])
+        .first()
+        .transaction_id
+    )
+    lines = db_session.query(TransactionLine).filter_by(transaction_id=txn_id).all()
+    dr = sum((Decimal(str(l.debit)) for l in lines), Decimal("0"))
+    cr = sum((Decimal(str(l.credit)) for l in lines), Decimal("0"))
+    assert dr == cr, f"journal unbalanced after sub-cent rate: dr={dr} cr={cr}"
+
+
+def test_subcent_rate_invoice_edit_stays_balanced(
+    client, db_session, seed_accounts, seed_customer
+):
+    """The edit path rebuilds the JE via the shared helper — same rounding
+    rule must hold."""
+    from app.models.transactions import TransactionLine
+    from app.models.invoices import Invoice
+
+    inv = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": seed_customer.id,
+            "date": "2026-04-01",
+            "tax_rate": "0",
+            "lines": [
+                {"description": "x", "quantity": "1", "rate": "10", "line_order": 0}
+            ],
+        },
+    ).json()
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={
+            "lines": [
+                {
+                    "description": "fuel",
+                    "quantity": "7",
+                    "rate": "2.005",
+                    "line_order": 0,
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    txn_id = db_session.query(Invoice).filter_by(id=inv["id"]).first().transaction_id
+    lines = db_session.query(TransactionLine).filter_by(transaction_id=txn_id).all()
+    dr = sum((Decimal(str(l.debit)) for l in lines), Decimal("0"))
+    cr = sum((Decimal(str(l.credit)) for l in lines), Decimal("0"))
+    assert dr == cr, f"edit JE unbalanced: dr={dr} cr={cr}"

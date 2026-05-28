@@ -1673,3 +1673,16 @@ def test_pto_request_reject_alias_decisions_request(client: any, db_session: Ses
     assert r.status_code == 200
     db_session.refresh(req)
     assert req.status == PTORequestStatus.DENIED
+
+
+def test_portal_access_log_redacts_token():
+    """The portal access log must never persist the live token in the path —
+    /portal/<token> would be a working bearer credential in the DB."""
+    from app.routes.portal import _redact_portal_path
+
+    tok = "abcDEF123456789_-xyzABC789012"  # ~29 chars, token-shaped
+    assert _redact_portal_path(f"/portal/{tok}") == "/portal/REDACTED"
+    assert _redact_portal_path(f"/portal/{tok}/paystubs") == "/portal/REDACTED/paystubs"
+    # Cookieless route names are short — must pass through untouched.
+    assert _redact_portal_path("/portal/paystubs") == "/portal/paystubs"
+    assert _redact_portal_path("/portal/") == "/portal/"

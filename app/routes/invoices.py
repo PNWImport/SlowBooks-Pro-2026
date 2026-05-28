@@ -36,6 +36,7 @@ from app.services.accounting import (
     get_default_income_account_id,
     get_sales_tax_account_id,
     compute_line_totals,
+    _q,
 )
 from app.services.settings_service import get_all_settings as get_settings
 from app.services.closing_date import check_closing_date
@@ -102,7 +103,11 @@ def _build_invoice_journal_lines(
         }
     )
     for ld in lines_iter:
-        line_amount = Decimal(str(ld.quantity)) * Decimal(str(ld.rate))
+        # Round each line to 2dp BEFORE summing — must match compute_line_totals
+        # exactly, or the credits won't sum to the rounded A/R debit and
+        # create_journal_entry rejects the unbalanced entry (sub-cent rates
+        # like fuel @ 1.005 / fractional qty otherwise 500 the whole post).
+        line_amount = _q(Decimal(str(ld.quantity)) * Decimal(str(ld.rate)))
         if line_amount == 0:
             continue
         income_id = default_income_id
@@ -259,9 +264,13 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
                 "description": f"Invoice #{invoice_number}",
             }
         )
-        # Credit income for each line (use item's income account or default)
+        # Credit income for each line (use item's income account or default).
+        # Round per line to match the rounded A/R debit (see helper above) —
+        # otherwise sub-cent rates produce an unbalanced JE and a 500.
         for line_data in data.lines:
-            line_amount = Decimal(str(line_data.quantity * line_data.rate))
+            line_amount = _q(
+                Decimal(str(line_data.quantity)) * Decimal(str(line_data.rate))
+            )
             if line_amount == 0:
                 continue
             income_id = default_income_id
