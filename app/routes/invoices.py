@@ -43,6 +43,27 @@ from app.services.closing_date import check_closing_date
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
 
+def _due_date_from_terms(base_date: date, terms: str | None) -> date:
+    """Compute a due date from a base date + a terms string.
+
+    Handles "Net N" (N days out) and "Due on Receipt" (same day). Anything
+    unrecognized falls back to Net 30. Shared by create + update so the two
+    paths can't drift — and so "Due on Receipt" no longer silently became a
+    30-day due date (the old inline `int("due on receipt".replace("net ",""))`
+    raised ValueError and fell through to +30).
+    """
+    if not terms:
+        return base_date + timedelta(days=30)
+    t = terms.strip().lower()
+    if t in ("due on receipt", "due upon receipt", "cod", "net 0"):
+        return base_date
+    try:
+        days = int(t.replace("net ", "").strip())
+        return base_date + timedelta(days=days)
+    except ValueError:
+        return base_date + timedelta(days=30)
+
+
 def _next_invoice_number(db: Session) -> str:
     """Reconstructed from CInvoice::GetNextRefNumber() @ 0x0015C9F0"""
     last = db.query(sqlfunc.max(Invoice.invoice_number)).scalar()
@@ -172,14 +193,8 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
 
     invoice_number = _next_invoice_number(db)
 
-    # Parse terms for due date
-    due_date = data.due_date
-    if not due_date and data.terms:
-        try:
-            days = int(data.terms.lower().replace("net ", ""))
-            due_date = data.date + timedelta(days=days)
-        except ValueError:
-            due_date = data.date + timedelta(days=30)
+    # Parse terms for due date (explicit due_date wins; else derive from terms)
+    due_date = data.due_date or _due_date_from_terms(data.date, data.terms)
 
     subtotal, tax_amount, total = _compute_totals(data.lines, data.tax_rate)
 
@@ -325,6 +340,13 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
     tax_rate_changed = "tax_rate" in update_data
     for key, val in update_data.items():
         setattr(invoice, key, val)
+
+    # The SPA always sends due_date now (a field added in the UX pass). An
+    # explicitly-cleared field arrives as null, which exclude_unset lets
+    # through — without this, clearing the box would wipe the stored due
+    # date to NULL. Mirror the create path: derive it from terms + date.
+    if "due_date" in update_data and invoice.due_date is None:
+        invoice.due_date = _due_date_from_terms(invoice.date, invoice.terms)
 
     # Recompute totals + journal whenever anything that affects them changes
     # (line list, tax rate, or both). Previously only lines triggered recompute,

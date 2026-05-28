@@ -182,12 +182,23 @@ const PaymentsPage = {
         if (!status) return;
         const total = parseFloat($('[name="amount"]')?.value) || 0;
         let allocated = 0;
-        $$('.alloc-amount').forEach(input => {
+        // Scope to the invoice table so we never pick up a stray .alloc-amount
+        // from another view that happens to be in the DOM.
+        const host = $('#payment-invoices');
+        (host ? host.querySelectorAll('.alloc-amount') : []).forEach(input => {
             allocated += parseFloat(input.value) || 0;
         });
         const remaining = total - allocated;
         const eps = 0.005;  // Decimal noise tolerance
-        if (total === 0) {
+        if (total === 0 && allocated > eps) {
+            // Amount cleared (or never entered) but money is allocated — this
+            // would submit a NaN/zero payment with real allocations. Warn.
+            status.style.background = '#fde2e2';
+            status.style.color = '#a4242b';
+            status.textContent =
+                `${formatCurrency(allocated)} allocated but the Payment amount is empty. ` +
+                `Enter the amount you received above.`;
+        } else if (total === 0) {
             status.style.background = 'var(--gray-100)';
             status.style.color = 'var(--gray-600)';
             status.textContent = 'Enter a payment amount above to begin allocating.';

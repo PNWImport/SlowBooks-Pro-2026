@@ -283,6 +283,10 @@ const InvoicesPage = {
         const termsField = $('#invoice-terms');
         if (customer && termsField && customer.terms) {
             termsField.value = customer.terms;
+            // Setting .value programmatically does NOT fire 'change', so the
+            // due-date wouldn't recompute on its own — leaving the form with
+            // (e.g.) Net 60 terms but a Net 30 due date. Recompute explicitly.
+            InvoicesPage._recomputeDueDate();
         }
     },
 
@@ -367,9 +371,14 @@ const InvoicesPage = {
     // showing it inline tells the user "yes this is what we mean by
     // Net 30" before they hit Save.
     _recomputeDueDate() {
-        const dateEl = $('[name="date"]');
-        const termsEl = $('[name="terms"]');
-        const dueDateEl = $('[name="due_date"]');
+        // Scope to the invoice form — a backced report page or another modal
+        // could also have a [name="date"] input, and a bare document-level
+        // query would grab whichever appears first in the DOM.
+        const form = $('#invoice-form');
+        if (!form) return;
+        const dateEl = form.querySelector('[name="date"]');
+        const termsEl = form.querySelector('[name="terms"]');
+        const dueDateEl = form.querySelector('[name="due_date"]');
         if (!dateEl || !termsEl || !dueDateEl || !dateEl.value) return;
         const daysMap = {
             'Net 15': 15, 'Net 30': 30, 'Net 45': 45, 'Net 60': 60,

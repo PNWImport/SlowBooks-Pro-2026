@@ -668,6 +668,41 @@ def test_audit_log_covers_new_entities_but_skips_audit_tables(
     ), "portal_accesses is itself an audit table — must not double-log into audit_log"
 
 
+def test_register_audit_hooks_is_idempotent():
+    """Registering the same factory twice must NOT attach the listener twice
+    (which would write duplicate audit_log rows for one change)."""
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.database import Base
+    from app.services.audit import register_audit_hooks, _after_flush
+    from app.models.contacts import Customer
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine)
+
+    register_audit_hooks(factory)
+    register_audit_hooks(factory)  # second call must be a no-op
+    assert event.contains(factory, "after_flush", _after_flush)
+
+    from app.models.audit import AuditLog
+
+    s = factory()
+    s.add(Customer(name="Dup Check", is_active=True))
+    s.commit()
+    rows = s.query(AuditLog).filter_by(table_name="customers").all()
+    s.close()
+    engine.dispose()
+    assert (
+        len(rows) == 1
+    ), f"expected exactly 1 audit row, got {len(rows)} (double-registered)"
+
+
 def test_portal_cookieless_profile_save_via_cookie(client: any, db_session: Session):
     """POST /portal/profile (cookieless) saves W-4 fields via cookie auth."""
     emp = Employee(

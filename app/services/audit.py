@@ -167,5 +167,11 @@ def _after_flush(session, flush_context):
 
 
 def register_audit_hooks(session_factory):
-    """Register the after_flush hook on the session factory."""
-    event.listen(session_factory, "after_flush", _after_flush)
+    """Register the after_flush hook on the session factory.
+
+    Idempotent: registering the same factory twice would otherwise attach
+    the listener twice and write duplicate audit_log rows for every change.
+    No current caller double-registers, but the guard is free insurance
+    against a future one (e.g. a test that rebuilds the app)."""
+    if not event.contains(session_factory, "after_flush", _after_flush):
+        event.listen(session_factory, "after_flush", _after_flush)

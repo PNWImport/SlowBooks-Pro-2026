@@ -15,6 +15,7 @@
 # ============================================================================
 
 import time as _time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -22,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, ORJSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -105,16 +106,8 @@ from app.config import (
 from app.database import SessionLocal, Base, engine
 from app.services.audit import register_audit_hooks
 
-# ORJSONResponse is 2-3x faster than the stdlib json encoder for every /api/* reply.
-app = FastAPI(
-    title="Slowbooks Pro 2026",
-    version="2.0.0",
-    default_response_class=ORJSONResponse,
-)
 
-
-@app.on_event("startup")
-def startup_security_checks():
+def _run_startup_security_checks():
     """Fail hard on critical misconfigurations BEFORE touching the DB.
 
     Order matters: the env-var checks are cheap and don't need network
@@ -151,6 +144,26 @@ def startup_security_checks():
 
     # Only after the cheap checks pass do we open a DB connection.
     Base.metadata.create_all(bind=engine)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """App lifespan. Replaces the deprecated @app.on_event("startup") hook
+    (removed in the Starlette 1.x line we pin). The security checks are the
+    fail-hard production guard — keep them on the startup side of the yield
+    so a misconfigured deploy never serves a single request."""
+    _run_startup_security_checks()
+    yield
+
+
+# FastAPI 0.121+ serializes return values to JSON bytes directly via Pydantic
+# (fast, and the reason ORJSONResponse was deprecated in 0.136). We let it use
+# its default response class rather than pinning the now-deprecated ORJSON one.
+app = FastAPI(
+    title="Slowbooks Pro 2026",
+    version="2.0.0",
+    lifespan=lifespan,
+)
 
 
 # ---- Rate limiting (Phase 9.7) ----

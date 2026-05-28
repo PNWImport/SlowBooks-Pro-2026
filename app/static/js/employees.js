@@ -361,8 +361,8 @@ const EmployeesPage = {
                 Last used ${lastUsed ? `${daysSinceUsed} day${daysSinceUsed === 1 ? '' : 's'} ago (${lastUsed.toISOString().slice(0,10)})` : '<em>never</em>'}
             </p>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
-                <button class="btn btn-sm btn-primary" onclick="EmployeesPage._copyPortalLink('${url.replace(/'/g, "\\'")}')">Copy Link</button>
-                <button class="btn btn-sm btn-secondary" onclick="EmployeesPage._emailPortalLink('${url.replace(/'/g, "\\'")}')">Email to Employee…</button>
+                <button class="btn btn-sm btn-primary" data-portal-url="${escapeHtml(url)}" onclick="EmployeesPage._copyPortalLink(this.dataset.portalUrl)">Copy Link</button>
+                <button class="btn btn-sm btn-secondary" data-portal-url="${escapeHtml(url)}" onclick="EmployeesPage._emailPortalLink(this.dataset.portalUrl)">Email to Employee…</button>
                 <button class="btn btn-sm btn-secondary" onclick="EmployeesPage._regeneratePortalToken(${id})">Rotate Token</button>
             </div>`;
 
