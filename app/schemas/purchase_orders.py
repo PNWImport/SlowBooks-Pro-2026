@@ -1,4 +1,5 @@
 from datetime import date as dt_date
+from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel
 
@@ -15,10 +16,10 @@ class POLineResponse(BaseModel):
     id: int
     item_id: Optional[int] = None
     description: Optional[str] = None
-    quantity: float = 1
-    rate: float = 0
-    amount: float = 0
-    received_qty: float = 0
+    quantity: Decimal = Decimal("0")
+    rate: Decimal = Decimal("0")
+    amount: Decimal = Decimal("0")
+    received_qty: Decimal = Decimal("0")
     line_order: int = 0
     model_config = {"from_attributes": True}
 
@@ -53,10 +54,10 @@ class POResponse(BaseModel):
     date: dt_date
     expected_date: Optional[dt_date] = None
     ship_to: Optional[str] = None
-    subtotal: float = 0
-    tax_rate: float = 0
-    tax_amount: float = 0
-    total: float = 0
+    subtotal: Decimal = Decimal("0")
+    tax_rate: Decimal = Decimal("0")
+    tax_amount: Decimal = Decimal("0")
+    total: Decimal = Decimal("0")
     notes: Optional[str] = None
     lines: list[POLineResponse] = []
     model_config = {"from_attributes": True}

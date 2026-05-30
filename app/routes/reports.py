@@ -143,6 +143,31 @@ def balance_sheet(
     total_liabilities = sum(l["amount"] for l in liabilities)
     total_equity = sum(e["amount"] for e in equity)
 
+    # Net income for all periods up to as_of_date flows into equity as retained
+    # earnings. Without this, the balance sheet fails to balance whenever there
+    # is income or expense activity that hasn't been formally closed into an
+    # equity account (which is the normal state in this app — income/expense
+    # accounts are never explicitly closed).
+    income_rows = _totals_by_account(db, AccountType.INCOME, date_end=as_of_date)
+    cogs_rows = _totals_by_account(db, AccountType.COGS, date_end=as_of_date)
+    expense_rows = _totals_by_account(db, AccountType.EXPENSE, date_end=as_of_date)
+    net_income = (
+        sum(r["amount"] for r in income_rows)
+        - sum(r["amount"] for r in cogs_rows)
+        - sum(r["amount"] for r in expense_rows)
+    )
+
+    if net_income != 0:
+        equity = list(equity) + [
+            {
+                "account_id": None,
+                "account_name": "Net Income (current period)",
+                "account_number": None,
+                "amount": float(net_income),
+            }
+        ]
+        total_equity += net_income
+
     return {
         "as_of_date": as_of_date.isoformat(),
         "assets": assets,
@@ -161,7 +186,7 @@ def ar_aging(as_of_date: date = Query(default=None), db: Session = Depends(get_d
 
     invoices = (
         db.query(Invoice)
-        .filter(Invoice.status.in_([InvoiceStatus.SENT, InvoiceStatus.PARTIAL]))
+        .filter(Invoice.status.in_([InvoiceStatus.DRAFT, InvoiceStatus.SENT, InvoiceStatus.PARTIAL]))
         .filter(Invoice.date <= as_of_date)
         .filter(Invoice.balance_due > 0)
         .all()
@@ -823,7 +848,7 @@ def batch_email_statements(db: Session = Depends(get_db)):
 
     overdue_invoices = (
         db.query(Invoice)
-        .filter(Invoice.status.in_([InvoiceStatus.SENT, InvoiceStatus.PARTIAL]))
+        .filter(Invoice.status.in_([InvoiceStatus.DRAFT, InvoiceStatus.SENT, InvoiceStatus.PARTIAL]))
         .filter(Invoice.balance_due > 0)
         .filter(Invoice.due_date < as_of_date)
         .all()
@@ -903,7 +928,7 @@ def collection_letters(data: CollectionLetterRequest, db: Session = Depends(get_
 
     q = (
         db.query(Invoice)
-        .filter(Invoice.status.in_([InvoiceStatus.SENT, InvoiceStatus.PARTIAL]))
+        .filter(Invoice.status.in_([InvoiceStatus.DRAFT, InvoiceStatus.SENT, InvoiceStatus.PARTIAL]))
         .filter(Invoice.balance_due > 0)
         .filter(Invoice.due_date <= today - timedelta(days=min_days))
     )

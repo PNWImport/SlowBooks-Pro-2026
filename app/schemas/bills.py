@@ -1,4 +1,5 @@
 from datetime import date as dt_date, datetime
+from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel
 
@@ -17,9 +18,9 @@ class BillLineResponse(BaseModel):
     item_id: Optional[int] = None
     account_id: Optional[int] = None
     description: Optional[str] = None
-    quantity: float = 1
-    rate: float = 0
-    amount: float = 0
+    quantity: Decimal = Decimal("0")
+    rate: Decimal = Decimal("0")
+    amount: Decimal = Decimal("0")
     line_order: int = 0
     model_config = {"from_attributes": True}
 
@@ -59,12 +60,12 @@ class BillResponse(BaseModel):
     due_date: Optional[dt_date] = None
     terms: Optional[str] = None
     ref_number: Optional[str] = None
-    subtotal: float = 0
-    tax_rate: float = 0
-    tax_amount: float = 0
-    total: float = 0
-    amount_paid: float = 0
-    balance_due: float = 0
+    subtotal: Decimal = Decimal("0")
+    tax_rate: Decimal = Decimal("0")
+    tax_amount: Decimal = Decimal("0")
+    total: Decimal = Decimal("0")
+    amount_paid: Decimal = Decimal("0")
+    balance_due: Decimal = Decimal("0")
     notes: Optional[str] = None
     lines: list[BillLineResponse] = []
     created_at: Optional[datetime] = None
@@ -92,7 +93,7 @@ class BillPaymentResponse(BaseModel):
     vendor_id: int
     vendor_name: Optional[str] = None
     date: dt_date
-    amount: float
+    amount: Decimal = Decimal("0")
     method: Optional[str] = None
     check_number: Optional[str] = None
     notes: Optional[str] = None

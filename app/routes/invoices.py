@@ -719,7 +719,7 @@ def apply_late_fees(db: Session = Depends(get_db)):
 
     overdue = (
         db.query(Invoice)
-        .filter(Invoice.status.in_([InvoiceStatus.SENT, InvoiceStatus.PARTIAL]))
+        .filter(Invoice.status.in_([InvoiceStatus.DRAFT, InvoiceStatus.SENT, InvoiceStatus.PARTIAL]))
         .filter(Invoice.balance_due > 0)
         .filter(Invoice.due_date <= today - timedelta(days=grace_days))
         .all()
