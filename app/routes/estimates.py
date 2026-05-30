@@ -7,6 +7,7 @@
 # ============================================================================
 
 from datetime import timedelta
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -21,6 +22,7 @@ from app.schemas.invoices import InvoiceResponse
 from app.services.pdf_service import generate_estimate_pdf
 from app.services.settings_service import get_all_settings as get_settings, set_setting
 from app.services.accounting import (
+    _q,
     compute_line_totals,
     create_journal_entry,
     get_ar_account_id,
@@ -112,7 +114,9 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
             description=line_data.description,
             quantity=line_data.quantity,
             rate=line_data.rate,
-            amount=line_data.quantity * line_data.rate,
+            amount=_q(
+                Decimal(str(line_data.quantity)) * Decimal(str(line_data.rate))
+            ),
             class_name=line_data.class_name,
             line_order=line_data.line_order or i,
         )
@@ -151,7 +155,9 @@ def update_estimate(
                 description=line_data.description,
                 quantity=line_data.quantity,
                 rate=line_data.rate,
-                amount=line_data.quantity * line_data.rate,
+                amount=_q(
+                    Decimal(str(line_data.quantity)) * Decimal(str(line_data.rate))
+                ),
                 class_name=line_data.class_name,
                 line_order=line_data.line_order or i,
             )
@@ -283,7 +289,6 @@ def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
     tax_account_id = get_sales_tax_account_id(db)
 
     if ar_id and default_income_id:
-        from decimal import Decimal
         from app.models.items import Item
 
         journal_lines = []

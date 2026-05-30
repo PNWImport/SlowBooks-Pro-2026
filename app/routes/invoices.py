@@ -242,7 +242,9 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
             description=line_data.description,
             quantity=line_data.quantity,
             rate=line_data.rate,
-            amount=line_data.quantity * line_data.rate,
+            amount=_q(
+                Decimal(str(line_data.quantity)) * Decimal(str(line_data.rate))
+            ),
             class_name=line_data.class_name,
             line_order=line_data.line_order or i,
         )
@@ -389,8 +391,10 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
                         description=line_data.description,
                         quantity=line_data.quantity,
                         rate=line_data.rate,
-                        amount=Decimal(str(line_data.quantity))
-                        * Decimal(str(line_data.rate)),
+                        amount=_q(
+                            Decimal(str(line_data.quantity))
+                            * Decimal(str(line_data.rate))
+                        ),
                         class_name=line_data.class_name,
                         line_order=line_data.line_order or i,
                     )

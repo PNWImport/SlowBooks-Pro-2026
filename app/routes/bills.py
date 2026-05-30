@@ -15,7 +15,7 @@ from app.models.contacts import Vendor
 from app.models.items import Item
 from app.models.accounts import Account
 from app.schemas.bills import BillCreate, BillResponse
-from app.services.accounting import create_journal_entry, compute_line_totals
+from app.services.accounting import _q, create_journal_entry, compute_line_totals
 from app.services.closing_date import check_closing_date
 
 router = APIRouter(prefix="/api/bills", tags=["bills"])
@@ -114,7 +114,9 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
 
     journal_lines = []
     for i, line_data in enumerate(data.lines):
-        amt = Decimal(str(line_data.quantity)) * Decimal(str(line_data.rate))
+        # Round per line so stored BillLine.amount matches compute_line_totals
+        # and the JE debit lands on the same cents as the rounded AP credit.
+        amt = _q(Decimal(str(line_data.quantity)) * Decimal(str(line_data.rate)))
         item = None
         if line_data.item_id:
             item = db.query(Item).filter(Item.id == line_data.item_id).first()
