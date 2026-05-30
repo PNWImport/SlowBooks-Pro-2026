@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func as sqlfunc
+from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
 from app.models.accounts import Account
@@ -201,39 +202,68 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
-    invoice_number = _next_invoice_number(db)
-
     # Parse terms for due date (explicit due_date wins; else derive from terms)
     due_date = data.due_date or _due_date_from_terms(data.date, data.terms)
-
     subtotal, tax_amount, total = _compute_totals(data.lines, data.tax_rate)
 
-    invoice = Invoice(
-        invoice_number=invoice_number,
-        customer_id=data.customer_id,
-        date=data.date,
-        due_date=due_date,
-        terms=data.terms,
-        po_number=data.po_number,
-        bill_address1=data.bill_address1 or customer.bill_address1,
-        bill_address2=data.bill_address2 or customer.bill_address2,
-        bill_city=data.bill_city or customer.bill_city,
-        bill_state=data.bill_state or customer.bill_state,
-        bill_zip=data.bill_zip or customer.bill_zip,
-        ship_address1=data.ship_address1 or customer.ship_address1,
-        ship_address2=data.ship_address2 or customer.ship_address2,
-        ship_city=data.ship_city or customer.ship_city,
-        ship_state=data.ship_state or customer.ship_state,
-        ship_zip=data.ship_zip or customer.ship_zip,
-        subtotal=subtotal,
-        tax_rate=data.tax_rate,
-        tax_amount=tax_amount,
-        total=total,
-        balance_due=total,
-        notes=data.notes,
-    )
-    db.add(invoice)
-    db.flush()
+    # Capture every customer field we need post-flush, because we may have to
+    # rollback the session (which expires `customer`) when two concurrent
+    # requests both compute MAX+1 and race for the same invoice number.
+    cust_id = customer.id
+    cust_name = customer.name
+    cust_fields = {
+        "bill_address1": data.bill_address1 or customer.bill_address1,
+        "bill_address2": data.bill_address2 or customer.bill_address2,
+        "bill_city": data.bill_city or customer.bill_city,
+        "bill_state": data.bill_state or customer.bill_state,
+        "bill_zip": data.bill_zip or customer.bill_zip,
+        "ship_address1": data.ship_address1 or customer.ship_address1,
+        "ship_address2": data.ship_address2 or customer.ship_address2,
+        "ship_city": data.ship_city or customer.ship_city,
+        "ship_state": data.ship_state or customer.ship_state,
+        "ship_zip": data.ship_zip or customer.ship_zip,
+    }
+
+    invoice = None
+    invoice_number = None
+    last_err = None
+    # Retry the number assignment a few times — _next_invoice_number is just
+    # MAX+1 (no row-level lock), so two concurrent creates can both compute
+    # the same number and one will hit the invoices.invoice_number UNIQUE
+    # constraint at flush. The constraint is the safety net; this is the UX.
+    for _ in range(10):
+        invoice_number = _next_invoice_number(db)
+        invoice = Invoice(
+            invoice_number=invoice_number,
+            customer_id=cust_id,
+            date=data.date,
+            due_date=due_date,
+            terms=data.terms,
+            po_number=data.po_number,
+            subtotal=subtotal,
+            tax_rate=data.tax_rate,
+            tax_amount=tax_amount,
+            total=total,
+            balance_due=total,
+            notes=data.notes,
+            **cust_fields,
+        )
+        db.add(invoice)
+        try:
+            db.flush()
+            break
+        except IntegrityError as e:
+            if "invoice_number" not in str(e.orig).lower():
+                raise
+            last_err = e
+            db.rollback()
+            invoice = None
+    if invoice is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not assign a unique invoice number after several "
+            "retries; please retry the request.",
+        ) from last_err
 
     for i, line_data in enumerate(data.lines):
         line = InvoiceLine(
@@ -307,7 +337,7 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
         txn = create_journal_entry(
             db,
             data.date,
-            f"Invoice #{invoice_number} - {customer.name}",
+            f"Invoice #{invoice_number} - {cust_name}",
             journal_lines,
             source_type="invoice",
             source_id=invoice.id,
@@ -339,7 +369,7 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(invoice)
     resp = InvoiceResponse.model_validate(invoice)
-    resp.customer_name = customer.name
+    resp.customer_name = cust_name
     return resp
 
 
