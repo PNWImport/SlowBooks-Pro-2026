@@ -136,3 +136,28 @@ item, asserting (a) construction with required fields, (b) defaults,
 ## Known small bugs
 
 (none.)
+
+---
+
+## Production walkthrough — discovered, addressed
+
+Findings from the 2026-05-30 live end-to-end production walkthrough.
+All addressed; documenting here so the lessons don't get lost.
+
+- ~~Payroll JE unbalanced when liability accounts missing~~ — DOCUMENTED:
+  the failure mode (umbrella `2300` plus `2310`–`2360` required for
+  per-tax accounts) is now called out in
+  `docs/release-checklist.md §3a` with the full table of
+  numbers/names/types. The 500 itself is not a bug — the JE balance
+  check is doing its job — but the onboarding gap was real.
+- ~~Tax rate format ambiguity~~ — `tax_rate` is a decimal fraction
+  (`0.086` = 8.6%), not percentage points. Schema rejects values
+  outside `[0, 1]`. Consistent across invoices, bills, POs,
+  estimates, credit memos, and recurring.
+- ~~Bill payment routing~~ — bills are paid via `POST /api/bill-payments`
+  (vendor-level), not `POST /api/bills/{id}/pay` (which never existed).
+  Mirrors customer payments at `POST /api/payments`.
+- ~~PO→Bill convert response shape~~ — returns
+  `{"bill_id": N, "message": "..."}`, not a full BillResponse. The
+  caller fetches the bill via `GET /api/bills/{bill_id}` if it needs
+  the full row.

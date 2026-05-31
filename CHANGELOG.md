@@ -7,6 +7,129 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Production-readiness sweep (rounding / races / N+1 / closing-date / secrets)
+
+A 19-commit program-wide audit of every JE-posting path and money
+boundary in the codebase. All 422 tests pass; live walkthrough
+exercised every flow listed below.
+
+**Money math — rounding drift fixed at the source.**
+The class of bugs: `qty * rate` was stored to `Numeric(12, 2)` columns
+without being quantized first. SQL rounded each line on the way in,
+so `sum(line.amount)` no longer equaled the stored `subtotal` after a
+round-trip. Fix: every per-line money expression now goes through
+`_q()` (ROUND_HALF_UP at 2 decimals) **before** being assigned. Applied
+to invoices, bills, POs, estimates, credit memos, and the recurring
+invoice generator. `compute_line_totals()` is the single canonical
+helper. `scripts/repair_rounding_drift.py` detects and repairs
+pre-fix rows (dry-run by default; `--apply` writes).
+
+**Auto-number races — IntegrityError retry on every doc series.**
+`SELECT MAX(num) + 1` followed by `INSERT` has no lock. Two concurrent
+creates would both see the same MAX and collide on the UNIQUE
+constraint. `create_invoice`, `create_po`, and `create_estimate` now
+catch `IntegrityError`, roll back, and retry up to 10 times. Pinned
+by `tests/test_invoice_number_race.py`.
+
+**N+1 SELECT storm — eager-loaded every list endpoint.**
+`for inv in invoices: inv.customer.name` was firing one SELECT per
+row. Added `joinedload(.customer)` + `selectinload(.lines)` to
+invoices, bills, POs, estimates, payments. Also clamped `skip`/`limit`
+on every list route (1 ≤ limit ≤ 1000; skip ≥ 0). Pinned by
+`tests/test_no_nplus1_in_list_endpoints.py`.
+
+**Closing-date enforcement — plugged three bypass paths.**
+A code audit found three routes that posted dated JEs without calling
+`check_closing_date`:
+- `POST /api/purchase-orders/{id}/convert-to-bill`
+- `POST /api/estimates/{id}/convert`
+- `POST /api/payroll/{id}/process`
+
+Each one let an operator land a JE into a closed period by routing
+through a "convert" or "process" verb instead of the direct create.
+All three now call the guard. Pinned by
+`tests/test_closing_date_enforcement.py`.
+
+**Stripe webhook idempotency under contention.**
+Stripe retries with backoff; two webhook deliveries can land
+milliseconds apart. The check-then-insert against `Payment.reference`
+let both pass the existence guard and create duplicate payments. Fix:
+`with_for_update()` on the invoice row before the idempotency check,
+so the second arrival serializes behind the first and sees the
+already-recorded payment.
+
+**Settings — secret redaction on GET.**
+`GET /api/settings` was returning `stripe_secret_key`,
+`smtp_password`, `closing_date_password`, and the QBO tokens in
+plaintext. Fix: response runs through `_redact_secrets()`, which
+replaces any non-empty secret with `"********"`. `PUT` treats the
+placeholder as a no-op so a UI round-trip can't overwrite the real
+value with `"********"`. Pinned by `tests/test_settings_redaction.py`.
+
+**Input validation at the boundary.**
+Schema-level rejection of impossible inputs: zero-line invoices /
+bills / POs / estimates (422), negative quantity / rate / hours (422),
+zero or negative payment amounts (400), payment allocations exceeding
+invoice balance (400), duplicate `(vendor_id, bill_number)` pairs
+(409). 17 tests in `tests/test_input_validation.py`.
+
+**Payment void race.**
+`void_payment` walked allocations and decremented `invoice.balance_due`
+without locking. Concurrent voids could double-credit. Fix:
+`with_for_update()` on both the payment and each invoice in the
+allocation loop.
+
+**Reconciliation drift.**
+`sum(float(t.amount) ...)` over hundreds of cleared transactions
+produced sub-cent float drift that made a truly-zero difference
+display as `$0.00000001`. Replaced with `Decimal(str(...))`
+arithmetic; convert to float only at the JSON boundary.
+
+**Analytics AR aging consistency.**
+The dashboard widget bucketed by **days-since-invoiced**; the
+`/api/reports/ar-aging` endpoint bucketed by **days-past-due**. Same
+data, different bucket → operator confusion. Analytics now matches
+the report.
+
+**Balance sheet — synthetic Net Income equity line.**
+With no equity accounts holding transactions, the balance sheet
+showed `Total Equity = 0` even though the books balanced. Now
+computes net income from income/COGS/expense accounts and appends a
+synthetic "Net Income (current period)" line to equity. A − L − E = 0.
+
+**AR aging filter — include DRAFT.**
+Aging was filtering `[SENT, PARTIAL]` only, hiding draft invoices with
+open balances. Now `[DRAFT, SENT, PARTIAL]` at all 10 filter sites.
+
+**Schema response types — Decimal not float.**
+`BillResponse`, `BillLineResponse`, `POResponse`, `CreditMemoResponse`
+were serializing money as `float`. Now `Decimal`. Round-trip stays
+exact through the wire.
+
+**Error handling — 4xx / 5xx mapping.**
+`get_1099_pdf` was 500ing on a `ValueError` (not-found case); now
+404. `restore_backup` always returned 500 regardless of cause; now
+maps to 400 / 404 / 500. `low_stock_items` now surfaces oversold
+inventory (`qty < 0`) regardless of reorder_point.
+
+**IIF export — tab/newline sanitization.**
+A vendor name with a `\t` in it would split that field into two on
+import elsewhere. `_iif_clean()` now strips `\t\r\n` from every
+field value before emission.
+
+**Payroll input validation.**
+`PayStubInput` schema rejects negative hours / overtime / deductions
+/ gross_override at the boundary.
+
+**IIF import — quantize SPL amounts.**
+`_import_invoice` and `_import_estimate` now `_q(abs(...))` each SPL
+amount before accumulating, matching the rounding semantics of
+native invoice creation.
+
+**Decompressed inventory restore audit, SSRF hardening, proxy
+correctness** (batch 3 of the earlier enterprise eval) — see commits
+`749b96e`, `f0c5816`, `87c0222`.
+
 ### Red-team pass on WC3D's Jinja2 XSS fix
 WC3D's commit `ca6182f` enabled `autoescape=True` on the two Jinja2
 Environments he found (`app/routes/public.py`,

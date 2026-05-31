@@ -54,6 +54,33 @@ EMPLOYER_STATE=WA
 SUTA_RATE=0.012                         # your state's experience rate
 ```
 
+## 3a. Chart-of-accounts — payroll prerequisites
+
+The setup wizard seeds a minimal CoA. If you process payroll, the
+journal entry needs liability accounts for each withholding bucket.
+Without them the JE comes out unbalanced (debits include employer
+taxes but credits have nowhere to land) and `POST /api/payroll/{id}/process`
+returns 500.
+
+Create these before your first pay run:
+
+| Number | Name                          | Type      |
+|--------|-------------------------------|-----------|
+| 2300   | Payroll Liabilities (umbrella)| liability |
+| 2310   | Federal Income Tax Payable    | liability |
+| 2320   | State Income Tax Payable      | liability |
+| 2330   | Social Security Payable       | liability |
+| 2340   | Medicare Payable              | liability |
+| 2350   | FUTA Payable                  | liability |
+| 2360   | SUTA Payable                  | liability |
+| 6110   | Wages Expense                 | expense   |
+| 6120   | Payroll Tax Expense           | expense   |
+
+The numbered accounts are looked up by `account_number`; falling back
+through `2300` means a company without per-tax accounts can still
+post a balanced summary JE, but **2300 must exist** or processing
+fails. The error message tells you which account is missing.
+
 ## 4. TLS termination
 
 The app emits HSTS and uses `Secure` cookies whenever `FORCE_HTTPS=true`,

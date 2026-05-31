@@ -27,7 +27,7 @@ For the public security policy and responsible-disclosure address, see
 | 12 | Encryption | Ciphertext now prefixed with `v1:` to enable clean key rotation | `app/services/encryption.py` |
 | 13 | Encryption | Support `PAYROLL_ENCRYPTION_SECRET_PREV` for in-flight rotation | `app/services/encryption.py` |
 
-All 249 tests pass after every change.
+All 422 tests pass after every change.
 
 ---
 
