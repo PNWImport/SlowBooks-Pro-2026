@@ -12,7 +12,7 @@ what's in each tier, where each piece lives, and what's still pending.
 | **Tier 2** | Deductions (401k, HSA, etc.), garnishments | ✅ | ✅ | ✅ |
 | **Tier 3 — Tax forms (JSON)** | W-2, W-3, Form 940, Form 941 endpoints — machine-readable | ✅ | ✅ | ✅ |
 | **Tier 3 — Tax forms (PDF)** | WeasyPrint-rendered, employer-branded, audit-hashed | ✅ | ✅ | ✅ |
-| **Tier 3 — Document audit hashes** | SHA-256 chain in PDF footer + `document_audits` table | ✅ | n/a | ✅ |
+| **Tier 3 — Document audit hashes** | Per-document SHA-256 in PDF footer + `document_audits` ledger (not a linked chain — see hipaa-compliance.md) | ✅ | n/a | ✅ |
 | **Tier 3 — Portal** | Token-accessed self-service for pay stubs, W-4, bank, PTO | ✅ | n/a | ✅ |
 | **Tier 3 — Portal cookie session** | URL token only at first claim; subsequent navigation is cookieless | ✅ | n/a | ✅ |
 | **Tier 3 — Portal hardening** | Expiration, no-referrer, rate limiting, employer branding | ✅ | ✅ | ✅ |
@@ -20,8 +20,24 @@ what's in each tier, where each piece lives, and what's still pending.
 | **Time-entry → pay-run auto-population** | Pay-run form checkbox pulls approved unpaid hours | ✅ | ✅ | ✅ |
 | **50-state withholding** | Table-driven engine + per-state SUTA rates/wage bases | ✅ | n/a | ✅ |
 | **Local/municipal taxes** | PA EIT+LST, OH muni+SD, NYC/Yonkers, MD/IN county, KY, MI | ✅ | n/a | ✅ |
+| **Quarterly SUI** | Per-employee wage report, JSON + audit-hashed PDF | ✅ | ✅ | ✅ |
+| **E-file exports** | EFW2 (SSA Pub 42-007) + IRS Pub 1220 1099-NEC | ✅ | ✅ | ✅ |
+| **Deposit schedule** | Pub 15 lookback, $100k next-day, FUTA floor, liability calendar | ✅ | n/a | ✅ |
+| **Contractor pay runs** | Batch pay 1099 payees, JE + NACHA, feeds 1099 totals | ✅ | n/a | ✅ |
+| **Pay schedules** | Anchored calendars, cutoffs, weekend shifting | ✅ | n/a | ✅ |
+| **Retro pay / proration** | Mid-period salary blend + retro shortfall staging | ✅ | n/a | ✅ |
+| **Termination** | Per-state final-paycheck deadlines + PTO payout staging | ✅ | n/a | ✅ |
+| **Garnishment remittance** | Agency payees + pending register + mark-remitted | ✅ | n/a | ✅ |
+| **Tipped wages** | Top-up guarantee, tip taxation, Form 8846 | ✅ | n/a | ✅ |
+| **Work locations** | First-class jurisdictions with validated state/locality | ✅ | n/a | ✅ |
+| **Benefits / ACA / COBRA** | Plans, enrollment, dependents, 1095 data, COBRA notice | ✅ | n/a | ✅ |
+| **Workers' comp** | Carrier class rates + premium-audit report | ✅ | n/a | ✅ |
+| **E-signature** | Envelopes sealed into the document-audit ledger | ✅ | portal | ✅ |
+| **Org chart / reviews** | Manager tree, team PTO calendar, review lifecycle | ✅ | n/a | ✅ |
+| **Payroll reports** | Journal, deduction register, contractor payments | ✅ | n/a | ✅ |
+| **Migration parity** | `alembic upgrade head` verified against model metadata | ✅ | n/a | ✅ |
 
-551 tests pass across the full suite.
+695 tests pass across the full suite.
 
 State coverage went from 4 states (WA/CA/NY/OR, hand-written) to all 50 plus
 DC. The other 47 are driven by reviewable JSON tables — see

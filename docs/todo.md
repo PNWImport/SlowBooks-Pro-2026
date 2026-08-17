@@ -213,7 +213,7 @@ operator submits themselves.
   config (Entra app registration walkthrough in setup-mail.md) + a Mail
   queue UI page. Depends on the Email integration item above (shared SMTP
   + IMAP wiring).
-- **DocumentAudit (hash-chain) viewer UI** — endpoints ready
+- **DocumentAudit (hash-ledger) viewer UI** — endpoints ready
   (`/api/document-audits`, `/api/document-audits/verify/{hash}`); need an
   admin "Compliance" tab.
 - **Portal time-entry submit flow** — server endpoint

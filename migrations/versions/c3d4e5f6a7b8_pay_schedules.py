@@ -14,6 +14,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "c3d4e5f6a7b8"
@@ -21,29 +22,48 @@ down_revision: Union[str, None] = "b2c3d4e5f6a7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+# Enum types this migration touches. Values are the UPPERCASE Python enum
+# MEMBER NAMES, because that is what SQLAlchemy persists for a native
+# PostgreSQL enum built from an enum class — not the lowercase `.value`.
+# Types are created with checkfirst so a name already introduced by an
+# earlier migration (bankaccountkind, payfrequency) is reused rather than
+# re-created, and referenced with create_type=False so the CREATE is never
+# emitted twice. Same idiom as f7a8b9c0d1e2_tier1_payroll_system.py.
+_ENUMS = {
+    "payfrequency": ("WEEKLY", "BIWEEKLY", "SEMI_MONTHLY", "MONTHLY"),
+    "weekendshift": ("NONE", "PREVIOUS_BUSINESS_DAY", "NEXT_BUSINESS_DAY"),
+}
+
+
+def _enum(name: str):
+    return postgresql.ENUM(*_ENUMS[name], name=name, create_type=False)
+
+
+def _enum_col(name: str, is_pg: bool):
+    return _enum(name) if is_pg else sa.Enum(*_ENUMS[name], name=name)
+
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    is_pg = bind.dialect.name == "postgresql"
+    if is_pg:
+        for _name, _values in _ENUMS.items():
+            postgresql.ENUM(*_values, name=_name).create(bind, checkfirst=True)
+
     op.create_table(
         "pay_schedules",
         sa.Column("id", sa.Integer(), primary_key=True, index=True),
         sa.Column("name", sa.String(100), nullable=False, unique=True),
         sa.Column(
             "frequency",
-            sa.Enum(
-                "weekly", "biweekly", "semi_monthly", "monthly", name="payfrequency"
-            ),
+            _enum_col("payfrequency", is_pg),
             nullable=False,
         ),
         sa.Column("anchor_pay_date", sa.Date(), nullable=False),
         sa.Column("submission_lead_days", sa.Integer(), nullable=True),
         sa.Column(
             "weekend_shift",
-            sa.Enum(
-                "none",
-                "previous_business_day",
-                "next_business_day",
-                name="weekendshift",
-            ),
+            _enum_col("weekendshift", is_pg),
             nullable=True,
         ),
         sa.Column("is_active", sa.Boolean(), nullable=True),
@@ -63,5 +83,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    is_pg = bind.dialect.name == "postgresql"
     op.drop_column("employees", "pay_schedule_id")
     op.drop_table("pay_schedules")
+    # Only the types this migration introduced are dropped; shared
+    # types (bankaccountkind, payfrequency) belong to earlier migrations.
+    if is_pg:
+        postgresql.ENUM(name="weekendshift").drop(bind, checkfirst=True)

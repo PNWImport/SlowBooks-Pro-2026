@@ -1,13 +1,17 @@
 # ============================================================================
-# E-signature envelopes — legally-defensible signing on the audit hash chain.
+# E-signature envelopes — signing sealed into the document-audit ledger.
 # ----------------------------------------------------------------------------
 # An envelope freezes a document body (offer letter, I-9 acknowledgment,
 # handbook receipt) with its SHA-256 at creation. The employee signs in the
 # self-service portal by typing their name; the signature event hashes
 # (document hash + signer + UTC timestamp) into the same document_audits
-# chain the tax forms use, so the pair (envelope, audit row) proves what
+# LEDGER the tax forms use, so the pair (envelope, audit row) records what
 # was signed, by whom, and when — and any later edit to the stored body is
 # detectable because it no longer matches the frozen hash.
+#
+# Ledger, not chain: rows are independent, so a deleted audit row leaves no
+# trace behind. What this DOES prove is that a signed body was not altered.
+# See docs/hipaa-compliance.md § 164.312(c)(1).
 #
 # ESIGN/UETA hinge on intent, consent, association, and retention. Typed
 # signatures satisfy them when those elements are captured; this model

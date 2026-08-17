@@ -66,7 +66,7 @@ SlowBooks-Pro-2026/
 │   │   ├── attachments.py    # File attachments
 │   │   ├── bank_rules.py     # Bank transaction categorization rules
 │   │   ├── budgets.py        # Budget tracking by account/period
-│   │   ├── document_audit.py # SHA-256 hash chain for tax-form PDFs
+│   │   ├── document_audit.py # per-document SHA-256 ledger for generated PDFs
 │   │   ├── portal_access.py  # Portal access audit log
 │   │   ├── reseller_permit.py # Per-entity reseller permits
 │   │   └── email_templates.py # Customizable email templates

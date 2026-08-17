@@ -14,6 +14,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "b8c9d0e1f2a4"
@@ -21,23 +22,41 @@ down_revision: Union[str, None] = "a7b8c9d0e1f3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+# Enum types this migration touches. Values are the UPPERCASE Python enum
+# MEMBER NAMES, because that is what SQLAlchemy persists for a native
+# PostgreSQL enum built from an enum class — not the lowercase `.value`.
+# Types are created with checkfirst so a name already introduced by an
+# earlier migration (bankaccountkind, payfrequency) is reused rather than
+# re-created, and referenced with create_type=False so the CREATE is never
+# emitted twice. Same idiom as f7a8b9c0d1e2_tier1_payroll_system.py.
+_ENUMS = {
+    "benefitkind": ("MEDICAL", "DENTAL", "VISION", "LIFE", "DISABILITY", "OTHER"),
+    "enrollmentstatus": ("ACTIVE", "TERMINATED", "COBRA"),
+}
+
+
+def _enum(name: str):
+    return postgresql.ENUM(*_ENUMS[name], name=name, create_type=False)
+
+
+def _enum_col(name: str, is_pg: bool):
+    return _enum(name) if is_pg else sa.Enum(*_ENUMS[name], name=name)
+
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    is_pg = bind.dialect.name == "postgresql"
+    if is_pg:
+        for _name, _values in _ENUMS.items():
+            postgresql.ENUM(*_values, name=_name).create(bind, checkfirst=True)
+
     op.create_table(
         "benefit_plans",
         sa.Column("id", sa.Integer(), primary_key=True, index=True),
         sa.Column("name", sa.String(120), nullable=False, unique=True),
         sa.Column(
             "kind",
-            sa.Enum(
-                "medical",
-                "dental",
-                "vision",
-                "life",
-                "disability",
-                "other",
-                name="benefitkind",
-            ),
+            _enum_col("benefitkind", is_pg),
             nullable=True,
         ),
         sa.Column("carrier_name", sa.String(120), nullable=True),
@@ -67,7 +86,7 @@ def upgrade() -> None:
         sa.Column("coverage_end", sa.Date(), nullable=True),
         sa.Column(
             "status",
-            sa.Enum("active", "terminated", "cobra", name="enrollmentstatus"),
+            _enum_col("enrollmentstatus", is_pg),
             nullable=True,
         ),
         sa.Column(
@@ -95,6 +114,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    is_pg = bind.dialect.name == "postgresql"
     op.drop_table("benefit_dependents")
     op.drop_table("benefit_enrollments")
     op.drop_table("benefit_plans")
+    # Only the types this migration introduced are dropped; shared
+    # types (bankaccountkind, payfrequency) belong to earlier migrations.
+    if is_pg:
+        postgresql.ENUM(name="benefitkind").drop(bind, checkfirst=True)
+        postgresql.ENUM(name="enrollmentstatus").drop(bind, checkfirst=True)

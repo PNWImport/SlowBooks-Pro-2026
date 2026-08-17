@@ -27,13 +27,30 @@ health, healthcare provision, or payment for healthcare.
 | HSA deduction *amount* | Not PHI | Reveals only that an HSA exists, not health details |
 | Health insurance deduction *amount* | Not PHI | Same — premium amount without enrollment/claim details |
 | Pre-tax FSA / dependent-care amount | Not PHI | Same |
-| Insurance carrier name (if stored) | Borderline | Could imply health context; we don't currently store this |
-| Actual claims, diagnoses, treatment | Would be PHI | **We don't store any of this** |
+| Insurance carrier name | **Borderline — now stored** | `BenefitPlan.carrier_name` (added with the benefits module) |
+| Health-plan enrollment + coverage dates | **Likely ePHI in a BA context** | `BenefitEnrollment` — identifies a person *and* relates to payment for healthcare |
+| Covered dependents (name, DOB, SSN last-4) | **Likely ePHI in a BA context** | `BenefitDependent` — family members who are not employees |
+| Months-of-coverage (ACA 1095) | **Likely ePHI in a BA context** | Derived, not stored, but rendered per person by `/api/tax-forms/1095` |
+| COBRA qualifying event + plan | **Likely ePHI in a BA context** | Coverage-loss event tied to a named individual |
+| Actual claims, diagnoses, treatment | Would be PHI | **We still don't store any of this** |
 
 **Default verdict:** A business running SlowBooks for normal accounting +
 payroll is not a HIPAA-regulated workflow. Customer becomes a Business
 Associate only if they explicitly use the app to handle PHI on behalf of
 a Covered Entity, which isn't the design intent.
+
+> ⚠ **This verdict narrowed when the benefits module landed.** Before it,
+> the app stored only deduction *amounts* — the premium came out of a
+> paycheck and nothing said what it bought. It now stores health-plan
+> enrollment, carrier names, coverage windows, and covered dependents, and
+> derives per-person months-of-coverage for ACA reporting. That is
+> individually identifiable information relating to payment for
+> healthcare. It is still not a Covered Entity workflow (an employer
+> administering its own group plan is generally acting as employer, not as
+> a health plan), but the earlier line "we don't store any of this" is no
+> longer true, and § 4's gap list applies with more force. If a deployment
+> has any Business Associate exposure, treat the four benefit tables as
+> ePHI and read § 4 as required work, not optional hardening.
 
 ---
 
@@ -61,7 +78,7 @@ to existing SlowBooks behavior.
 |-----------|---------------|
 | Login attempts | ✅ `LoginAttempt` table — success / failure with IP + UA |
 | Database row writes | ✅ `register_audit_hooks(SessionLocal)` in `app/main.py` writes an `audit_log` row for every create / update / delete via SQLAlchemy event hooks |
-| Document tampering | ✅ `DocumentAudit` table + SHA-256 content hash printed in tax-form PDF footers |
+| Document tampering | ⚠ `DocumentAudit` table + SHA-256 content hash printed in generated-document footers. Detects **alteration** of a document; does **not** detect **deletion** of an audit row — see the note below |
 | Portal token usage | ✅ `Employee.portal_token_last_used` rolls forward on every authenticated portal request |
 
 ### § 164.312(c)(1) — Integrity
@@ -72,7 +89,26 @@ to existing SlowBooks behavior.
 | Spec | Implementation |
 |------|---------------|
 | Authentication of ePHI (A) | ✅ Fernet ciphertext carries HMAC; tampered ciphertext fails to decrypt and returns None |
-| Document integrity | ✅ SHA-256 hash + audit ID printed in tax-form PDFs; auditor can re-verify by regenerating |
+| Document integrity | ⚠ SHA-256 hash + audit ID printed in generated PDFs; auditor re-verifies by regenerating. Per-document, not linked — see below |
+
+**The `document_audits` table is a hash *ledger*, not a hash *chain*.**
+Several docs in this repo (and earlier CHANGELOG entries) call it a chain.
+That wording is wrong and worth correcting precisely, because the
+difference is the guarantee:
+
+- Each row holds an independent SHA-256 of one document's canonical
+  content. There is no `prev_hash` column binding row N to row N-1.
+- **What it proves:** a document whose content changed no longer matches
+  its recorded hash. Re-render, recompute, compare — this works, and
+  `tests/test_document_audit_integrity.py` pins it end to end.
+- **What it does not prove:** that no row was *removed*. Delete an audit
+  row and every surviving row still verifies perfectly. There is nothing
+  to notice the gap. `test_deleting_a_row_is_undetectable_today` asserts
+  this limitation deliberately, so it stays visible.
+- For § 164.312(c)(1) that is partial coverage. Making it a true chain
+  (each row hashing the previous row's hash, with a periodic signed
+  checkpoint) would close it and is the single highest-value integrity
+  upgrade available. It is not implemented.
 
 ### § 164.312(d) — Person or Entity Authentication
 
@@ -133,6 +169,8 @@ to change to fully align with the Security Rule:
 
 | Gap | Severity | Fix |
 |-----|----------|-----|
+| **Benefit tables hold health-plan enrollment in plaintext** | High | `benefit_plans`, `benefit_enrollments`, `benefit_dependents` store carrier, plan kind, coverage windows and dependent identifiers unencrypted. If treated as ePHI, they need the same Fernet wrapping as the bank fields, and dependents need the "minimum necessary" access story below |
+| **Audit ledger is not a linked chain** | High | Row deletion is undetectable (see § 164.312(c)(1) above). Fix: add `prev_hash` to `document_audits`, hash it into each new row, and expose a chain-verify endpoint plus a periodic signed checkpoint |
 | **No role-based access control** | High | SlowBooks is single-operator. HIPAA expects "minimum necessary" — different staff see different data. Would require a user model + role assignment + per-field access checks |
 | **Employee data not encrypted at rest** | Medium | Names, addresses, hire date, etc. are plaintext. If treated as PHI, would need Fernet wrapping (same scheme as bank fields) |
 | **No data-retention enforcement** | Medium | Pay stubs and employee records stay forever. HIPAA expects retention/destruction policies — would need a configurable retention period + automated purge |
@@ -150,7 +188,8 @@ These aren't strictly HIPAA-required but are good signals for any
 compliance regime (HIPAA, SOC 2, PCI-DSS):
 
 - **Versioned ciphertext** (`v1:` prefix) — supports zero-downtime key rotation
-- **Login + document audit trails** with content-hash chaining
+- **Login + document audit trails** with per-document content hashing
+  (a ledger, not a chain — see § 164.312(c)(1))
 - **Idle session timeout** + automatic logoff
 - **Startup fail-hard checks** on production misconfig (encryption secret, DB TLS, FORCE_HTTPS)
 - **Rate-limited login** + Argon2id password hashing (~100ms cost)
@@ -187,4 +226,8 @@ care even though only payroll/financial data is in scope):
 
 ---
 
-**Last updated:** 2026-05-21 — alongside the tax-form audit-hash work.
+**Last updated:** 2026-08-18 — revised after the payroll/HR expansion.
+Two substantive changes: the benefits module moved the PHI posture (§ 1),
+and the `document_audits` ledger-vs-chain distinction is now stated
+accurately (§ 164.312(c)(1)) instead of being papered over by the word
+"chain".

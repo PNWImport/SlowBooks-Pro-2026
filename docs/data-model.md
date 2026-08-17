@@ -48,7 +48,7 @@ files under `migrations/versions/`; for model code, see `app/models/`.
 | `email_templates` | Customizable email templates |
 | `inventory_movements` | Per-item qty/cost ledger (purchases, sales, adjustments) |
 | `saved_reports` | Named (report_type + parameters) tuples |
-| `document_audits` | SHA-256 hash chain for generated tax-form PDFs (W-2/W-3/940/941) |
+| `document_audits` | Per-document SHA-256 ledger for generated documents (W-2/W-3/940/941/SUI/COBRA/e-signature). Independent rows, not a linked chain |
 | `portal_accesses` | Audit log for self-service portal hits (success + failure) |
 | `login_attempts` | Authentication-attempt audit log |
 | `reseller_permits` | Per-entity sales-tax reseller permits with expiration + verification trail |

@@ -21,7 +21,7 @@ _SKIP_TABLES = {
     "audit_log",  # primary audit table (recursion guard)
     "portal_accesses",  # portal cookie / token claim access log
     "login_attempts",  # admin failed-login tracking
-    "document_audits",  # hash-chain document audit
+    "document_audits",  # per-document hash ledger
     "email_log",  # outbound email send log
 }
 

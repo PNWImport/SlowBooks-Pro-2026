@@ -119,7 +119,7 @@ into your SIEM, or just `tail -f` them for small deployments:
   user-agent, success or failure.
 - **`portal_accesses`** — every employee-portal hit (cookieless and
   authed), with the resolved employee_id when known.
-- **`document_audits`** — SHA-256 hash chain for every tax-form PDF
+- **`document_audits`** — per-document SHA-256 ledger for every generated document (tax forms, SUI, COBRA notices, e-signature seals)
   ever generated. A printed form's footer carries the hash + audit
   ID; an auditor can verify the document hasn't been edited.
 - **`/health`** — unauthenticated liveness probe. Wire to your load
