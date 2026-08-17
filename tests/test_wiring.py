@@ -267,6 +267,10 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("GET", "/api/tax-forms/1096/pdf"),
     ("GET", "/api/tax-forms/sui"),
     ("GET", "/api/tax-forms/liability"),
+    # Deposit-schedule + liability-calendar are machine-readable siblings of
+    # /liability; no SPA page consumes them yet (tracked in docs/todo.md).
+    ("GET", "/api/tax-forms/deposit-schedule"),
+    ("GET", "/api/tax-forms/liability-calendar"),
     # Legacy JSON-mode tax form endpoints — superseded by /pdf variants.
     # Kept for machine readers / future e-file integration.
     ("POST", "/api/payroll/forms/w2/{emp_id}"),

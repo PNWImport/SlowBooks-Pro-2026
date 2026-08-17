@@ -76,8 +76,12 @@ operator submits themselves.
   warnings list. Follow-ups: SSNs are zero-filled (app stores last-4
   only), no TCC config yet, layouts need verification against the
   current-year specs / AccuWage.
-- **Deposit schedule + liability calendar** — IRS lookback rule (monthly vs
-  semiweekly depositor), due-date calendar, $100k next-day rule.
+- ~~**Deposit schedule + liability calendar**~~ — DONE:
+  `GET /api/tax-forms/deposit-schedule?year=` (Pub 15 lookback →
+  monthly/semiweekly) and `GET /api/tax-forms/liability-calendar?year=`
+  (941 deposits, $100k next-day rule, de-minimis warnings, FUTA $500
+  floor + carryover, return due dates). Follow-ups: federal holidays not
+  modelled (weekend-only roll, so at most a day early); no SPA page yet.
 - **Contractor pay runs** — contractors are AP vendors today, so 1099-NEC is
   derived from `bill_payments` rather than from a pay run.
 - **Pay-schedule object** — cutoffs, weekend/holiday shifting, blackout dates.

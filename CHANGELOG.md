@@ -7,6 +7,27 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Deposit-schedule determination + payroll tax liability calendar
+
+The honest, local-only version of "we handle your taxes": say exactly
+what is due, to whom, and when — without claiming to pay it.
+
+- `GET /api/tax-forms/deposit-schedule?year=` — IRS Pub 15 lookback
+  (Jul 1 Y-2 .. Jun 30 Y-1, per-quarter detail): <=$50k → monthly
+  depositor, over → semiweekly; new employers default monthly.
+- `GET /api/tax-forms/liability-calendar?year=` — date-sorted merge of:
+  941 deposits under the determined schedule (monthly due-the-15th
+  rolled off weekends; semiweekly Wed-Fri→Wednesday / Sat-Tue→Friday),
+  the $100k next-day rule (event + becomes-semiweekly warning),
+  de-minimis quarters under $2,500 flagged as payable-with-return, FUTA
+  quarterly deposits with the $500 floor and carryover (Q4 remainder
+  rides Form 940), quarterly 941 / annual 940 filing dates, and state
+  quarterly amounts (state deposit *frequencies* vary too much to model
+  — the rows say to check).
+
+Federal holidays are not modelled — weekend-only roll, so a holiday due
+date is at most a day early, never late. 20 new tests (563 -> 583).
+
 ### Electronic filing exports — EFW2 (SSA) + Pub 1220 (IRS 1099)
 
 Year-end forms existed as PDFs only; the electronic upload formats now
