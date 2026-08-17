@@ -124,7 +124,11 @@ operator submits themselves.
   (audit-hashed, 102% premium). Follow-ups: 1095-C PDF + AIR e-file,
   ACA offer codes / affordability safe harbors (offers aren't
   modelled), auto-end enrollments on termination, SPA page.
-- **Workers' comp** — per-class-code rates and a premium report by class.
+- ~~**Workers' comp**~~ — DONE: carrier-quoted `wc_class_rates`
+  (per $100 of payroll, supersede-on-re-quote) and the premium-audit
+  report at `GET /api/workers-comp/premium-report?year=` grouping wages
+  by (state, class); missing rates surface as None + a named list, never
+  a silent zero. WA per-hour L&I stays in the WA engine.
 - **E-signature** — offer letters, I-9, handbook acknowledgment, riding on
   the existing `document_audits` hash chain.
 - **Org chart / PTO calendar / performance reviews.**

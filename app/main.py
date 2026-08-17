@@ -67,6 +67,7 @@ from app.routes import contractor_runs
 from app.routes import pay_schedules
 from app.routes import locations
 from app.routes import benefits
+from app.routes import workers_comp
 
 # Phase 7: Online Payments
 from app.routes import stripe_payments, public
@@ -384,6 +385,7 @@ app.include_router(contractor_runs.router)
 app.include_router(pay_schedules.router)
 app.include_router(locations.router)
 app.include_router(benefits.router)
+app.include_router(workers_comp.router)
 # Phase 7: Online Payments
 app.include_router(stripe_payments.router)
 app.include_router(public.router)

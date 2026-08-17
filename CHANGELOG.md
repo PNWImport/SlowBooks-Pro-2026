@@ -7,6 +7,20 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Workers' comp class rates + premium-audit report
+
+Most states price workers' comp per $100 of payroll by risk class, with
+the actual rate coming from the employer's carrier quote — so there is
+no table to ship, and `wc_class_rates` holds the operator's own quotes
+(re-quoting a (state, class) supersedes the old rate).
+`GET /api/workers-comp/premium-report?year=` groups the year's
+processed wages by (work state, employee WC class) and prices them —
+the view a carrier premium audit asks for. A class with no rate on file
+reports premium None and lands in `classes_missing_rates`, never a
+silent zero; unclassified employees group under UNCLASSIFIED. WA's
+per-hour L&I stays in the WA engine, where it already was. Migration
+c9d0e1f2a3b5. 4 new tests (656 -> 660).
+
 ### Benefits records + ACA 1095 + COBRA notices
 
 The record-keeping half of benefits administration — no carrier feeds
