@@ -117,12 +117,24 @@ operator submits themselves.
   locality + default WC class, jurisdiction-validated), employee
   attachment, and payroll fallback chain (stub override > employee
   explicit > location > default). SPA page pending.
-- **Blind index for benefit enrollment metadata** — dependent identifiers
-  and carrier names are Fernet-encrypted, but plan kind / coverage windows /
-  employee_id stay plaintext because they are filtered and joined on
-  (the ACA month-of-coverage derivation needs them). Encrypting them means
-  adding deterministic blind-index columns so the queries still work. See
-  docs/hipaa-compliance.md § 4.
+- ~~**Blind index for benefit enrollment metadata**~~ — DONE, with one part
+  deliberately not done. `app/services/blind_index.py` adds keyed
+  deterministic indexes (`HMAC-SHA256(key, "b1|<table>.<column>|<value>")`,
+  domain-separated per column, kept in sync by mapper events so no write path
+  can forget one) plus `reindex` for key rotation. Applied so that:
+  `BenefitPlan.kind` is encrypted and filtered through `kind_bidx` (the ACA
+  1095 derivation), and `BenefitEnrollment.coverage_start`/`coverage_end` are
+  encrypted with **no** index — their only SQL predicate is
+  `coverage_end IS NULL`, which survives encryption, and the
+  month-of-coverage rule is a range comparison a blind index cannot answer
+  anyway. `employee_id` stays plaintext on purpose: encrypting a foreign key
+  gives up the FK, the cascade and the ORM relationship, while a blind index
+  over it would still group one person's enrollments by construction — so it
+  would trade referential integrity for concealment it does not achieve.
+  Residual leak, documented rather than papered over: a blind index over a
+  six-value enum exposes bucket sizes, so the largest `kind_bidx` bucket is
+  guessably MEDICAL. Closing that needs per-row key derivation, not more of
+  this. See docs/hipaa-compliance.md § 164.312(a)(2)(iv).
 - ~~**Sign + off-box the audit checkpoints**~~ — DONE: checkpoints carry an
   HMAC-SHA256 signature over `(v, tip_audit_id, tip_chain_hash, row_count,
   created_at, note)` under `AUDIT_CHECKPOINT_SIGNING_SECRET` (no dev default,

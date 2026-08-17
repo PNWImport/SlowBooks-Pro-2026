@@ -76,10 +76,11 @@ docker compose exec -T postgres psql -U bookkeeper bookkeeper \
 
 ## Encryption key rotation
 
-Bank PII (routing + account numbers) is Fernet-encrypted with a
-versioned ciphertext prefix (`v1:`), supporting zero-downtime
-rotation. The new key reads existing ciphertexts via the PREV
-fallback while you rewrap.
+Bank PII (routing + account numbers) and the benefits ePHI columns
+(carrier name, dependent identifiers, plan kind, coverage window) are
+Fernet-encrypted with a versioned ciphertext prefix (`v1:`), supporting
+zero-downtime rotation. The new key reads existing ciphertexts via the
+PREV fallback while you rewrap.
 
 ### One-time rotation
 
@@ -105,6 +106,36 @@ python -m app.services.encryption rewrap
 Master key files (`.slowbooks-master.key`, `.slowbooks-session.key`)
 are excluded in `.gitignore` — never commit them. Losing the master
 key means losing every encrypted secret in the database.
+
+### Blind-index key rotation
+
+Encrypted columns that still have to be queryable carry a second,
+deterministic column — a blind index. It has its own key, so rotating
+the encryption secret does **not** touch it, and vice versa:
+
+```bash
+export PAYROLL_BLIND_INDEX_SECRET="<new key>"
+python -m app.services.blind_index reindex --dry-run
+python -m app.services.blind_index reindex
+```
+
+There is no PREV fallback here on purpose. A blind index is derived
+data — it can always be rebuilt from plaintext the app can still
+decrypt — so recomputing everything is both simpler and correct.
+
+Run this **before** the app serves traffic under the new key. Between
+setting the key and finishing the reindex, queries that filter on an
+index (the ACA 1095 derivation, which filters on plan kind) compute the
+new hash and find the old one stored, so they return nothing. That
+failure is quiet: an empty 1095 looks like "nobody had coverage".
+
+`PAYROLL_BLIND_INDEX_SECRET` is optional — unset, the index key is
+derived from `PAYROLL_ENCRYPTION_SECRET` with a separate salt. Setting
+it explicitly is better: leaking the index key then only lets an
+attacker test guesses, rather than sharing fate with the key that
+decrypts everything. Note that rotating `PAYROLL_ENCRYPTION_SECRET`
+while the index key is *derived* from it changes both, so run `reindex`
+after `rewrap` in that case.
 
 ---
 

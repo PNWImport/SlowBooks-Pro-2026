@@ -213,7 +213,60 @@ and the delete-every-checkpoint case that only the off-box artifact catches.
 | HSA / health-insurance deduction amounts | ⚠ Plaintext (not PHI in HIPAA terms) |
 | Benefit carrier name | ✅ Fernet-encrypted |
 | Benefit dependent name / SSN last-4 / DOB | ✅ Fernet-encrypted |
-| Benefit plan kind, coverage dates, premiums | ⚠ Plaintext — queried and joined on; needs a blind index to encrypt |
+| Benefit plan kind | ✅ Fernet-encrypted, queried through a blind index (`kind_bidx`) — bucket sizes remain visible, see below |
+| Benefit coverage start / end dates | ✅ Fernet-encrypted; no index needed (only `IS NULL` is a SQL predicate) |
+| Benefit plan name, premiums, `provides_mec` | ⚠ Plaintext — plan properties, not identifiers |
+| Benefit enrollment `employee_id` | ⚠ Plaintext by design — encrypting a foreign key costs referential integrity and the cascade, and a blind index would still group one person's enrollments; see § 4 |
+
+**Blind indexes, and exactly what they buy.** Fernet output is randomized, so
+an encrypted column cannot appear in a `WHERE`, `ORDER BY` or unique
+constraint. Where a column must stay queryable, a second deterministic column
+holds a keyed hash of the same value:
+
+```
+bidx = HMAC-SHA256(index_key, "b1|<table>.<column>|<normalized value>")
+```
+
+The application computes it because it holds the key; a reader of the table
+cannot. The column's own name is inside the hash, so the same value in two
+different columns produces different hashes and cannot be correlated across
+tables.
+
+What it leaks, stated precisely, because this decides whether a column is a
+sensible candidate:
+
+| | Leaked? |
+|---|---|
+| The plaintext, directly | ❌ — without the key an attacker cannot hash a guess to compare |
+| **Equality** — which rows share a value | ✅ unavoidable; it is the mechanism |
+| **Frequency** — how many rows share each value | ✅ and this is the real cost |
+
+Frequency is why a blind index is strong for high-cardinality, unguessable
+values and only partial for enums. On `benefit_plans.kind` there are six
+possible values and a skewed distribution, so an attacker who knows this is an
+HR system will correctly guess the largest bucket is MEDICAL. It still costs
+them DENTAL vs VISION vs LIFE, which they could previously simply read. That
+is a real if modest improvement and is documented as such rather than counted
+as the problem being solved. (Truncating the hash to force collisions — the
+usual frequency mitigation — helps high-cardinality columns and does nothing
+for a six-value enum, so this implementation does not truncate.)
+
+The key is `PAYROLL_BLIND_INDEX_SECRET`, or derived from
+`PAYROLL_ENCRYPTION_SECRET` with its own salt when unset. Unlike the
+checkpoint signing key it cannot be optional, since queries depend on it.
+Rotation rewrites every index column — a blind index is derived data and can
+always be rebuilt from plaintext the app can still decrypt:
+
+```
+PAYROLL_BLIND_INDEX_SECRET=<new> python -m app.services.blind_index reindex
+```
+
+Not every encrypted column needs one. `coverage_start` / `coverage_end` have
+exactly one SQL predicate between them — `coverage_end IS NULL`, the
+open-enrollment check — and NULL survives encryption, so they carry no index.
+A blind index could not have served them anyway: the ACA month-of-coverage
+rule is a range comparison, and a blind index answers equality only. That
+comparison runs in Python on decrypted values.
 
 ---
 
@@ -246,7 +299,7 @@ to change to fully align with the Security Rule:
 
 | Gap | Severity | Fix |
 |-----|----------|-----|
-| **Enrollment metadata still plaintext** | Medium | Dependent identifiers and carrier names are now Fernet-encrypted, but plan kind, coverage windows and the employee foreign key are not — they are filtered, sorted and joined on, and Fernet output is randomized. An attacker with table access can still tell *which employees hold medical coverage over which months*, just not who the dependents are. Closing it needs deterministic blind-index columns alongside the encrypted values |
+| **Enrollment linkage is still readable, and the plan-kind index leaks frequency** | Low | Plan kind and the coverage window are now encrypted — kind behind a blind index, the dates behind nothing because their only SQL predicate is `IS NULL`. Two residual leaks, both structural rather than fixable by more encryption. (1) A blind index over a six-value enum exposes bucket sizes, so an attacker who knows this is an HR system will correctly guess that the largest `kind_bidx` bucket is MEDICAL; it still costs them DENTAL vs VISION vs LIFE. (2) `benefit_enrollments.employee_id` stays plaintext on purpose: encrypting a foreign key gives up the FK constraint, the `ON DELETE CASCADE` and the ORM relationship, so the database could no longer guarantee an enrollment points at a real employee — and a blind index over it would still group one person's enrollments by construction, so *somebody holds coverage across these rows* stays visible either way. Concealing that properly needs per-row key derivation or a different schema, not a blind index |
 | **Checkpoint signing is symmetric, and off-boxing is the operator's job** | Low | Checkpoints are now HMAC-SHA256 signed under a key held outside the database, and exportable as self-contained artifacts that verify with no checkpoint row present. Two things remain the operator's responsibility rather than the app's: actually scheduling the export to append-only storage (nothing in the database can attest to its own past if no artifact was ever kept), and the fact that a symmetric MAC gives no protection against a compromised *application host* — the signing key is in that process's environment. An asymmetric signature, or an external timestamping/notary service, would close the second |
 | **No role-based access control** | High | SlowBooks is single-operator. HIPAA expects "minimum necessary" — different staff see different data. Would require a user model + role assignment + per-field access checks |
 | **Employee data not encrypted at rest** | Medium | Names, addresses, hire date, etc. are plaintext. If treated as PHI, would need Fernet wrapping (same scheme as bank fields) |

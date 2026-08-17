@@ -159,6 +159,54 @@ class EncryptedDate(TypeDecorator):
             return None
 
 
+class EncryptedEnum(TypeDecorator):
+    """A Python enum stored as its `.value` in Fernet ciphertext.
+
+    Replaces a native PostgreSQL enum, which cannot be encrypted at all — the
+    database refuses any value outside the declared label set, and ciphertext
+    is never one of them.
+
+    A column that was a native enum is almost always one somebody filters on,
+    so pair this with a blind index (see app/services/blind_index.py). Note
+    what that concedes: a small label set means bucket sizes are visible, so
+    the most common value is guessable. Encrypting a six-way enum buys
+    confidentiality against reading, not against counting.
+    """
+
+    impl = String
+    cache_ok = True
+
+    def __init__(self, enum_class, *args, **kwargs):
+        # The attribute name must match the constructor parameter name:
+        # SQLAlchemy builds this type's cache key by looking up each __init__
+        # argument on the instance.
+        self.enum_class = enum_class
+        super().__init__(*args, **kwargs)
+
+    def process_bind_param(self, value, dialect):
+        if value is None or value == "":
+            return None
+        if isinstance(value, self.enum_class):
+            value = value.value
+        return encrypt(str(value))
+
+    def process_result_value(self, value, dialect):
+        if not value:
+            return None
+        plaintext = decrypt(value)
+        if not plaintext:
+            return None
+        try:
+            return self.enum_class(plaintext)
+        except ValueError:
+            logger.error(
+                "Encrypted enum column held %r, which is not a %s member",
+                plaintext,
+                self.enum_class.__name__,
+            )
+            return None
+
+
 def _is_encrypted_with_current(token: str) -> bool:
     """True if the value decrypts under the CURRENT key. False if it
     decrypts only under the previous key, or doesn't decrypt at all."""
@@ -177,10 +225,16 @@ def rewrap_all(db, dry_run: bool = False) -> dict:
 
     Iterates every row in every model that stores a Fernet ciphertext:
     EmployeeBankAccount, VendorBankAccount, and the benefits ePHI columns
-    (BenefitPlan.carrier_name, BenefitDependent.{name, ssn_last_four, dob}).
+    (BenefitPlan.{carrier_name, kind}, BenefitEnrollment.{coverage_start,
+    coverage_end}, BenefitDependent.{name, ssn_last_four, dob}).
     A field missing from this list survives rotation only until the previous
     key is dropped, so keep it in sync when a new encrypted column lands —
     tests/test_benefits_encryption.py asserts the coverage.
+
+    Blind-index columns are NOT touched here: they are keyed by the blind-index
+    secret, not the encryption secret, so rotating one has no effect on the
+    other. Rotating the index key is
+    `python -m app.services.blind_index reindex`.
     For each value:
       - if it decrypts under the current key, skip (already rewrapped)
       - if it decrypts under PREV, re-encrypt with current and update
@@ -195,7 +249,7 @@ def rewrap_all(db, dry_run: bool = False) -> dict:
     from sqlalchemy import inspect as sa_inspect
 
     from app.models.bank_accounts import EmployeeBankAccount
-    from app.models.benefits import BenefitDependent, BenefitPlan
+    from app.models.benefits import BenefitDependent, BenefitEnrollment, BenefitPlan
     from app.models.contractor_payments import VendorBankAccount
 
     summary = {"checked": 0, "rewrapped": 0, "already_current": 0, "failed": 0}
@@ -211,7 +265,8 @@ def rewrap_all(db, dry_run: bool = False) -> dict:
     # writing it straight back: the bind processor re-encrypts under the
     # current key.
     TYPED_TARGETS = [
-        (BenefitPlan, ("carrier_name",)),
+        (BenefitPlan, ("carrier_name", "kind")),
+        (BenefitEnrollment, ("coverage_start", "coverage_end")),
         (BenefitDependent, ("name", "ssn_last_four", "dob")),
     ]
 

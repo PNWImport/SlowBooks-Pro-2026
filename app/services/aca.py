@@ -17,7 +17,12 @@
 
 from datetime import date, timedelta
 
-from app.models.benefits import BenefitEnrollment, BenefitKind, BenefitPlan
+from app.models.benefits import (
+    BenefitEnrollment,
+    BenefitKind,
+    BenefitPlan,
+    plan_kind_index,
+)
 
 MONTHS = list(range(1, 13))
 
@@ -39,11 +44,16 @@ def _covers_month(enrollment: BenefitEnrollment, year: int, month: int) -> bool:
 
 def compute_1095_data(db, year: int) -> dict:
     """Per-employee coverage months for the year, plus 1094 counts."""
+    # `kind` is encrypted, so it is filtered through its blind index. Comparing
+    # BenefitPlan.kind to BenefitKind.MEDICAL here would compare the constant
+    # against randomized ciphertext and silently return no enrollments at all
+    # — an empty 1095 filing, which is exactly the kind of failure that looks
+    # like "nobody had coverage" instead of like a bug.
     enrollments = (
         db.query(BenefitEnrollment)
         .join(BenefitPlan, BenefitEnrollment.plan_id == BenefitPlan.id)
         .filter(
-            BenefitPlan.kind == BenefitKind.MEDICAL,
+            BenefitPlan.kind_bidx == plan_kind_index(BenefitKind.MEDICAL),
             BenefitPlan.provides_mec.is_(True),
         )
         .all()
