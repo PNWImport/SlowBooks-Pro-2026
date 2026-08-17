@@ -286,6 +286,12 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("PUT", "/api/pay-schedules/{schedule_id}"),
     ("GET", "/api/pay-schedules/{schedule_id}/upcoming"),
     ("POST", "/api/pay-schedules/{schedule_id}/assign/{emp_id}"),
+    # Work locations — API-first; SPA page tracked in docs/todo.md.
+    ("GET", "/api/locations"),
+    ("POST", "/api/locations"),
+    ("PUT", "/api/locations/{location_id}"),
+    ("POST", "/api/locations/{location_id}/assign/{emp_id}"),
+    ("GET", "/api/locations/{location_id}/employees"),
     # Retro pay — API-first; SPA affordance tracked in docs/todo.md.
     ("POST", "/api/payroll/retro-pay/preview"),
     ("POST", "/api/payroll/retro-pay/apply"),

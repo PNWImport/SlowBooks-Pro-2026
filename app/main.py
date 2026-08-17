@@ -65,6 +65,7 @@ from app.routes import bank_import, tax, backups
 from app.routes import companies, employees, payroll
 from app.routes import contractor_runs
 from app.routes import pay_schedules
+from app.routes import locations
 
 # Phase 7: Online Payments
 from app.routes import stripe_payments, public
@@ -380,6 +381,7 @@ app.include_router(employees.router)
 app.include_router(payroll.router)
 app.include_router(contractor_runs.router)
 app.include_router(pay_schedules.router)
+app.include_router(locations.router)
 # Phase 7: Online Payments
 app.include_router(stripe_payments.router)
 app.include_router(public.router)

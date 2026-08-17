@@ -113,7 +113,10 @@ operator submits themselves.
   the Form 8846 FICA-tip-credit summary at
   `GET /api/tax-forms/fica-tip-credit?year=`. Follow-up: Form 8027
   (allocated tips) needs gross-receipts tracking the app doesn't have.
-- **Multi-location** — locations as records with their own tax jurisdiction.
+- ~~**Multi-location**~~ — DONE: `WorkLocation` (address + state +
+  locality + default WC class, jurisdiction-validated), employee
+  attachment, and payroll fallback chain (stub override > employee
+  explicit > location > default). SPA page pending.
 - **Benefits records** — plans, enrollment, eligibility, ACA 1095-B/C + 1094,
   COBRA notices. Records and documents only, no carrier integration.
 - **Workers' comp** — per-class-code rates and a premium report by class.

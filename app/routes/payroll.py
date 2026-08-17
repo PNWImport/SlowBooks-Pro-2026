@@ -337,13 +337,30 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
         posttax = ded_posttax + Decimal(str(stub_input.posttax_deductions or 0))
         reimbursements = Decimal(str(stub_input.reimbursements or 0)).quantize(CENT)
 
-        # Multi-state: per-stub work location, with reciprocity deciding which
-        # state's income tax is actually withheld.
-        work_state = (stub_input.work_state or emp.work_state or "WA").upper()
+        # Jurisdiction resolution, most specific first: per-stub override,
+        # explicit employee columns, the employee's work location, default.
+        # Reciprocity then decides which state's income tax is withheld.
+        location = None
+        if emp.location_id:
+            from app.models.locations import WorkLocation
+
+            location = (
+                db.query(WorkLocation)
+                .filter(WorkLocation.id == emp.location_id)
+                .first()
+            )
+        work_state = (
+            stub_input.work_state
+            or emp.work_state
+            or (location.state if location else None)
+            or "WA"
+        ).upper()
         wh_state = withholding_state(work_state, emp.residence_state)
-        # Local jurisdiction: per-stub override, falling back to the
-        # employee's configured work locality.
-        work_locality = stub_input.work_locality or emp.work_locality
+        work_locality = (
+            stub_input.work_locality
+            or emp.work_locality
+            or (location.locality if location else None)
+        )
 
         regular_wages = Decimal("0")
         if stub_input.supplemental and stub_input.supplemental_method == "aggregate":
@@ -365,7 +382,8 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             withholding_state=wh_state,
             work_locality=work_locality,
             residence_locality=emp.residence_locality,
-            wc_class_code=emp.wc_class_code,
+            wc_class_code=emp.wc_class_code
+            or (location.default_wc_class_code if location else None),
             hours=total_hours,
             pretax_deductions=pretax,
             pretax_fica=ded_pretax_fica,

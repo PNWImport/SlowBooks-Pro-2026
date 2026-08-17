@@ -7,6 +7,18 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Work locations — first-class tax jurisdictions
+
+Tax situs previously lived in two free-typed per-employee columns;
+opening a second office meant editing every employee. `WorkLocation`
+pins address + state + locality + default workers'-comp class once,
+validated against the state-engine registry and the locality files at
+create/update time (a typo'd jurisdiction is a 400, not a silent $0).
+Employees attach via `location_id`; payroll resolves jurisdiction most
+specific first — per-stub override, explicit employee columns, then the
+location. `/api/locations`: CRUD, assign, roster. Migration
+a7b8c9d0e1f3. 6 new tests (642 -> 648).
+
 ### Tipped wages — tip credit, top-up guarantee, Form 8846
 
 `PayStubInput.reported_tips` (received directly — taxed through the

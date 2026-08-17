@@ -117,6 +117,9 @@ class Employee(Base):
     # State of residence — drives reciprocity (withhold for the residence
     # state instead of the work state when an agreement exists).
     residence_state = Column(String(2), nullable=True)
+    # Primary work location — jurisdiction fallback when the explicit
+    # work_state / work_locality columns below are unset.
+    location_id = Column(Integer, ForeignKey("work_locations.id"), nullable=True)
     # Local tax jurisdictions — codes into app/services/local_tax/localities/
     # (e.g. "PA-PHILADELPHIA", "NY-NYC", "IN-MARION"). Work locality drives
     # municipal/occupational taxes; residence locality drives county,

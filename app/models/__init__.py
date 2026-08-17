@@ -58,6 +58,7 @@ from app.models.email_templates import EmailTemplate
 from app.models.items import InventoryMovement
 from app.models.saved_reports import SavedReport
 from app.models.pay_schedules import PaySchedule  # noqa: F401
+from app.models.locations import WorkLocation  # noqa: F401
 from app.models.contractor_payments import (  # noqa: F401
     ContractorPayRun,
     ContractorPayment,
