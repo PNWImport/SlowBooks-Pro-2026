@@ -7,6 +7,26 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Contractor pay runs — 1099 payees get the payroll shape
+
+Contractors previously lived only in AP (create bill, pay bill). Paying a
+roster every period wants the payroll shape — one dated run, many payees,
+one JE, one NACHA file — with no withholding: 1099 payees get gross.
+
+- `POST /api/contractor-runs` (batch create) → `/{id}/process` (DR 6130
+  contractor expense falling back to 6000, CR 1000 bank; closing-date
+  guard; idempotent) → `/{id}/nacha` (ACH credits per contractor from the
+  shared NACHA record builders; unbanked vendors skipped — paid by check)
+- `VendorBankAccount` — Fernet-encrypted routing/account, clear last-4,
+  one active account per vendor (adding supersedes), 9-digit routing
+  validation. `POST/GET /api/contractor-runs/vendors/{id}/bank`
+- 1099-NEC totals now sum BOTH payment paths: AP bill payments plus
+  processed contractor-run payments (draft runs excluded), so a vendor
+  paid $400 through AP and $300 through a run reports $700
+- Migration b2c3d4e5f6a7; models registered for create_all/migrations
+
+12 new tests (583 -> 595). API-first: SPA page tracked in docs/todo.md.
+
 ### Deposit-schedule determination + payroll tax liability calendar
 
 The honest, local-only version of "we handle your taxes": say exactly

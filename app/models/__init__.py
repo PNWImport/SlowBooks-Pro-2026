@@ -57,6 +57,11 @@ from app.models.email_templates import EmailTemplate
 # Phase 11: Inventory + Saved Reports
 from app.models.items import InventoryMovement
 from app.models.saved_reports import SavedReport
+from app.models.contractor_payments import (  # noqa: F401
+    ContractorPayRun,
+    ContractorPayment,
+    VendorBankAccount,
+)
 
 __all__ = [
     "Account",

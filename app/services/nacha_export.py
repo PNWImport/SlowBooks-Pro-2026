@@ -471,3 +471,112 @@ def generate_prenote_file(
     )
 
     return _assemble(header, batch_header, entries, batch_control, file_control)
+
+
+def generate_contractor_nacha_file(db: Session, run_id: int, originating: dict) -> str:
+    """NACHA ACH credit file for a processed contractor pay run.
+
+    Same record structure as the payroll file — one credit per contractor
+    payment to the vendor's active bank account, plus the offsetting company
+    debit. Vendors without an active bank account are skipped (paid by
+    check instead); the caller can compare entry count to payment count.
+    """
+    from app.models.contractor_payments import (
+        ContractorPayRun,
+        ContractorRunStatus,
+        VendorBankAccount,
+    )
+
+    run = (
+        db.query(ContractorPayRun)
+        .options(joinedload(ContractorPayRun.payments))
+        .filter(ContractorPayRun.id == run_id)
+        .first()
+    )
+    if run is None:
+        raise ValueError(f"Contractor run {run_id} not found")
+    if run.status != ContractorRunStatus.PROCESSED:
+        raise ValueError(f"Contractor run {run_id} is not processed")
+
+    effective_date = run.pay_date or date.today()
+    created = date.today()
+    originating_dfi = "".join(
+        ch for ch in str(originating.get("originating_dfi_id") or "") if ch.isdigit()
+    )
+
+    entries: list[str] = []
+    entry_hash = 0
+    total_credit = 0
+    trace_seq = 0
+
+    for payment in run.payments:
+        acct = (
+            db.query(VendorBankAccount)
+            .filter(
+                VendorBankAccount.vendor_id == payment.vendor_id,
+                VendorBankAccount.is_active.is_(True),
+            )
+            .first()
+        )
+        if acct is None:
+            continue
+        routing = decrypt(acct.routing_number_enc) or ""
+        account_number = decrypt(acct.account_number_enc) or ""
+        txn_code = (
+            TXN_SAVINGS_CREDIT
+            if acct.account_kind == BankAccountKind.SAVINGS
+            else TXN_CHECKING_CREDIT
+        )
+        amount_cents = _cents(_q(payment.amount))
+        if amount_cents <= 0:
+            continue
+        vendor = payment.vendor
+        trace_seq += 1
+        entries.append(
+            _entry_detail(
+                txn_code,
+                routing,
+                account_number,
+                amount_cents,
+                str(payment.vendor_id),
+                (vendor.name if vendor else f"VENDOR {payment.vendor_id}"),
+                originating_dfi,
+                trace_seq,
+            )
+        )
+        entry_hash += int(_routing_prefix(routing))
+        total_credit += amount_cents
+
+    if entries:
+        trace_seq += 1
+        entries.append(
+            _entry_detail(
+                "27",
+                str(originating.get("immediate_destination") or ""),
+                str(originating.get("company_account") or ""),
+                total_credit,
+                str(originating.get("company_id") or ""),
+                originating.get("company_name") or "",
+                originating_dfi,
+                trace_seq,
+            )
+        )
+        entry_hash += int(
+            _routing_prefix(str(originating.get("immediate_destination") or ""))
+        )
+
+    total_debit = total_credit
+    entry_hash = entry_hash % (10**10)
+    entry_count = len(entries)
+
+    header = _file_header(originating, created)
+    batch_header = _batch_header(originating, effective_date, 1, "CONTRACTOR")
+    batch_control = _batch_control(
+        entry_count, entry_hash, total_debit, total_credit, originating, 1
+    )
+    raw_count = 2 + entry_count + 2
+    block_count = -(-raw_count // BLOCKING_FACTOR)
+    file_control = _file_control(
+        1, block_count, entry_count, entry_hash, total_debit, total_credit
+    )
+    return _assemble(header, batch_header, entries, batch_control, file_control)

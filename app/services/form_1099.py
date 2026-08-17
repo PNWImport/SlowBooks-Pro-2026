@@ -68,7 +68,31 @@ def _vendor_payment_totals(db: Session, year: int) -> dict[int, Decimal]:
         .group_by(BillPayment.vendor_id)
         .all()
     )
-    return {vid: _q(total) for vid, total in rows if vid is not None}
+    totals = {vid: _q(total) for vid, total in rows if vid is not None}
+
+    # Contractor pay runs join AP bill payments in the NEC totals — a
+    # contractor paid through either path (or both) reports the sum.
+    from app.models.contractor_payments import (
+        ContractorPayment,
+        ContractorPayRun,
+        ContractorRunStatus,
+    )
+
+    contractor_rows = (
+        db.query(ContractorPayment.vendor_id, func.sum(ContractorPayment.amount))
+        .join(ContractorPayRun, ContractorPayment.run_id == ContractorPayRun.id)
+        .filter(
+            ContractorPayRun.status == ContractorRunStatus.PROCESSED,
+            ContractorPayRun.pay_date >= start,
+            ContractorPayRun.pay_date <= end,
+        )
+        .group_by(ContractorPayment.vendor_id)
+        .all()
+    )
+    for vid, total in contractor_rows:
+        if vid is not None:
+            totals[vid] = _q(totals.get(vid, Decimal("0")) + _q(total))
+    return totals
 
 
 def compute_1099_data(db: Session, year: int) -> list[dict]:

@@ -82,8 +82,11 @@ operator submits themselves.
   (941 deposits, $100k next-day rule, de-minimis warnings, FUTA $500
   floor + carryover, return due dates). Follow-ups: federal holidays not
   modelled (weekend-only roll, so at most a day early); no SPA page yet.
-- **Contractor pay runs** — contractors are AP vendors today, so 1099-NEC is
-  derived from `bill_payments` rather than from a pay run.
+- ~~**Contractor pay runs**~~ — DONE: `/api/contractor-runs` (batch create
+  → process JE → NACHA), `VendorBankAccount` (Fernet-encrypted, one active
+  per vendor), contractor payments join bill payments in 1099-NEC totals.
+  Follow-ups: no SPA page yet (API-first); no void endpoint for a processed
+  contractor run yet (mirror the payroll void).
 - **Pay-schedule object** — cutoffs, weekend/holiday shifting, blackout dates.
 - **Retro pay / mid-period proration** — mid-period rate changes.
 - **Termination + final paycheck** — per-state timing rules, PTO payout.
