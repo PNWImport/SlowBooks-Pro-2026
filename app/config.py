@@ -120,6 +120,13 @@ def _parse_state_rates(raw: str) -> dict:
 # new-employer rate from its tax table, then to SUTA_RATE.
 SUTA_RATE_BY_STATE = _parse_state_rates(os.getenv("SUTA_RATE_BY_STATE", ""))
 
+# Minimum-wage floors for tipped-employee top-up math. Federal defaults;
+# set your state/city floor when it is higher — the top-up guarantee uses
+# MINIMUM_WAGE, and the FICA tip credit (Form 8846) is statutorily pinned
+# to the 2007 federal minimum of $5.15 regardless of these.
+MINIMUM_WAGE = float(os.getenv("MINIMUM_WAGE", "7.25"))
+TIPPED_MINIMUM_WAGE = float(os.getenv("TIPPED_MINIMUM_WAGE", "2.13"))
+
 # When true, a state tax table whose `verified` flag is still false withholds
 # NO state income tax and labels the omission on the pay stub, instead of
 # withholding an amount nobody has reviewed. Off by default — an approximate

@@ -7,6 +7,22 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Tipped wages — tip credit, top-up guarantee, Form 8846
+
+`PayStubInput.reported_tips` (received directly — taxed through the
+check but not paid on it) and `paycheck_tips` (paid through payroll).
+Both join taxable and FICA wages; hourly tipped stubs get the FLSA
+top-up automatically when cash wages + tips miss the MINIMUM_WAGE floor
+(config, federal $7.25 default alongside TIPPED_MINIMUM_WAGE $2.13).
+Net pay backs reported tips out — the check funds the tax on them, which
+is why a low-cash-wage server's check can be nearly zero. The payroll JE
+excludes reported tips from wage expense (customers paid them, no cash
+leaves the bank) so the entry balances. Form 8846 FICA tip credit at
+`GET /api/tax-forms/fica-tip-credit?year=` — employer 7.65% on tips
+above the statutory $5.15/h pin, per employee. Form 8027 (allocated
+tips) needs gross-receipts tracking and stays a follow-up. Migration
+f6a7b8c9d0e2. 10 new tests (632 -> 642).
+
 ### Garnishment remittance — the withheld money now owes someone a payment
 
 Garnishments were calculated and withheld, then the money vanished into

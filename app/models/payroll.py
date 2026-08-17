@@ -234,6 +234,13 @@ class PayStub(Base):
     pretax_deductions = Column(Numeric(12, 2), default=0)
     posttax_deductions = Column(Numeric(12, 2), default=0)
     garnishments = Column(Numeric(12, 2), default=0)
+    # Tips. reported_tips were received directly (cash/card paid out at
+    # close) — taxed through the check but NOT paid on it. paycheck_tips are
+    # paid through payroll (pooled card tips). tip_credit_topup is the
+    # employer make-up when cash wages + tips miss the minimum-wage floor.
+    reported_tips = Column(Numeric(12, 2), default=0)
+    paycheck_tips = Column(Numeric(12, 2), default=0)
+    tip_credit_topup = Column(Numeric(12, 2), default=0)
     # Non-taxable accountable-plan reimbursements — added to the check but not
     # part of gross wages and not taxed.
     reimbursements = Column(Numeric(12, 2), default=0)

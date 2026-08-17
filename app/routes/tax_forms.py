@@ -130,6 +130,14 @@ def get_liability_calendar(year: int = Query(...), db: Session = Depends(get_db)
     return deposit_schedule.liability_calendar(db, year)
 
 
+@router.get("/fica-tip-credit")
+def get_fica_tip_credit(year: int = Query(...), db: Session = Depends(get_db)):
+    """Form 8846 summary — employer FICA on tips above the $5.15/h pin."""
+    from app.services.tips import compute_fica_tip_credit
+
+    return compute_fica_tip_credit(db, year)
+
+
 # --- 1099-NEC / 1096 -------------------------------------------------------
 @router.get("/1099")
 def get_1099(year: int = Query(...), db: Session = Depends(get_db)):

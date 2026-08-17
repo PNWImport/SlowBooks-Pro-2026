@@ -123,6 +123,11 @@ class PayStubInput(BaseModel):
     # rate_change_date with the employee's current rate from that day on.
     rate_change_date: Optional[date] = None
     old_rate: Optional[float] = None
+    # Tips: reported = received directly (taxed, not paid on the check);
+    # paycheck = paid through payroll. Top-up to the minimum-wage floor is
+    # computed automatically for hourly stubs with tips.
+    reported_tips: float = 0
+    paycheck_tips: float = 0
     use_time_entries: bool = (
         False  # pull approved time entries for the period instead of `hours`
     )
@@ -140,6 +145,8 @@ class PayStubInput(BaseModel):
             ("pretax_deductions", self.pretax_deductions),
             ("posttax_deductions", self.posttax_deductions),
             ("reimbursements", self.reimbursements),
+            ("reported_tips", self.reported_tips),
+            ("paycheck_tips", self.paycheck_tips),
         ]
         if self.regular_hours is not None:
             nonneg_fields.append(("regular_hours", self.regular_hours))
@@ -178,6 +185,9 @@ class PayStubResponse(BaseModel):
     garnishments: float = 0
     reimbursements: float = 0
     net_pay: float = 0
+    reported_tips: float = 0
+    paycheck_tips: float = 0
+    tip_credit_topup: float = 0
     work_state: Optional[str] = None
     work_locality: Optional[str] = None
     local_tax: float = 0

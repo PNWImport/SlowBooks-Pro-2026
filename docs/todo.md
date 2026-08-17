@@ -107,7 +107,12 @@ operator submits themselves.
   pending register (`GET /api/deductions/garnishments/remittances`) with
   agency-missing nagging, and mark-remitted with a payment reference.
   Follow-ups: child-support e-IWO / NACHA CCD+ addenda output; SPA page.
-- **Tipped wages** — tip credit, reported vs allocated tips, 8846, 8027.
+- ~~**Tipped wages**~~ — DONE: reported vs paycheck tips on stubs,
+  automatic minimum-wage top-up for hourly tipped stubs, balanced JE
+  (reported tips excluded from wage expense — customers paid them), and
+  the Form 8846 FICA-tip-credit summary at
+  `GET /api/tax-forms/fica-tip-credit?year=`. Follow-up: Form 8027
+  (allocated tips) needs gross-receipts tracking the app doesn't have.
 - **Multi-location** — locations as records with their own tax jurisdiction.
 - **Benefits records** — plans, enrollment, eligibility, ACA 1095-B/C + 1094,
   COBRA notices. Records and documents only, no carrier integration.

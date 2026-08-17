@@ -271,6 +271,7 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     # /liability; no SPA page consumes them yet (tracked in docs/todo.md).
     ("GET", "/api/tax-forms/deposit-schedule"),
     ("GET", "/api/tax-forms/liability-calendar"),
+    ("GET", "/api/tax-forms/fica-tip-credit"),
     # Contractor pay runs — API-first; SPA page tracked in docs/todo.md.
     ("GET", "/api/contractor-runs"),
     ("GET", "/api/contractor-runs/{run_id}"),

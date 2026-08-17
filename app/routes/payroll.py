@@ -310,6 +310,24 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
 
         total_hours = reg + ot + dt
 
+        # --- Tips ---
+        # Both kinds are taxable wages; only paycheck_tips are payable on
+        # this check. Hourly tipped stubs get the minimum-wage top-up added
+        # to cash wages (a real wage, FLSA-required, fully taxable).
+        reported_tips = Decimal(str(stub_input.reported_tips or 0)).quantize(CENT)
+        paycheck_tips = Decimal(str(stub_input.paycheck_tips or 0)).quantize(CENT)
+        tips_total = reported_tips + paycheck_tips
+        topup = Decimal("0.00")
+        if tips_total > 0 and emp.pay_type.value == "hourly":
+            from app.services.tips import tip_credit_topup
+
+            topup = tip_credit_topup(
+                gross, tips_total, total_hours, Decimal(str(config.MINIMUM_WAGE))
+            )
+            gross = (gross + topup).quantize(CENT)
+        if tips_total > 0:
+            gross = (gross + tips_total).quantize(CENT)
+
         # Pre-tax / post-tax deductions: configured recurring ones plus any
         # ad-hoc amounts passed on the request.
         ded_pretax, ded_pretax_fica, ded_posttax = _employee_deductions(
@@ -365,7 +383,11 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
         )
         garnish_total = total_garnished(garn_results)
 
-        net = (result["net"] - posttax - garnish_total + reimbursements).quantize(CENT)
+        # reported_tips were taxed through the calculator but the money is
+        # already in the employee's pocket — back them out of the payable net.
+        net = (
+            result["net"] - posttax - garnish_total + reimbursements - reported_tips
+        ).quantize(CENT)
 
         detail = {k: str(v) for k, v in result["detail"].items()}
         for gr in garn_results:
@@ -392,6 +414,9 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             posttax_deductions=posttax,
             garnishments=garnish_total,
             reimbursements=reimbursements,
+            reported_tips=reported_tips,
+            paycheck_tips=paycheck_tips,
+            tip_credit_topup=topup,
             work_state=work_state,
             work_locality=work_locality,
             local_tax=result["local_tax"],
@@ -482,7 +507,11 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
     def _s(field):
         return sum((getattr(s, field) or Decimal("0")) for s in run.stubs)
 
-    total_gross = _s("gross_pay")
+    # Reported tips are inside gross for TAX purposes but were paid by
+    # customers, not the employer — they are not a wage expense and no cash
+    # leaves the bank for them (net already backs them out). Exclude them
+    # from the JE's wage-expense debit so the entry balances.
+    total_gross = _s("gross_pay") - _s("reported_tips")
     total_fed = _s("federal_tax")
     total_state = _s("state_tax")
     total_ss = _s("ss_tax") + _s("employer_ss_tax")
