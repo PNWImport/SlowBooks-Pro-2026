@@ -61,6 +61,7 @@ from app.models.pay_schedules import PaySchedule  # noqa: F401
 from app.models.locations import WorkLocation  # noqa: F401
 from app.models.workers_comp import WCClassRate  # noqa: F401
 from app.models.esign import SignatureEnvelope  # noqa: F401
+from app.models.reviews import PerformanceReview  # noqa: F401
 from app.models.benefits import (  # noqa: F401
     BenefitPlan,
     BenefitEnrollment,

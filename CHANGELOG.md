@@ -7,6 +7,20 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Org chart, team PTO calendar, performance reviews
+
+Three HR views on data that mostly already existed. `GET
+/api/hr/org-chart` builds the manager tree from `Employee.manager_id` —
+cycles (possible, the column is unconstrained) are broken at second
+visit and reported in `cycle_employee_ids` instead of recursing into a
+500; inactive employees are excluded by default. `GET
+/api/hr/pto-calendar?start=&end=` returns approved (and
+pending-flagged) PTO overlapping the window. `/api/hr/reviews` is a
+draft → submitted → acknowledged lifecycle with reviewer, 1-5 rating,
+goals/feedback, and an employee comment captured at acknowledgment;
+drafts are the only editable state. Migration e1f2a3b4c5d7. 6 new tests
+(667 -> 673).
+
 ### E-signature on the document-audit hash chain
 
 `SignatureEnvelope` freezes a document body (offer letter, handbook,

@@ -134,7 +134,11 @@ operator submits themselves.
   (hash, signer, timestamp) into `document_audits`; `/api/esign/{id}/verify`
   detects body or signature tampering. Follow-up: run past counsel before
   relying on it for I-9s specifically (federal e-signature rules).
-- **Org chart / PTO calendar / performance reviews.**
+- ~~**Org chart / PTO calendar / performance reviews**~~ — DONE:
+  `GET /api/hr/org-chart` (manager tree, cycle-safe),
+  `GET /api/hr/pto-calendar?start=&end=` (overlap semantics, pending
+  flagged), and `/api/hr/reviews` (draft → submitted → acknowledged,
+  draft-only edits, 1-5 rating). SPA pages pending.
 - **Payroll report library** — journal, workers' comp, deduction register,
   contractor payments, department and job-cost allocation.
 
