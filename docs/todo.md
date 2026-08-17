@@ -95,7 +95,13 @@ operator submits themselves.
   `POST /api/payroll/retro-pay/preview|apply` (apply raises the rate and
   stages a draft off-cycle supplemental run). Clawbacks (negative retro)
   deliberately rejected.
-- **Termination + final paycheck** — per-state timing rules, PTO payout.
+- ~~**Termination + final paycheck**~~ — DONE:
+  `POST /api/employees/{id}/terminate` — state deadline rules (CA
+  immediate/72h shape, ~16 states listed, rest default next-payday),
+  PTO payout at the hourly-equivalent rate staged as a draft off-cycle
+  run, deductions deactivated, portal token revoked. Rules are
+  approximate — verify against the state labor department. Sick payout
+  is opt-in.
 - **Garnishment remittance** — withholding is calculated but never remitted;
   needs agency payees, a remittance register, and e-IWO output.
 - **Tipped wages** — tip credit, reported vs allocated tips, 8846, 8027.

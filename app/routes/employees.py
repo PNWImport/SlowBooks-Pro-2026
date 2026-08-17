@@ -442,3 +442,174 @@ def delete_employee_document(emp_id: int, doc_id: int, db: Session = Depends(get
     db.delete(doc)
     db.commit()
     return {"status": "deleted", "id": doc_id}
+
+
+# --- Termination / offboarding ----------------------------------------------
+
+
+from pydantic import BaseModel as _BaseModel
+
+
+class TerminateRequest(_BaseModel):
+    termination_date: date
+    reason: str = "voluntary"  # "voluntary" | "involuntary"
+    include_sick_payout: bool = False
+    # Payout accrued PTO even when the state does not require it.
+    payout_pto: bool | None = None
+
+
+@router.post("/{emp_id}/terminate")
+def terminate_employee(
+    emp_id: int, data: TerminateRequest, db: Session = Depends(get_db)
+):
+    """Offboard an employee.
+
+    Sets the termination fields and deactivates the employee, their
+    recurring deductions, and their portal token; resolves the state
+    final-paycheck deadline (from the work state + departure reason); and
+    computes the accrued-PTO payout. When the state requires payout — or
+    the operator asks for it — the payout is staged as a DRAFT off-cycle
+    supplemental run for review, exactly like retro pay.
+
+    Deliberately not automated: the final regular paycheck itself. Its
+    hours/period depend on the timecard, so the operator runs it normally;
+    this endpoint tells them the statutory deadline.
+    """
+    from decimal import Decimal
+
+    from app.models.deductions import EmployeeDeduction
+    from app.services.termination import (
+        compute_pto_payout,
+        final_paycheck_deadline,
+    )
+
+    if data.reason not in ("voluntary", "involuntary"):
+        raise HTTPException(
+            status_code=400, detail="reason must be voluntary or involuntary"
+        )
+    emp = db.query(Employee).filter(Employee.id == emp_id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    if emp.termination_date:
+        raise HTTPException(status_code=400, detail="Employee already terminated")
+
+    # Next regular payday, when a pay schedule is attached — resolves the
+    # "next payday" deadline shape to a real date.
+    next_payday = None
+    if emp.pay_schedule_id:
+        from app.models.pay_schedules import PaySchedule
+        from app.services.pay_schedule_service import upcoming_pay_dates
+
+        sched = (
+            db.query(PaySchedule).filter(PaySchedule.id == emp.pay_schedule_id).first()
+        )
+        if sched:
+            dates = upcoming_pay_dates(sched, data.termination_date, count=1)
+            if dates:
+                next_payday = date.fromisoformat(dates[0]["pay_date"])
+
+    deadline = final_paycheck_deadline(
+        emp.work_state, data.reason, data.termination_date, next_payday
+    )
+    payout = compute_pto_payout(db, emp, include_sick=data.include_sick_payout)
+
+    # State-required payout cannot be declined; otherwise operator's call
+    # (default: pay it out — forfeiting accrued time should be explicit).
+    wants_payout = data.payout_pto if data.payout_pto is not None else True
+    must_payout = deadline["pto_payout_required"]
+    do_payout = (must_payout or wants_payout) and payout["total_payout"] > 0
+
+    emp.termination_date = data.termination_date
+    emp.termination_reason = data.reason
+    emp.is_active = False
+    emp.portal_token = None
+    emp.portal_token_expires_at = None
+    emp.portal_token_last_used = None
+
+    deactivated = (
+        db.query(EmployeeDeduction)
+        .filter(
+            EmployeeDeduction.employee_id == emp_id,
+            EmployeeDeduction.is_active.is_(True),
+        )
+        .update({"is_active": False})
+    )
+
+    staged_run_id = None
+    if do_payout:
+        import json as _json
+
+        from app.models.payroll import PayRun, PayRunStatus, PayRunType, PayStub
+        from app.services.payroll_service import calculate_withholdings
+        from app.services.state_tax.reciprocity import withholding_state
+
+        amount = Decimal(str(payout["total_payout"]))
+        year = data.termination_date.year
+        ytd = employee_ytd(db, emp_id, year, before=None)
+        result = calculate_withholdings(
+            amount,
+            pay_frequency=emp.pay_frequency.value if emp.pay_frequency else "biweekly",
+            filing_status=emp.filing_status.value if emp.filing_status else "single",
+            ytd_gross=ytd["gross"],
+            work_state=(emp.work_state or "WA").upper(),
+            withholding_state=withholding_state(
+                (emp.work_state or "WA").upper(), emp.residence_state
+            ),
+            work_locality=emp.work_locality,
+            residence_locality=emp.residence_locality,
+            wc_class_code=emp.wc_class_code,
+            supplemental=True,
+        )
+        run = PayRun(
+            period_start=data.termination_date,
+            period_end=data.termination_date,
+            pay_date=data.termination_date,
+            run_type=PayRunType.OFF_CYCLE,
+            status=PayRunStatus.DRAFT,
+        )
+        db.add(run)
+        db.flush()
+        db.add(
+            PayStub(
+                pay_run_id=run.id,
+                employee_id=emp_id,
+                gross_pay=result["gross"],
+                federal_tax=result["federal"],
+                state_tax=result["state_income"],
+                state_other_employee=result["state_other_employee"],
+                local_tax=result["local_tax"],
+                local_tax_employer=result["local_tax_employer"],
+                ss_tax=result["ss"],
+                medicare_tax=result["medicare"],
+                work_state=(emp.work_state or "WA").upper(),
+                work_locality=emp.work_locality,
+                net_pay=result["net"],
+                employer_ss_tax=result["employer_ss"],
+                employer_medicare_tax=result["employer_medicare"],
+                futa_tax=result["futa"],
+                suta_tax=result["suta"],
+                state_other_employer=result["state_other_employer"],
+                detail_json=_json.dumps(
+                    {k: str(v) for k, v in result["detail"].items()}
+                    | {"pto_payout": str(amount)}
+                ),
+            )
+        )
+        run.total_gross = result["gross"]
+        run.total_taxes = result["total_employee_tax"]
+        run.total_employer_taxes = result["total_employer_tax"]
+        run.total_net = result["net"]
+        staged_run_id = run.id
+
+    db.commit()
+    return {
+        "employee_id": emp_id,
+        "termination_date": data.termination_date.isoformat(),
+        "reason": data.reason,
+        "final_paycheck": deadline,
+        "pto_payout": payout,
+        "pto_payout_staged": do_payout,
+        "pto_payout_run_id": staged_run_id,
+        "deductions_deactivated": deactivated,
+        "portal_token_revoked": True,
+    }

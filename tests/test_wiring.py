@@ -288,6 +288,8 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     # Retro pay — API-first; SPA affordance tracked in docs/todo.md.
     ("POST", "/api/payroll/retro-pay/preview"),
     ("POST", "/api/payroll/retro-pay/apply"),
+    # Termination workflow — API-first; SPA affordance tracked in docs/todo.md.
+    ("POST", "/api/employees/{emp_id}/terminate"),
     # Legacy JSON-mode tax form endpoints — superseded by /pdf variants.
     # Kept for machine readers / future e-file integration.
     ("POST", "/api/payroll/forms/w2/{emp_id}"),

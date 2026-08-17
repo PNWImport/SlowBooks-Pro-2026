@@ -7,6 +7,25 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Termination workflow — final-paycheck deadlines + PTO payout
+
+`POST /api/employees/{id}/terminate` answers the two questions every
+offboarding asks. (1) When is the final check due? Per-state rules keyed
+by voluntary/involuntary (CA: immediately when fired, 72 hours on a
+quit; ~16 states with specific shapes; everything else defaults to next
+regular payday, resolved to a real date when the employee has a pay
+schedule attached). (2) Must accrued vacation be paid out? States that
+treat it as earned wages force the payout; elsewhere it defaults on and
+the operator can decline. The payout prices accrued balances at the
+hourly-equivalent rate (salary / 2080), sick time only on opt-in, and
+stages as a DRAFT off-cycle supplemental run like retro pay. Side
+effects: is_active off, recurring deductions deactivated, portal token
+revoked. The final *regular* paycheck is deliberately not automated —
+its hours depend on the timecard; the endpoint reports the statutory
+deadline instead. Rules are approximate and say so (final-paycheck
+statutes carry penalties — verify with the state labor department).
+Migration d4e5f6a7b8c0. 10 new tests (614 -> 624).
+
 ### Retro pay + mid-period rate proration
 
 Two halves of "the rate changed":

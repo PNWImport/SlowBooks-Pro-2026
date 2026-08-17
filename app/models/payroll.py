@@ -127,6 +127,10 @@ class Employee(Base):
     wc_class_code = Column(String(20), nullable=True)
 
     hire_date = Column(Date, nullable=True)
+    # Offboarding: reason is "voluntary" or "involuntary" — it drives the
+    # state final-paycheck deadline (see services/termination.py).
+    termination_date = Column(Date, nullable=True)
+    termination_reason = Column(String(20), nullable=True)
     is_active = Column(Boolean, default=True)
     notes = Column(Text, nullable=True)
 
