@@ -380,6 +380,11 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("GET", "/api/document-audits"),
     ("GET", "/api/document-audits/{audit_id}"),
     ("GET", "/api/document-audits/verify/{content_hash}"),
+    # Audit-chain verification — operator/auditor tooling, no SPA page yet.
+    ("GET", "/api/document-audits/chain/verify"),
+    ("GET", "/api/document-audits/chain/checkpoints"),
+    ("POST", "/api/document-audits/chain/checkpoints"),
+    ("GET", "/api/document-audits/chain/checkpoints/{checkpoint_id}/verify"),
 }
 
 

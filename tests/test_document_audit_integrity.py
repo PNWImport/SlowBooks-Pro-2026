@@ -11,12 +11,11 @@
 # document types (SUI, COBRA, e-signature) participate in the SAME mechanism
 # rather than inventing parallel ones.
 #
-# SCOPE NOTE — this is a per-document hash ledger, NOT a linked hash chain.
-# Each row stands alone: there is no prev-hash column tying row N to row N-1.
-# That detects ALTERATION of a document's content (tested below) but NOT
-# DELETION of an audit row. `test_ledger_has_no_linkage_between_rows` pins
-# that limitation explicitly so the gap stays visible instead of being
-# assumed away by the word "chain" in the surrounding docs.
+# The rows are LINKED: each commits to its predecessor's chain_hash, so
+# deletion, reordering and insertion are detectable too — not just content
+# alteration. Truncating the tail is the one thing linkage alone cannot
+# catch (a shortened chain is internally valid), which is what checkpoints
+# are for. All three failure modes are exercised below.
 # ============================================================================
 
 from datetime import date
@@ -104,48 +103,204 @@ def test_footer_context_exposes_a_verifiable_prefix(client, db_session):
 # --- the ledger's shape, stated honestly ------------------------------------
 
 
-def test_ledger_has_no_linkage_between_rows(db_session):
-    """Documents the real limitation: rows are independent, not chained.
-
-    A linked chain would let an auditor prove no row was removed. This
-    ledger cannot, because nothing binds row N to row N-1. If that
-    guarantee is ever added, this test is the one that should change.
-    """
+def test_chain_columns_exist(db_session):
+    """The linkage that makes deletion detectable."""
     from app.models.document_audit import DocumentAudit
 
     columns = set(DocumentAudit.__table__.columns.keys())
-    assert not columns & {
-        "prev_hash",
-        "previous_hash",
-        "chain_hash",
-        "prev_id",
-    }, (
-        "document_audits gained linkage columns — the ledger may now be a real "
-        "chain; update this test and the § 164.312(c)(1) claim in "
-        "docs/hipaa-compliance.md accordingly."
-    )
+    assert {"prev_hash", "chain_hash"} <= columns
 
 
-def test_deleting_a_row_is_undetectable_today(client, db_session, seed_accounts):
-    """The concrete consequence of the above, pinned so it is not a surprise."""
+def test_first_row_links_to_genesis(client, db_session, seed_accounts):
+    from app.models.document_audit import GENESIS_HASH, DocumentAudit
+
+    emp = _create_employee(client)
+    _run(client, emp["id"])
+    client.post(f"/api/payroll/forms/w2/{emp['id']}/pdf?year=2026")
+
+    first = db_session.query(DocumentAudit).order_by(DocumentAudit.id).first()
+    assert first.prev_hash == GENESIS_HASH
+    assert first.chain_hash and len(first.chain_hash) == 64
+
+
+def test_each_row_links_to_the_previous(client, db_session, seed_accounts):
     from app.models.document_audit import DocumentAudit
 
     emp = _create_employee(client)
     _run(client, emp["id"])
     client.post(f"/api/payroll/forms/w2/{emp['id']}/pdf?year=2026")
+    client.post("/api/payroll/forms/w3/2026/pdf")
     client.post("/api/payroll/forms/sui/2026/2/pdf")
 
     rows = db_session.query(DocumentAudit).order_by(DocumentAudit.id).all()
-    assert len(rows) >= 2
-    surviving = [r.content_hash for r in rows[1:]]
+    assert len(rows) >= 3
+    for earlier, later in zip(rows, rows[1:]):
+        assert later.prev_hash == earlier.chain_hash
 
-    db_session.delete(rows[0])
+
+def test_chain_verifies_clean(client, seed_accounts):
+    emp = _create_employee(client)
+    _run(client, emp["id"])
+    client.post(f"/api/payroll/forms/w2/{emp['id']}/pdf?year=2026")
+    client.post("/api/payroll/forms/w3/2026/pdf")
+
+    report = client.get("/api/document-audits/chain/verify").json()
+    assert report["ok"] is True
+    assert report["breaks"] == []
+    assert report["rows_verified"] == report["rows_total"]
+    assert report["rows_unchained"] == 0
+
+
+def test_deleting_a_row_is_now_detected(client, db_session, seed_accounts):
+    """The hole the old per-document ledger could not close."""
+    from app.models.document_audit import DocumentAudit
+
+    emp = _create_employee(client)
+    _run(client, emp["id"])
+    client.post(f"/api/payroll/forms/w2/{emp['id']}/pdf?year=2026")
+    client.post("/api/payroll/forms/w3/2026/pdf")
+    client.post("/api/payroll/forms/sui/2026/2/pdf")
+    assert client.get("/api/document-audits/chain/verify").json()["ok"] is True
+
+    middle = db_session.query(DocumentAudit).order_by(DocumentAudit.id).all()[1]
+    db_session.delete(middle)
     db_session.commit()
 
-    after = db_session.query(DocumentAudit).order_by(DocumentAudit.id).all()
-    # Every surviving hash still verifies — nothing about the remaining rows
-    # reveals that an earlier one was removed.
-    assert [r.content_hash for r in after] == surviving
+    report = client.get("/api/document-audits/chain/verify").json()
+    assert report["ok"] is False
+    assert any(
+        "deleted, reordered, or inserted" in b["reason"] for b in report["breaks"]
+    )
+
+
+def test_altering_a_content_hash_is_detected(client, db_session, seed_accounts):
+    from app.models.document_audit import DocumentAudit
+
+    emp = _create_employee(client)
+    _run(client, emp["id"])
+    client.post(f"/api/payroll/forms/w2/{emp['id']}/pdf?year=2026")
+    client.post("/api/payroll/forms/w3/2026/pdf")
+
+    row = db_session.query(DocumentAudit).order_by(DocumentAudit.id).first()
+    row.content_hash = "b" * 64
+    db_session.commit()
+
+    report = client.get("/api/document-audits/chain/verify").json()
+    assert report["ok"] is False
+    assert any("does not recompute" in b["reason"] for b in report["breaks"])
+
+
+def test_re_dating_a_row_is_detected(client, db_session, seed_accounts):
+    """created_at is inside the chain hash, so back-dating breaks it."""
+    from datetime import datetime, timezone
+
+    from app.models.document_audit import DocumentAudit
+
+    emp = _create_employee(client)
+    _run(client, emp["id"])
+    client.post(f"/api/payroll/forms/w2/{emp['id']}/pdf?year=2026")
+
+    row = db_session.query(DocumentAudit).order_by(DocumentAudit.id).first()
+    row.created_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    db_session.commit()
+
+    report = client.get("/api/document-audits/chain/verify").json()
+    assert report["ok"] is False
+
+
+# --- checkpoints: catching tail truncation ----------------------------------
+
+
+def test_checkpoint_detects_tail_truncation(client, db_session, seed_accounts):
+    """A truncated chain still verifies internally — the checkpoint is what
+    notices the missing tail."""
+    from app.models.document_audit import DocumentAudit
+
+    emp = _create_employee(client)
+    _run(client, emp["id"])
+    client.post(f"/api/payroll/forms/w2/{emp['id']}/pdf?year=2026")
+    client.post("/api/payroll/forms/w3/2026/pdf")
+    client.post("/api/payroll/forms/sui/2026/2/pdf")
+
+    cp = client.post(
+        "/api/document-audits/chain/checkpoints", json={"note": "quarter close"}
+    )
+    assert cp.status_code == 201, cp.text
+    cp_id = cp.json()["id"]
+    assert (
+        client.get(f"/api/document-audits/chain/checkpoints/{cp_id}/verify").json()[
+            "ok"
+        ]
+        is True
+    )
+
+    # Lop off the tail.
+    tip = db_session.query(DocumentAudit).order_by(DocumentAudit.id.desc()).first()
+    db_session.delete(tip)
+    db_session.commit()
+
+    # The remaining chain is internally valid...
+    assert client.get("/api/document-audits/chain/verify").json()["ok"] is True
+    # ...but the checkpoint catches it.
+    result = client.get(f"/api/document-audits/chain/checkpoints/{cp_id}/verify").json()
+    assert result["ok"] is False
+    assert any("truncated" in p for p in result["problems"])
+    assert result["current_row_count"] < result["checkpoint_row_count"]
+
+
+def test_checkpoint_refuses_a_broken_chain(client, db_session, seed_accounts):
+    from app.models.document_audit import DocumentAudit
+
+    emp = _create_employee(client)
+    _run(client, emp["id"])
+    client.post(f"/api/payroll/forms/w2/{emp['id']}/pdf?year=2026")
+    client.post("/api/payroll/forms/w3/2026/pdf")
+
+    row = db_session.query(DocumentAudit).order_by(DocumentAudit.id).first()
+    row.content_hash = "c" * 64
+    db_session.commit()
+
+    r = client.post("/api/document-audits/chain/checkpoints", json={})
+    assert r.status_code == 409
+    assert "broken chain" in r.json()["detail"]
+
+
+def test_checkpoint_on_empty_chain_is_rejected(client):
+    r = client.post("/api/document-audits/chain/checkpoints", json={})
+    assert r.status_code == 409
+    assert "empty" in r.json()["detail"]
+
+
+def test_backfill_links_unchained_rows(client, db_session, seed_accounts):
+    """Simulates the migration path: rows written before the chain existed."""
+    from app.models.document_audit import DocumentAudit
+    from app.services.document_audit import backfill_chain, verify_chain
+
+    emp = _create_employee(client)
+    _run(client, emp["id"])
+    client.post(f"/api/payroll/forms/w2/{emp['id']}/pdf?year=2026")
+    client.post("/api/payroll/forms/w3/2026/pdf")
+
+    # Strip the linkage, as a pre-chain database would have it.
+    for row in db_session.query(DocumentAudit).all():
+        row.prev_hash = None
+        row.chain_hash = None
+    db_session.commit()
+
+    report = verify_chain(db_session)
+    assert report["rows_unchained"] == report["rows_total"]
+    assert report["ok"] is True  # unchained rows are reported, not failures
+
+    linked = backfill_chain(db_session)
+    assert linked == report["rows_total"]
+
+    after = verify_chain(db_session)
+    assert after["ok"] is True
+    assert after["rows_unchained"] == 0
+    assert after["rows_verified"] == after["rows_total"]
+
+    # Backfill is idempotent.
+    assert backfill_chain(db_session) == 0
 
 
 # --- every document type participates in the one mechanism ------------------

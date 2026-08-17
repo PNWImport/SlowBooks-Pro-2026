@@ -78,7 +78,7 @@ to existing SlowBooks behavior.
 |-----------|---------------|
 | Login attempts | ✅ `LoginAttempt` table — success / failure with IP + UA |
 | Database row writes | ✅ `register_audit_hooks(SessionLocal)` in `app/main.py` writes an `audit_log` row for every create / update / delete via SQLAlchemy event hooks |
-| Document tampering | ⚠ `DocumentAudit` table + SHA-256 content hash printed in generated-document footers. Detects **alteration** of a document; does **not** detect **deletion** of an audit row — see the note below |
+| Document tampering | ✅ `DocumentAudit` linked hash chain + SHA-256 content hash printed in generated-document footers. Detects alteration, deletion, reordering and insertion; `GET /api/document-audits/chain/verify` reports the first break |
 | Portal token usage | ✅ `Employee.portal_token_last_used` rolls forward on every authenticated portal request |
 
 ### § 164.312(c)(1) — Integrity
@@ -89,26 +89,43 @@ to existing SlowBooks behavior.
 | Spec | Implementation |
 |------|---------------|
 | Authentication of ePHI (A) | ✅ Fernet ciphertext carries HMAC; tampered ciphertext fails to decrypt and returns None |
-| Document integrity | ⚠ SHA-256 hash + audit ID printed in generated PDFs; auditor re-verifies by regenerating. Per-document, not linked — see below |
+| Document integrity | ✅ Linked hash chain over `document_audits` (below) + per-document SHA-256 in generated PDFs; auditor re-verifies by regenerating |
+| Truncation detection | ✅ `audit_checkpoints` pins (tip id, tip hash, row count); `GET /api/document-audits/chain/checkpoints/{id}/verify` |
 
-**The `document_audits` table is a hash *ledger*, not a hash *chain*.**
-Several docs in this repo (and earlier CHANGELOG entries) call it a chain.
-That wording is wrong and worth correcting precisely, because the
-difference is the guarantee:
+**`document_audits` is a linked hash chain.** Each row commits to its
+predecessor:
 
-- Each row holds an independent SHA-256 of one document's canonical
-  content. There is no `prev_hash` column binding row N to row N-1.
-- **What it proves:** a document whose content changed no longer matches
-  its recorded hash. Re-render, recompute, compare — this works, and
-  `tests/test_document_audit_integrity.py` pins it end to end.
-- **What it does not prove:** that no row was *removed*. Delete an audit
-  row and every surviving row still verifies perfectly. There is nothing
-  to notice the gap. `test_deleting_a_row_is_undetectable_today` asserts
-  this limitation deliberately, so it stays visible.
-- For § 164.312(c)(1) that is partial coverage. Making it a true chain
-  (each row hashing the previous row's hash, with a periodic signed
-  checkpoint) would close it and is the single highest-value integrity
-  upgrade available. It is not implemented.
+```
+chain_hash(N) = SHA256(prev_hash | content_hash | doc_type | doc_key | created_at)
+prev_hash(N)  = chain_hash(N-1)          # genesis: 64 zeros
+```
+
+Because `doc_type`, `doc_key` and `created_at` are inside the hash, a row
+cannot be relabelled or back-dated while keeping its linkage intact either.
+
+| Attack | Detected? | By what |
+|--------|-----------|---------|
+| Alter a document's content | ✅ | `content_hash` no longer reproduces on re-render |
+| Alter an audit row's fields | ✅ | `chain_hash` no longer recomputes from the row |
+| Delete a row from the middle | ✅ | successor's `prev_hash` no longer matches |
+| Reorder or splice in rows | ✅ | same linkage break |
+| Back-date a row | ✅ | `created_at` is inside the chain hash |
+| **Truncate the tail** | ✅ *with a checkpoint* | a shortened chain is internally valid, so linkage alone cannot catch this — `audit_checkpoints` can |
+| Delete rows **and** checkpoints, with full DB write access | ❌ | keep checkpoint copies off the box; see operations.md |
+
+Appends take a row lock on the current tip (`SELECT … FOR UPDATE` on
+PostgreSQL; SQLite serializes writers), so two concurrent writers cannot
+fork the chain.
+
+**Baseline honesty.** Rows written before the chain existed were backfilled
+deterministically in id order by migration `a2b3c4d5e6f9`. That establishes
+a verifiable baseline going forward. It is **not** retroactive proof that
+pre-backfill history was untampered — a backfill computes a valid chain over
+whatever rows are present, including a set someone had already edited.
+Checkpoint immediately after migrating, and keep that checkpoint off-box.
+
+`tests/test_document_audit_integrity.py` exercises every row of the table
+above, including the truncation case.
 
 ### § 164.312(d) — Person or Entity Authentication
 
@@ -170,7 +187,7 @@ to change to fully align with the Security Rule:
 | Gap | Severity | Fix |
 |-----|----------|-----|
 | **Benefit tables hold health-plan enrollment in plaintext** | High | `benefit_plans`, `benefit_enrollments`, `benefit_dependents` store carrier, plan kind, coverage windows and dependent identifiers unencrypted. If treated as ePHI, they need the same Fernet wrapping as the bank fields, and dependents need the "minimum necessary" access story below |
-| **Audit ledger is not a linked chain** | High | Row deletion is undetectable (see § 164.312(c)(1) above). Fix: add `prev_hash` to `document_audits`, hash it into each new row, and expose a chain-verify endpoint plus a periodic signed checkpoint |
+| **Audit checkpoints are not cryptographically signed or off-boxed** | Medium | The hash chain (§ 164.312(c)(1)) now detects alteration, deletion and reordering, and checkpoints detect truncation — but an attacker with full database write access can delete the checkpoints too. Fix: sign checkpoints with an operator-held key and ship them off the box (WORM storage, or a second system) |
 | **No role-based access control** | High | SlowBooks is single-operator. HIPAA expects "minimum necessary" — different staff see different data. Would require a user model + role assignment + per-field access checks |
 | **Employee data not encrypted at rest** | Medium | Names, addresses, hire date, etc. are plaintext. If treated as PHI, would need Fernet wrapping (same scheme as bank fields) |
 | **No data-retention enforcement** | Medium | Pay stubs and employee records stay forever. HIPAA expects retention/destruction policies — would need a configurable retention period + automated purge |
@@ -188,8 +205,8 @@ These aren't strictly HIPAA-required but are good signals for any
 compliance regime (HIPAA, SOC 2, PCI-DSS):
 
 - **Versioned ciphertext** (`v1:` prefix) — supports zero-downtime key rotation
-- **Login + document audit trails** with per-document content hashing
-  (a ledger, not a chain — see § 164.312(c)(1))
+- **Login + document audit trails**, the latter a linked SHA-256 hash chain
+  with pinned checkpoints (see § 164.312(c)(1))
 - **Idle session timeout** + automatic logoff
 - **Startup fail-hard checks** on production misconfig (encryption secret, DB TLS, FORCE_HTTPS)
 - **Rate-limited login** + Argon2id password hashing (~100ms cost)
@@ -230,4 +247,5 @@ care even though only payroll/financial data is in scope):
 Two substantive changes: the benefits module moved the PHI posture (§ 1),
 and the `document_audits` ledger-vs-chain distinction is now stated
 accurately (§ 164.312(c)(1)) instead of being papered over by the word
-"chain".
+"chain" — and then made into an actual linked chain with checkpoints, so
+the claim and the code now agree.
