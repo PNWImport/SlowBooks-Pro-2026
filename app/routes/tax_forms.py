@@ -130,6 +130,14 @@ def get_liability_calendar(year: int = Query(...), db: Session = Depends(get_db)
     return deposit_schedule.liability_calendar(db, year)
 
 
+@router.get("/1095")
+def get_1095(year: int = Query(...), db: Session = Depends(get_db)):
+    """ACA 1095 coverage data + 1094 counts, derived from enrollments."""
+    from app.services.aca import compute_1095_data
+
+    return compute_1095_data(db, year)
+
+
 @router.get("/fica-tip-credit")
 def get_fica_tip_credit(year: int = Query(...), db: Session = Depends(get_db)):
     """Form 8846 summary — employer FICA on tips above the $5.15/h pin."""

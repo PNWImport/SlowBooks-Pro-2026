@@ -117,8 +117,13 @@ operator submits themselves.
   locality + default WC class, jurisdiction-validated), employee
   attachment, and payroll fallback chain (stub override > employee
   explicit > location > default). SPA page pending.
-- **Benefits records** — plans, enrollment, eligibility, ACA 1095-B/C + 1094,
-  COBRA notices. Records and documents only, no carrier integration.
+- ~~**Benefits records**~~ — DONE: plans/enrollments/dependents
+  (`/api/benefits`), ACA 1095 coverage derivation + 1094 counts at
+  `GET /api/tax-forms/1095?year=` (JSON; any-day-of-month rule,
+  self-insured covered-individual listing), COBRA election-notice PDF
+  (audit-hashed, 102% premium). Follow-ups: 1095-C PDF + AIR e-file,
+  ACA offer codes / affordability safe harbors (offers aren't
+  modelled), auto-end enrollments on termination, SPA page.
 - **Workers' comp** — per-class-code rates and a premium report by class.
 - **E-signature** — offer letters, I-9, handbook acknowledgment, riding on
   the existing `document_audits` hash chain.

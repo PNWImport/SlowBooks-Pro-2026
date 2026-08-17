@@ -7,6 +7,27 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Benefits records + ACA 1095 + COBRA notices
+
+The record-keeping half of benefits administration — no carrier feeds
+by design. `BenefitPlan` (kind, carrier, self_insured, provides_mec,
+premiums), `BenefitEnrollment` (coverage windows, open-enrollment
+dedupe, end validation), `BenefitDependent`. `/api/benefits`: plans,
+enroll/end, dependents.
+
+ACA: `GET /api/tax-forms/1095?year=` derives months-of-coverage from
+enrollments in MEC medical plans (any day of a month counts, per the
+IRS rule), lists covered individuals for self-insured plans, and
+returns 1094 form + monthly covered-employee counts. Offer codes and
+affordability safe harbors are NOT derived — offers aren't modelled,
+only actual enrollment — and the response says so.
+
+COBRA: `POST /api/benefits/enrollments/{id}/cobra-notice` renders an
+election-notice PDF for an ended medical enrollment — qualifying event
+date, 60-day window, premium at 102% — audit-hashed like the tax forms,
+labelled generic-review-against-DOL-model. Migration b8c9d0e1f2a4.
+8 new tests (648 -> 656).
+
 ### Work locations — first-class tax jurisdictions
 
 Tax situs previously lived in two free-typed per-employee columns;

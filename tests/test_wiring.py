@@ -272,6 +272,15 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("GET", "/api/tax-forms/deposit-schedule"),
     ("GET", "/api/tax-forms/liability-calendar"),
     ("GET", "/api/tax-forms/fica-tip-credit"),
+    ("GET", "/api/tax-forms/1095"),
+    # Benefits — API-first; SPA page tracked in docs/todo.md.
+    ("GET", "/api/benefits/plans"),
+    ("POST", "/api/benefits/plans"),
+    ("GET", "/api/benefits/enrollments"),
+    ("POST", "/api/benefits/enrollments"),
+    ("POST", "/api/benefits/enrollments/{enrollment_id}/end"),
+    ("POST", "/api/benefits/enrollments/{enrollment_id}/dependents"),
+    ("POST", "/api/benefits/enrollments/{enrollment_id}/cobra-notice"),
     # Contractor pay runs — API-first; SPA page tracked in docs/todo.md.
     ("GET", "/api/contractor-runs"),
     ("GET", "/api/contractor-runs/{run_id}"),
