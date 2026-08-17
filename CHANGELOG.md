@@ -7,6 +7,22 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### E-signature on the document-audit hash chain
+
+`SignatureEnvelope` freezes a document body (offer letter, handbook,
+policy, I-9 acknowledgment) with its SHA-256 at creation. The employee
+signs in the self-service portal — new Documents page — by typing their
+name with an explicit e-signature consent checkbox; the signature event
+hashes (document hash, signer, UTC timestamp) into the same
+`document_audits` chain the tax forms use. Integrity is checked BEFORE
+signing (a body altered after issuance is a 409, nobody signs a changed
+document) and verifiable after via `GET /api/esign/{id}/verify`
+(body_intact / signature_intact — tests tamper with the stored body and
+watch verification fail). Signing is employee-scoped and pending-only;
+signed envelopes cannot be voided. ESIGN/UETA elements (intent, consent,
+association, retention) are captured; run I-9 use past counsel.
+Migration d0e1f2a3b4c6. 7 new tests (660 -> 667).
+
 ### Workers' comp class rates + premium-audit report
 
 Most states price workers' comp per $100 of payroll by risk class, with

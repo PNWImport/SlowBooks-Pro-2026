@@ -129,8 +129,11 @@ operator submits themselves.
   report at `GET /api/workers-comp/premium-report?year=` grouping wages
   by (state, class); missing rates surface as None + a named list, never
   a silent zero. WA per-hour L&I stays in the WA engine.
-- **E-signature** — offer letters, I-9, handbook acknowledgment, riding on
-  the existing `document_audits` hash chain.
+- ~~**E-signature**~~ — DONE: `SignatureEnvelope` freezes body + SHA-256;
+  portal signing (typed name + explicit consent) seals
+  (hash, signer, timestamp) into `document_audits`; `/api/esign/{id}/verify`
+  detects body or signature tampering. Follow-up: run past counsel before
+  relying on it for I-9s specifically (federal e-signature rules).
 - **Org chart / PTO calendar / performance reviews.**
 - **Payroll report library** — journal, workers' comp, deduction register,
   contractor payments, department and job-cost allocation.

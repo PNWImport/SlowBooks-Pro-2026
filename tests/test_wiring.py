@@ -285,6 +285,12 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("GET", "/api/workers-comp/rates"),
     ("POST", "/api/workers-comp/rates"),
     ("GET", "/api/workers-comp/premium-report"),
+    # E-signature — admin API (signing lives in the portal, excluded there).
+    ("GET", "/api/esign"),
+    ("GET", "/api/esign/{envelope_id}"),
+    ("POST", "/api/esign"),
+    ("POST", "/api/esign/{envelope_id}/void"),
+    ("GET", "/api/esign/{envelope_id}/verify"),
     # Contractor pay runs — API-first; SPA page tracked in docs/todo.md.
     ("GET", "/api/contractor-runs"),
     ("GET", "/api/contractor-runs/{run_id}"),

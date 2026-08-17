@@ -649,3 +649,80 @@ def portal_claim_pto_request(
     )
     db.commit()
     return _set_cookie_on(_portal_redirect("/portal/pto?saved=1"), emp)
+
+
+# --- Documents / e-signature -------------------------------------------------
+
+
+@router.get("/portal/documents")
+@limiter.limit("30/minute")
+def portal_documents(request: Request, signed: int = 0, db: Session = Depends(get_db)):
+    from app.models.esign import EnvelopeStatus, SignatureEnvelope
+
+    emp = _employee_from_cookie(request, db)
+    rows = (
+        db.query(SignatureEnvelope)
+        .filter(SignatureEnvelope.employee_id == emp.id)
+        .order_by(SignatureEnvelope.id.desc())
+        .all()
+    )
+    pending = [r for r in rows if r.status == EnvelopeStatus.PENDING]
+    completed = [r for r in rows if r.status == EnvelopeStatus.SIGNED]
+    return _render(
+        "documents.html", db, pending=pending, completed=completed, signed=signed
+    )
+
+
+@router.post("/portal/documents/{envelope_id}/sign")
+@limiter.limit("10/minute")
+def portal_sign_document(
+    envelope_id: int,
+    request: Request,
+    signer_name: str = Form(...),
+    consent: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Seal a signature: typed name + explicit consent + UTC timestamp,
+    hashed with the frozen document hash into the document_audits chain."""
+    from app.models.esign import EnvelopeStatus, SignatureEnvelope
+    from app.routes.esign import body_hash, signature_hash
+    from app.services.document_audit import record_doc_audit
+
+    emp = _employee_from_cookie(request, db)
+    if consent != "yes":
+        raise HTTPException(
+            status_code=400, detail="Consent to electronic signature is required"
+        )
+    signer_name = signer_name.strip()
+    if not signer_name:
+        raise HTTPException(status_code=400, detail="Signature name required")
+
+    envelope = (
+        db.query(SignatureEnvelope)
+        .filter(
+            SignatureEnvelope.id == envelope_id,
+            SignatureEnvelope.employee_id == emp.id,
+        )
+        .first()
+    )
+    if not envelope:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if envelope.status != EnvelopeStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Document is not signable")
+    # Integrity check before signing: the stored body must still match the
+    # frozen hash — nobody signs a document that changed after issuance.
+    if body_hash(envelope.body) != envelope.content_hash:
+        raise HTTPException(
+            status_code=409, detail="Document integrity check failed — contact HR"
+        )
+
+    signed_at = _now()
+    seal = signature_hash(envelope.content_hash, signer_name, signed_at.isoformat())
+    audit = record_doc_audit(db, "esign", f"env{envelope.id}", seal)
+
+    envelope.status = EnvelopeStatus.SIGNED
+    envelope.signer_name = signer_name
+    envelope.signed_at = signed_at
+    envelope.signature_audit_id = audit.id
+    db.commit()
+    return _portal_redirect("/portal/documents?signed=1")

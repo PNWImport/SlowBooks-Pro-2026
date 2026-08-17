@@ -1,0 +1,50 @@
+{% extends "portal/base.html" %}
+{% set active = 'documents' %}
+{% block title %}Documents{% endblock %}
+
+{% block content %}
+<h2>Documents to Sign</h2>
+
+{% if signed %}
+<div class="banner banner-success">Document signed. Thank you.</div>
+{% endif %}
+
+{% if pending %}
+{% for env in pending %}
+<div style="border:1px solid #ddd; border-radius:6px; padding:16px; margin-bottom:16px;">
+    <h3 style="margin-top:0">{{ env.title }}</h3>
+    <pre style="white-space:pre-wrap; font-family:inherit; background:#f7f9fb; padding:12px; border-radius:4px; max-height:320px; overflow-y:auto;">{{ env.body }}</pre>
+    <p class="muted">Document ID #{{ env.id }} &middot; SHA-256 {{ env.content_hash[:16] }}&hellip;</p>
+    <form method="post" action="/portal/documents/{{ env.id }}/sign">
+        <label>Type your full legal name to sign:</label>
+        <input type="text" name="signer_name" required
+               placeholder="Your full name" style="max-width:280px">
+        <label style="display:block; margin:8px 0;">
+            <input type="checkbox" name="consent" value="yes" required>
+            I intend to sign this document electronically and agree that my
+            typed name is my legal signature.
+        </label>
+        <button type="submit" class="btn">Sign Document</button>
+    </form>
+</div>
+{% endfor %}
+{% else %}
+<p class="muted">No documents awaiting your signature.</p>
+{% endif %}
+
+{% if completed %}
+<h3>Signed</h3>
+<table class="data-table">
+    <thead><tr><th>Document</th><th>Signed by</th><th>Signed at</th></tr></thead>
+    <tbody>
+    {% for env in completed %}
+        <tr>
+            <td>{{ env.title }}</td>
+            <td>{{ env.signer_name }}</td>
+            <td>{{ env.signed_at.strftime('%Y-%m-%d %H:%M UTC') if env.signed_at }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}
