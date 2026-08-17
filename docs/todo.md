@@ -90,7 +90,11 @@ operator submits themselves.
 - ~~**Pay-schedule object**~~ — DONE: `/api/pay-schedules` CRUD + upcoming
   preview + employee assignment (syncs pay_frequency). Follow-ups: holiday
   calendar (weekend-only shifting today), blackout dates, SPA page.
-- **Retro pay / mid-period proration** — mid-period rate changes.
+- ~~**Retro pay / mid-period proration**~~ — DONE: day-weighted salary
+  blend via `rate_change_date`/`old_rate` on the stub input;
+  `POST /api/payroll/retro-pay/preview|apply` (apply raises the rate and
+  stages a draft off-cycle supplemental run). Clawbacks (negative retro)
+  deliberately rejected.
 - **Termination + final paycheck** — per-state timing rules, PTO payout.
 - **Garnishment remittance** — withholding is calculated but never remitted;
   needs agency payees, a remittance register, and e-IWO output.

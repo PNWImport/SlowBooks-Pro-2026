@@ -7,6 +7,25 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Retro pay + mid-period rate proration
+
+Two halves of "the rate changed":
+
+- Mid-period raise: `PayStubInput.rate_change_date` + `old_rate`
+  day-weight a salaried period across both rates ($52k→$78k biweekly
+  with the raise at day 8 of 14 pays $2,500).
+- Retro pay: `POST /api/payroll/retro-pay/preview` compares every
+  non-void regular stub since the effective date against the new rate —
+  hourly stubs re-price their recorded regular/1.5x/2x hour split,
+  salary stubs use the per-period difference, bonus/off-cycle runs are
+  excluded (a bonus isn't underpaid by a raise). `/apply` raises the
+  employee's rate and stages the shortfall as a DRAFT off-cycle run
+  with supplemental (flat 22%) withholding, ready for review and
+  processing. Negative retro (a rate cut) is rejected — clawing back
+  paid wages is a legal question, not a payroll calculation.
+
+10 new tests (604 -> 614).
+
 ### Pay schedules — named pay calendars
 
 A bare PayFrequency enum says "biweekly" but not which Fridays, when the

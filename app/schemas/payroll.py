@@ -119,6 +119,10 @@ class PayStubInput(BaseModel):
     supplemental_method: str = "flat"  # "flat" 22% or "aggregate"
     work_state: Optional[str] = None  # per-stub work location (multi-state)
     work_locality: Optional[str] = None  # per-stub local jurisdiction
+    # Mid-period raise (salary only): the period blends old_rate before
+    # rate_change_date with the employee's current rate from that day on.
+    rate_change_date: Optional[date] = None
+    old_rate: Optional[float] = None
     use_time_entries: bool = (
         False  # pull approved time entries for the period instead of `hours`
     )

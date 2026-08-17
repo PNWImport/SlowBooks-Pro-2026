@@ -5,6 +5,7 @@
 # ============================================================================
 
 import json
+from typing import Optional
 from datetime import date
 from decimal import Decimal
 
@@ -258,9 +259,22 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
         if stub_input.gross_override is not None:
             gross = Decimal(str(stub_input.gross_override))
         elif emp.pay_type.value == "salary":
-            # Bug 3 fix: divide by the employee's actual pay frequency, not a
-            # hardcoded 26.
-            gross = rate / periods_per_year(emp.pay_frequency)
+            if stub_input.rate_change_date and stub_input.old_rate is not None:
+                # Mid-period raise: day-weight the period across both rates.
+                from app.services.retro_pay import prorated_salary_gross
+
+                gross = prorated_salary_gross(
+                    Decimal(str(stub_input.old_rate)),
+                    rate,
+                    emp.pay_frequency,
+                    data.period_start,
+                    data.period_end,
+                    stub_input.rate_change_date,
+                )
+            else:
+                # Bug 3 fix: divide by the employee's actual pay frequency,
+                # not a hardcoded 26.
+                gross = rate / periods_per_year(emp.pay_frequency)
         else:
             if stub_input.use_time_entries:
                 entries = (
@@ -561,6 +575,115 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
         "status": "processed",
         "pay_run_id": run.id,
         "transaction_id": run.transaction_id,
+    }
+
+
+class RetroPayRequest(BaseModel):
+    employee_id: int
+    new_rate: float
+    effective_date: date
+    pay_date: Optional[date] = None  # apply only: the off-cycle run's pay date
+
+
+@router.post("/retro-pay/preview")
+def retro_pay_preview(data: RetroPayRequest, db: Session = Depends(get_db)):
+    """What each period paid vs. what it would have paid at the new rate."""
+    from app.services.retro_pay import compute_retro_pay
+
+    try:
+        return compute_retro_pay(
+            db, data.employee_id, Decimal(str(data.new_rate)), data.effective_date
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/retro-pay/apply", status_code=201)
+def retro_pay_apply(data: RetroPayRequest, db: Session = Depends(get_db)):
+    """Raise the employee's rate and stage the shortfall as a draft
+    off-cycle supplemental run (flat-rate withholding applies when it is
+    processed). Rejects a non-positive retro amount — clawbacks are a legal
+    question, not a payroll calculation."""
+    from app.services.retro_pay import compute_retro_pay
+
+    try:
+        preview = compute_retro_pay(
+            db, data.employee_id, Decimal(str(data.new_rate)), data.effective_date
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    amount = Decimal(str(preview["retro_pay_due"]))
+    if amount <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Retro amount is not positive — nothing to pay out",
+        )
+
+    emp = db.query(Employee).filter(Employee.id == data.employee_id).first()
+    emp.pay_rate = Decimal(str(data.new_rate))
+
+    pay_date = data.pay_date or date.today()
+    run = PayRun(
+        period_start=data.effective_date,
+        period_end=pay_date,
+        pay_date=pay_date,
+        run_type=PayRunType.OFF_CYCLE,
+        status=PayRunStatus.DRAFT,
+    )
+    db.add(run)
+    db.flush()
+
+    ytd = employee_ytd(db, emp.id, pay_date.year, before=pay_date)
+    result = calculate_withholdings(
+        amount,
+        pay_frequency=emp.pay_frequency.value if emp.pay_frequency else "biweekly",
+        filing_status=emp.filing_status.value if emp.filing_status else "single",
+        ytd_gross=ytd["gross"],
+        work_state=(emp.work_state or "WA").upper(),
+        withholding_state=withholding_state(
+            (emp.work_state or "WA").upper(), emp.residence_state
+        ),
+        work_locality=emp.work_locality,
+        residence_locality=emp.residence_locality,
+        wc_class_code=emp.wc_class_code,
+        supplemental=True,
+    )
+    stub = PayStub(
+        pay_run_id=run.id,
+        employee_id=emp.id,
+        gross_pay=result["gross"],
+        federal_tax=result["federal"],
+        state_tax=result["state_income"],
+        state_other_employee=result["state_other_employee"],
+        local_tax=result["local_tax"],
+        local_tax_employer=result["local_tax_employer"],
+        ss_tax=result["ss"],
+        medicare_tax=result["medicare"],
+        work_state=(emp.work_state or "WA").upper(),
+        work_locality=emp.work_locality,
+        net_pay=result["net"],
+        employer_ss_tax=result["employer_ss"],
+        employer_medicare_tax=result["employer_medicare"],
+        futa_tax=result["futa"],
+        suta_tax=result["suta"],
+        state_other_employer=result["state_other_employer"],
+        detail_json=json.dumps(
+            {k: str(v) for k, v in result["detail"].items()}
+            | {"retro_pay": str(amount), "effective_date": str(data.effective_date)}
+        ),
+    )
+    db.add(stub)
+    run.total_gross = result["gross"]
+    run.total_taxes = result["total_employee_tax"]
+    run.total_employer_taxes = result["total_employer_tax"]
+    run.total_net = result["net"]
+    db.commit()
+    return {
+        "pay_run_id": run.id,
+        "retro_pay": float(amount),
+        "new_rate": data.new_rate,
+        "status": "draft",
+        "periods": preview["periods"],
     }
 
 
