@@ -94,6 +94,8 @@ to existing SlowBooks behavior.
 | Authentication of ePHI (A) | ✅ Fernet ciphertext carries HMAC; tampered ciphertext fails to decrypt and returns None |
 | Document integrity | ✅ Linked hash chain over `document_audits` (below) + per-document SHA-256 in generated PDFs; auditor re-verifies by regenerating |
 | Truncation detection | ✅ `audit_checkpoints` pins (tip id, tip hash, row count); `GET /api/document-audits/chain/checkpoints/{id}/verify` |
+| Checkpoint authenticity | ✅ HMAC-SHA256 over the pinned tuple under `AUDIT_CHECKPOINT_SIGNING_SECRET`, a key held outside the database |
+| Off-box attestation | ✅ `GET /api/document-audits/chain/checkpoints/{id}/export` writes a self-contained signed artifact; `POST …/verify-artifact` verifies it against the live chain with no checkpoint row present |
 
 **`document_audits` is a linked hash chain.** Each row commits to its
 predecessor:
@@ -114,11 +116,61 @@ cannot be relabelled or back-dated while keeping its linkage intact either.
 | Reorder or splice in rows | ✅ | same linkage break |
 | Back-date a row | ✅ | `created_at` is inside the chain hash |
 | **Truncate the tail** | ✅ *with a checkpoint* | a shortened chain is internally valid, so linkage alone cannot catch this — `audit_checkpoints` can |
-| Delete rows **and** checkpoints, with full DB write access | ❌ | keep checkpoint copies off the box; see operations.md |
+| Forge a replacement checkpoint | ✅ | the checkpoint tuple is HMAC-SHA256 signed under a key that is not in the database |
+| Delete rows **and** every checkpoint, with full DB write access | ✅ *with an off-box artifact* | an exported artifact verifies against the live chain with no checkpoint row present; `checkpoint_row_present: false` names the deletion explicitly |
+| The same, with **no** off-box artifact kept | ❌ | nothing inside the database can attest to what it used to contain — export on a schedule (see operations.md) |
+| Sign a bogus checkpoint from the **application host** | ❌ | HMAC is symmetric, so host compromise means holding the signing key; only an artifact already written to append-only storage constrains this |
 
 Appends take a row lock on the current tip (`SELECT … FOR UPDATE` on
 PostgreSQL; SQLite serializes writers), so two concurrent writers cannot
 fork the chain.
+
+**Checkpoint signing, and what it is worth.** `create_checkpoint()` signs
+the tuple `(v, tip_audit_id, tip_chain_hash, row_count, created_at, note)` —
+so editing any of it, including the operator's own label or the timestamp,
+turns `valid` into `invalid`. The key comes from
+`AUDIT_CHECKPOINT_SIGNING_SECRET` and deliberately has **no development
+default** and **no fallback** to `PAYROLL_ENCRYPTION_SECRET`: a signature
+under a well-known key is worse than no signature, because it looks like
+proof. With nothing configured, checkpoints are still created, still catch
+truncation, and report `signature.status == "unsigned"` — which is why
+`verify_against_checkpoint()` splits its answer in two:
+`contains_checkpointed_state` is the containment finding, and top-level `ok`
+additionally requires the signature to verify. "We cannot tell" never reads
+as "verified".
+
+This defends against an attacker with **database** write access — SQL
+injection, stolen DB credentials, a restored backup, a rogue DBA. It does
+**not** defend against one who owns the application host, because the MAC is
+symmetric and the key is in that process's environment. A true asymmetric
+signature would let a third party verify without holding signing power; that
+is a larger key-management story and is not what this implements.
+
+**Off-box artifacts are the other half.** Signing stops forgery; it cannot
+stop deletion. `export_checkpoint()` emits a self-contained JSON document
+carrying the signed payload, verifiable with two stock library calls:
+
+```python
+canonical = json.dumps(artifact["payload"], sort_keys=True, separators=(",", ":"))
+hmac.new(key.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+```
+
+Keep those on WORM storage or a second system and an attacker who deletes
+every checkpoint row still gets caught — the artifact re-verifies against the
+live chain and reports the deletion as its own finding. The CLI is what an
+operator actually schedules:
+
+```
+python -m app.services.document_audit checkpoint --note "Q3 close" \
+    --export /mnt/worm/slowbooks/2026-q3.json
+python -m app.services.document_audit verify-artifact /mnt/worm/slowbooks/2026-q3.json
+```
+
+Both exit non-zero on failure, so a cron job notices. Key rotation is
+`resign`, which re-signs checkpoints that verify under the rotated-out key
+and **refuses** to back-sign ones that were never signed — doing so would
+assert something nobody can know, and would launder a checkpoint an attacker
+had already inserted.
 
 **Baseline honesty.** Rows written before the chain existed were backfilled
 deterministically in id order by migration `a2b3c4d5e6f9`. That establishes
@@ -127,8 +179,10 @@ pre-backfill history was untampered — a backfill computes a valid chain over
 whatever rows are present, including a set someone had already edited.
 Checkpoint immediately after migrating, and keep that checkpoint off-box.
 
-`tests/test_document_audit_integrity.py` exercises every row of the table
-above, including the truncation case.
+`tests/test_document_audit_integrity.py` exercises every ✅ row of the table
+above through the chain and checkpoints;
+`tests/test_audit_checkpoint_signing.py` covers signing, rotation, forgery,
+and the delete-every-checkpoint case that only the off-box artifact catches.
 
 ### § 164.312(d) — Person or Entity Authentication
 
@@ -193,7 +247,7 @@ to change to fully align with the Security Rule:
 | Gap | Severity | Fix |
 |-----|----------|-----|
 | **Enrollment metadata still plaintext** | Medium | Dependent identifiers and carrier names are now Fernet-encrypted, but plan kind, coverage windows and the employee foreign key are not — they are filtered, sorted and joined on, and Fernet output is randomized. An attacker with table access can still tell *which employees hold medical coverage over which months*, just not who the dependents are. Closing it needs deterministic blind-index columns alongside the encrypted values |
-| **Audit checkpoints are not cryptographically signed or off-boxed** | Medium | The hash chain (§ 164.312(c)(1)) now detects alteration, deletion and reordering, and checkpoints detect truncation — but an attacker with full database write access can delete the checkpoints too. Fix: sign checkpoints with an operator-held key and ship them off the box (WORM storage, or a second system) |
+| **Checkpoint signing is symmetric, and off-boxing is the operator's job** | Low | Checkpoints are now HMAC-SHA256 signed under a key held outside the database, and exportable as self-contained artifacts that verify with no checkpoint row present. Two things remain the operator's responsibility rather than the app's: actually scheduling the export to append-only storage (nothing in the database can attest to its own past if no artifact was ever kept), and the fact that a symmetric MAC gives no protection against a compromised *application host* — the signing key is in that process's environment. An asymmetric signature, or an external timestamping/notary service, would close the second |
 | **No role-based access control** | High | SlowBooks is single-operator. HIPAA expects "minimum necessary" — different staff see different data. Would require a user model + role assignment + per-field access checks |
 | **Employee data not encrypted at rest** | Medium | Names, addresses, hire date, etc. are plaintext. If treated as PHI, would need Fernet wrapping (same scheme as bank fields) |
 | **No data-retention enforcement** | Medium | Pay stubs and employee records stay forever. HIPAA expects retention/destruction policies — would need a configurable retention period + automated purge |

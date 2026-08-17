@@ -26,13 +26,18 @@
 #     tail was not truncated, because a shortened chain is still internally
 #     valid. `AuditCheckpoint` closes that: it pins (tip id, tip hash, row
 #     count) at a moment in time, so truncation past a checkpoint is
-#     detectable. Checkpoints are only as good as their off-box copies —
-#     an attacker with full DB write access can delete checkpoints too.
+#     detectable. Checkpoints are signed (HMAC-SHA256, operator-held key), so
+#     they cannot be forged by database write access — but they can still be
+#     DELETED, which is why the signed artifact is exportable off the box.
 #   * Rows written before the chain existed were backfilled deterministically
 #     by migration a2b3c4d5e6f9. That establishes a baseline going forward;
 #     it is NOT retroactive proof that pre-backfill history was untampered.
-#   * This is a hash chain, not a digital signature. The trust anchor is the
-#     database plus whatever off-box checkpoint copies the operator keeps.
+#   * The chain rows themselves are not signed — only checkpoints are. The
+#     trust anchor is the signing key plus whatever off-box artifact copies
+#     the operator keeps. The MAC is symmetric: an attacker who owns the
+#     application host holds the key, and only an artifact already written to
+#     append-only storage constrains them. app/services/audit_signing.py
+#     spells this out.
 # ============================================================================
 
 from datetime import datetime, timezone
@@ -79,9 +84,21 @@ class AuditCheckpoint(Base):
     everything it contained when this checkpoint was taken?" — which the
     chain alone cannot, since a truncated chain verifies fine on its own.
 
-    Keep copies off the box (the operations runbook covers this): a
-    checkpoint stored only in the same database an attacker can write is
-    evidence, not proof.
+    SIGNED, so a checkpoint is more than evidence. `signature` is an
+    HMAC-SHA256 over (v, tip_audit_id, tip_chain_hash, row_count, created_at,
+    note) under a key held outside the database — see
+    app/services/audit_signing.py. An attacker with database write access can
+    still DELETE a checkpoint, but cannot mint a replacement attesting to the
+    state they truncated the chain to.
+
+    Deleting them all is what off-box copies are for: `export_checkpoint()`
+    produces a self-contained signed artifact that verifies against the live
+    chain with no checkpoint row present at all. The operations runbook
+    covers shipping those to WORM storage.
+
+    Rows created before signing existed, or on a deployment with no signing
+    key configured, carry NULL here and verify as `unsigned` — reported, never
+    silently treated as fine.
     """
 
     __tablename__ = "audit_checkpoints"
@@ -94,3 +111,11 @@ class AuditCheckpoint(Base):
     row_count = Column(Integer, nullable=False)
     note = Column(String(200), nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow, index=True)
+
+    # --- signature (nullable: unsigned checkpoints are legal and reported) ---
+    # Hex HMAC-SHA256 is 64 chars; the column is wider so a future algorithm
+    # with a longer digest does not need a migration to store it.
+    signature = Column(String(128), nullable=True)
+    # Which key signed it, so an auditor holding several knows which to try.
+    signature_key_id = Column(String(64), nullable=True)
+    signature_algorithm = Column(String(32), nullable=True)

@@ -119,11 +119,108 @@ into your SIEM, or just `tail -f` them for small deployments:
   user-agent, success or failure.
 - **`portal_accesses`** — every employee-portal hit (cookieless and
   authed), with the resolved employee_id when known.
-- **`document_audits`** — per-document SHA-256 ledger for every generated document (tax forms, SUI, COBRA notices, e-signature seals)
-  ever generated. A printed form's footer carries the hash + audit
-  ID; an auditor can verify the document hasn't been edited.
+- **`document_audits`** — a linked hash chain over every generated document (tax forms, SUI, COBRA notices, e-signature seals).
+  A printed form's footer carries the hash + audit ID; an auditor can
+  verify the document hasn't been edited. Because each row commits to
+  its predecessor, deleting or reordering rows is detectable too:
+  `GET /api/document-audits/chain/verify`.
+- **`audit_checkpoints`** — signed pins of the chain tip, so tail
+  truncation is detectable. See the next section — these need a key and
+  a cron job to be worth anything.
 - **`/health`** — unauthenticated liveness probe. Wire to your load
   balancer or k8s readiness probe.
+
+---
+
+## Audit checkpoints: signing + off-box copies
+
+The hash chain over `document_audits` catches alteration, deletion and
+reordering on its own. Two things it cannot do alone, and what to set up:
+
+**1. Detect a truncated tail.** A shortened chain is still internally
+valid. `audit_checkpoints` pins `(tip id, tip hash, row count)` at a
+moment in time so anything removed past that point shows up.
+
+**2. Survive someone deleting the checkpoints too.** An attacker with
+database write access can delete checkpoint rows. Signing stops them
+*forging* one; only an off-box copy stops them *erasing* the evidence.
+
+### Set the signing key
+
+```bash
+# .env — NOT the same value as PAYROLL_ENCRYPTION_SECRET
+AUDIT_CHECKPOINT_SIGNING_SECRET=$(openssl rand -base64 48)
+AUDIT_CHECKPOINT_KEY_ID=ops-2026
+```
+
+There is no development default on purpose. Leave it unset and
+checkpoints still work, but every verification reports
+`signature.status: "unsigned"` and `ok: false` — a signature under a
+well-known key would look like proof while providing none.
+
+Keep the key somewhere the application host is not the only copy: a
+password manager, an HSM, a sealed envelope. An auditor holding it can
+verify an artifact without a SlowBooks install at all.
+
+### Schedule the export
+
+```cron
+# Weekly checkpoint, artifact written to append-only storage
+0 3 * * 0  cd /opt/slowbooks && python -m app.services.document_audit \
+             checkpoint --note "weekly" \
+             --export /mnt/worm/slowbooks/cp-$(date +\%Y-\%m-\%d).json
+```
+
+`/mnt/worm` should be genuinely append-only — object storage with object
+lock, a WORM NAS share, or a second machine the app host cannot write
+to. A "backup" on the same volume the database lives on buys nothing
+here.
+
+The command exits non-zero if the chain is broken, if there is nothing to
+checkpoint, or if no signing key is configured, so a failing cron job is
+a real signal.
+
+### Verify a copy
+
+```bash
+python -m app.services.document_audit verify-artifact /mnt/worm/slowbooks/cp-2026-08-16.json
+```
+
+Exit 0 means the live chain still contains everything that artifact
+attests to. Exit 1 prints why not. The interesting field is
+`checkpoint_row_present`: `false` means the database's own copy is gone
+and only this artifact still knows what used to be there.
+
+Same thing over HTTP, if that suits the workflow better:
+
+```
+GET  /api/document-audits/chain/checkpoints/{id}/export      # download artifact
+POST /api/document-audits/chain/checkpoints/verify-artifact  # POST it back
+```
+
+### Rotate the signing key
+
+```bash
+# 1. old key becomes PREV, new key becomes current
+AUDIT_CHECKPOINT_SIGNING_SECRET_PREV=<old>
+AUDIT_CHECKPOINT_SIGNING_SECRET=<new>
+AUDIT_CHECKPOINT_KEY_ID=ops-2027
+# 2. bounce the app — old checkpoints verify as `valid_previous_key`
+# 3. re-sign them
+python -m app.services.document_audit resign
+# 4. drop AUDIT_CHECKPOINT_SIGNING_SECRET_PREV
+```
+
+`resign` will not back-sign a checkpoint that was never signed. Signing
+one now would assert that the current key attested to that tuple at that
+time, which nobody can know — and would launder a checkpoint an attacker
+had inserted. Take a fresh checkpoint instead.
+
+**What this does not cover.** The MAC is symmetric, so an attacker who
+owns the application host holds the signing key and can sign anything.
+The defence against that is the artifact already sitting on append-only
+storage, not the signature. `docs/hipaa-compliance.md`
+§ 164.312(c)(1) has the full attack table.
 
 ---
 

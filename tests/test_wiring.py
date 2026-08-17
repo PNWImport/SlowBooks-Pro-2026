@@ -385,6 +385,12 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("GET", "/api/document-audits/chain/checkpoints"),
     ("POST", "/api/document-audits/chain/checkpoints"),
     ("GET", "/api/document-audits/chain/checkpoints/{checkpoint_id}/verify"),
+    # Off-box checkpoint artifacts — export/verify is an operator workflow
+    # aimed at a WORM mount and a cron job, not a browser. The CLI
+    # (`python -m app.services.document_audit checkpoint --export …`) is the
+    # intended entry point; see docs/operations.md.
+    ("GET", "/api/document-audits/chain/checkpoints/{checkpoint_id}/export"),
+    ("POST", "/api/document-audits/chain/checkpoints/verify-artifact"),
 }
 
 

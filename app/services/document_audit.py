@@ -1,10 +1,21 @@
 # ============================================================================
 # Document audit hashing — canonical SHA-256 over a document payload, plus the
 # append-and-link machinery that makes `document_audits` a real hash chain.
+#
+# Checkpoints live here too, including their signing and off-box export. The
+# CLI at the bottom is the piece an operator actually schedules:
+#
+#   python -m app.services.document_audit checkpoint --note "Q3 close" \
+#       --export /mnt/worm/slowbooks/2026-q3.json
+#   python -m app.services.document_audit verify-artifact /mnt/worm/.../file.json
+#
+# See app/services/audit_signing.py for what a signature does and does not
+# prove.
 # ============================================================================
 
 import hashlib
 import json
+import logging
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -17,6 +28,9 @@ from app.models.document_audit import (
     AuditCheckpoint,
     DocumentAudit,
 )
+from app.services import audit_signing
+
+logger = logging.getLogger(__name__)
 
 
 def _canonical(value: Any) -> Any:
@@ -225,6 +239,11 @@ def create_checkpoint(db: Session, note: str | None = None) -> AuditCheckpoint:
 
     Refuses to checkpoint a broken chain: a checkpoint over known-bad state
     would launder the break into the baseline.
+
+    Signs the pinned tuple when a signing key is configured, so the row
+    cannot be forged by database write access. Unconfigured means unsigned,
+    not an error — the checkpoint still works, it just carries less weight,
+    and every verification says so.
     """
     report = verify_chain(db)
     if not report["ok"]:
@@ -243,14 +262,81 @@ def create_checkpoint(db: Session, note: str | None = None) -> AuditCheckpoint:
         note=note,
         created_at=datetime.now(timezone.utc),
     )
+    signed = audit_signing.sign(checkpoint_payload(checkpoint))
+    if signed:
+        checkpoint.signature = signed["signature"]
+        checkpoint.signature_key_id = signed["signature_key_id"]
+        checkpoint.signature_algorithm = signed["signature_algorithm"]
+
     db.add(checkpoint)
     db.commit()
     db.refresh(checkpoint)
     return checkpoint
 
 
-def verify_against_checkpoint(db: Session, checkpoint: AuditCheckpoint) -> dict:
-    """Prove the chain still contains what it did at checkpoint time.
+# --- signing, export, and off-box verification ------------------------------
+
+
+def checkpoint_payload(checkpoint: AuditCheckpoint) -> dict:
+    """The exact tuple a checkpoint's signature commits to."""
+    return audit_signing.build_payload(
+        tip_audit_id=checkpoint.tip_audit_id,
+        tip_chain_hash=checkpoint.tip_chain_hash,
+        row_count=checkpoint.row_count,
+        created_at=checkpoint.created_at,
+        note=checkpoint.note,
+    )
+
+
+def verify_checkpoint_signature(checkpoint: AuditCheckpoint) -> dict:
+    """Verify the stored signature over the stored tuple.
+
+    Because the payload is rebuilt from the row's own columns, editing any of
+    them — including the note, or back-dating created_at — turns a `valid`
+    into an `invalid`.
+    """
+    return audit_signing.verify(checkpoint_payload(checkpoint), checkpoint.signature)
+
+
+def export_checkpoint(checkpoint: AuditCheckpoint) -> dict:
+    """A self-contained signed artifact to copy off the box.
+
+    THIS is what closes the "delete the rows and the checkpoints too" hole.
+    The artifact carries the signed payload, so it can be fed back through
+    `verify_artifact()` later and prove what the chain contained — with no
+    checkpoint row left in the database at all. Write it to WORM storage or a
+    second system; the operations runbook has the cron.
+
+    `checkpoint_id` and `exported_at` sit OUTSIDE `payload` and are therefore
+    NOT signed: they are provenance notes for a human, not claims. Everything
+    load-bearing is inside `payload`.
+    """
+    signature_state = verify_checkpoint_signature(checkpoint)
+    return {
+        "artifact": "slowbooks-audit-checkpoint",
+        "artifact_version": 1,
+        "payload": checkpoint_payload(checkpoint),
+        "signature": checkpoint.signature,
+        "signature_key_id": checkpoint.signature_key_id,
+        "signature_algorithm": checkpoint.signature_algorithm
+        or (audit_signing.ALGORITHM if checkpoint.signature else None),
+        "signature_status_at_export": signature_state["status"],
+        # Unsigned provenance — informational only.
+        "checkpoint_id": checkpoint.id,
+        "exported_at": _iso(datetime.now(timezone.utc)),
+        "how_to_verify": (
+            "signature = HMAC-SHA256(key, "
+            'json.dumps(payload, sort_keys=True, separators=(",", ":")))  '
+            "— or POST this whole document to "
+            "/api/document-audits/chain/checkpoints/verify-artifact"
+        ),
+    }
+
+
+def _compare_to_chain(
+    db: Session, tip_audit_id: int, tip_chain_hash: str, row_count: int
+) -> tuple[list[str], int]:
+    """Does the live chain still contain what a pinned tuple attests to?
 
     Three ways this fails, and all three are worth distinguishing:
       * the pinned tip row is gone         -> the tail was truncated
@@ -258,39 +344,168 @@ def verify_against_checkpoint(db: Session, checkpoint: AuditCheckpoint) -> dict:
       * fewer rows than at checkpoint time -> rows were removed somewhere
     """
     problems: list[str] = []
-    tip = (
-        db.query(DocumentAudit)
-        .filter(DocumentAudit.id == checkpoint.tip_audit_id)
-        .first()
-    )
+    tip = db.query(DocumentAudit).filter(DocumentAudit.id == tip_audit_id).first()
     if tip is None:
         problems.append(
-            f"checkpointed tip audit id {checkpoint.tip_audit_id} no longer "
-            "exists — the chain was truncated"
+            f"checkpointed tip audit id {tip_audit_id} no longer exists — "
+            "the chain was truncated"
         )
-    elif tip.chain_hash != checkpoint.tip_chain_hash:
+    elif tip.chain_hash != tip_chain_hash:
         problems.append(
-            f"audit id {checkpoint.tip_audit_id} no longer has its "
-            "checkpointed chain_hash — that row was altered"
+            f"audit id {tip_audit_id} no longer has its checkpointed "
+            "chain_hash — that row was altered"
         )
 
     current_count = db.query(func.count(DocumentAudit.id)).scalar() or 0
-    if current_count < checkpoint.row_count:
+    if current_count < row_count:
         problems.append(
-            f"row count fell from {checkpoint.row_count} to {current_count} — "
-            f"{checkpoint.row_count - current_count} row(s) removed"
+            f"row count fell from {row_count} to {current_count} — "
+            f"{row_count - current_count} row(s) removed"
         )
+    return problems, current_count
 
+
+def verify_against_checkpoint(db: Session, checkpoint: AuditCheckpoint) -> dict:
+    """Prove the chain still contains what it did at checkpoint time.
+
+    `ok` requires three things together: the chain verifies internally, it
+    still holds the checkpointed tip and row count, and the checkpoint's own
+    signature checks out. An unsigned checkpoint therefore reports ok=False
+    with `signature.status == "unsigned"` — the containment finding is still
+    in `problems` (empty if containment held), so an operator can see the
+    difference between "the chain was truncated" and "this checkpoint was
+    never signed".
+    """
+    problems, current_count = _compare_to_chain(
+        db, checkpoint.tip_audit_id, checkpoint.tip_chain_hash, checkpoint.row_count
+    )
     chain = verify_chain(db)
+    signature = verify_checkpoint_signature(checkpoint)
     return {
-        "ok": not problems and chain["ok"],
+        "ok": not problems and chain["ok"] and signature["ok"],
+        "contains_checkpointed_state": not problems and chain["ok"],
         "checkpoint_id": checkpoint.id,
         "checkpoint_created_at": _iso(checkpoint.created_at),
         "checkpoint_row_count": checkpoint.row_count,
         "current_row_count": current_count,
         "problems": problems,
+        "signature": signature,
         "chain": chain,
     }
+
+
+def verify_artifact(db: Session, artifact: dict) -> dict:
+    """Verify an off-box checkpoint artifact against the live chain.
+
+    The off-box workflow, end to end: export an artifact, keep it somewhere
+    the application cannot reach, then bring it back and run this. It needs no
+    checkpoint row — `checkpoint_row_present` reports whether the database
+    still has its copy, so "someone deleted the checkpoints" shows up as a
+    distinct finding rather than as a silent pass.
+
+    A malformed artifact raises ValueError; a valid artifact over a tampered
+    chain returns ok=False with the reason.
+    """
+    if not isinstance(artifact, dict):
+        raise ValueError("artifact must be a JSON object")
+    payload = artifact.get("payload")
+    problems_in_shape = audit_signing.payload_problems(payload)
+    if problems_in_shape:
+        raise ValueError("; ".join(problems_in_shape))
+
+    signature = audit_signing.verify(payload, artifact.get("signature"))
+    problems, current_count = _compare_to_chain(
+        db,
+        int(payload["tip_audit_id"]),
+        str(payload["tip_chain_hash"]),
+        int(payload["row_count"]),
+    )
+    chain = verify_chain(db)
+
+    # Is the database's own copy still there? Matched on the signed tuple, not
+    # on the artifact's unsigned checkpoint_id, so a renumbered row still
+    # counts as present.
+    row_present = (
+        db.query(func.count(AuditCheckpoint.id))
+        .filter(
+            AuditCheckpoint.tip_audit_id == int(payload["tip_audit_id"]),
+            AuditCheckpoint.tip_chain_hash == str(payload["tip_chain_hash"]),
+        )
+        .scalar()
+        or 0
+    ) > 0
+    if not row_present:
+        problems.append(
+            "the database no longer holds a checkpoint for this pinned tip — "
+            "the checkpoint row was deleted, and only this off-box artifact "
+            "still attests to that state"
+        )
+
+    return {
+        "ok": not problems and chain["ok"] and signature["ok"],
+        "contains_checkpointed_state": not problems and chain["ok"],
+        "checkpoint_row_present": row_present,
+        "artifact_checkpoint_id": artifact.get("checkpoint_id"),
+        "checkpoint_created_at": payload.get("created_at"),
+        "checkpoint_row_count": int(payload["row_count"]),
+        "current_row_count": current_count,
+        "note": payload.get("note") or "",
+        "problems": problems,
+        "signature": signature,
+        "chain": chain,
+    }
+
+
+def resign_checkpoints(db: Session) -> dict:
+    """Re-sign checkpoints that verify only under the rotated-out key.
+
+    Deliberately refuses to sign checkpoints that were never signed. Signing
+    one now would assert that the current key attested to that tuple at that
+    time, which is exactly the thing nobody can know — an attacker who created
+    a bogus unsigned checkpoint would get it laundered into a signed one.
+    Those are counted under `left_unsigned` and stay unsigned forever; take a
+    fresh checkpoint instead.
+    """
+    summary = {
+        "checked": 0,
+        "resigned": 0,
+        "already_current": 0,
+        "left_unsigned": 0,
+        "invalid": 0,
+    }
+    if not audit_signing.signing_configured():
+        summary["error"] = (
+            "AUDIT_CHECKPOINT_SIGNING_SECRET is not configured — nothing to "
+            "re-sign under"
+        )
+        return summary
+
+    for checkpoint in db.query(AuditCheckpoint).order_by(AuditCheckpoint.id).all():
+        summary["checked"] += 1
+        state = verify_checkpoint_signature(checkpoint)
+        if state["status"] == "unsigned":
+            summary["left_unsigned"] += 1
+            continue
+        if state["status"] == "valid":
+            summary["already_current"] += 1
+            continue
+        if state["status"] != "valid_previous_key":
+            summary["invalid"] += 1
+            logger.error(
+                "resign: checkpoint #%s signature is %s — left alone",
+                checkpoint.id,
+                state["status"],
+            )
+            continue
+        signed = audit_signing.sign(checkpoint_payload(checkpoint))
+        checkpoint.signature = signed["signature"]
+        checkpoint.signature_key_id = signed["signature_key_id"]
+        checkpoint.signature_algorithm = signed["signature_algorithm"]
+        summary["resigned"] += 1
+
+    if summary["resigned"]:
+        db.commit()
+    return summary
 
 
 def backfill_chain(db: Session) -> int:
@@ -317,3 +532,121 @@ def backfill_chain(db: Session) -> int:
     if linked:
         db.commit()
     return linked
+
+
+# --- operator CLI -----------------------------------------------------------
+
+
+def _cli() -> None:
+    """`python -m app.services.document_audit <cmd>` — the off-box workflow.
+
+    Exists because "keep a copy off the box" has to be something a cron job
+    can do. Exits non-zero on any verification failure so a scheduler notices.
+    """
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(prog="python -m app.services.document_audit")
+    sub = parser.add_subparsers(dest="cmd")
+
+    sub.add_parser("verify", help="Walk the chain and report any break")
+
+    checkpoint = sub.add_parser(
+        "checkpoint", help="Pin the current chain tip and sign it"
+    )
+    checkpoint.add_argument(
+        "--note", default=None, help="Label stored in the signature"
+    )
+    checkpoint.add_argument(
+        "--export",
+        metavar="PATH",
+        default=None,
+        help="Also write the signed artifact here (use a WORM mount)",
+    )
+
+    export = sub.add_parser("export", help="Write an existing checkpoint's artifact")
+    export.add_argument("checkpoint_id", type=int)
+    export.add_argument("--out", metavar="PATH", default=None, help="Default: stdout")
+
+    artifact = sub.add_parser(
+        "verify-artifact", help="Verify an off-box artifact against the live chain"
+    )
+    artifact.add_argument("path", help="Artifact JSON written by export/checkpoint")
+
+    sub.add_parser("resign", help="Re-sign checkpoints left on the previous key")
+
+    args = parser.parse_args()
+    if not args.cmd:
+        parser.print_help()
+        sys.exit(2)
+
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        if args.cmd == "verify":
+            report = verify_chain(db)
+            print(json.dumps(report, indent=2, default=str))
+            sys.exit(0 if report["ok"] else 1)
+
+        if args.cmd == "checkpoint":
+            try:
+                row = create_checkpoint(db, note=args.note)
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                sys.exit(1)
+            doc = export_checkpoint(row)
+            if args.export:
+                with open(args.export, "w", encoding="utf-8") as handle:
+                    json.dump(doc, handle, indent=2)
+                print(f"checkpoint #{row.id} written to {args.export}")
+            else:
+                print(json.dumps(doc, indent=2))
+            if not row.signature:
+                print(
+                    "warning: checkpoint is UNSIGNED — set "
+                    "AUDIT_CHECKPOINT_SIGNING_SECRET",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            sys.exit(0)
+
+        if args.cmd == "export":
+            row = (
+                db.query(AuditCheckpoint)
+                .filter(AuditCheckpoint.id == args.checkpoint_id)
+                .first()
+            )
+            if row is None:
+                print(f"error: no checkpoint #{args.checkpoint_id}", file=sys.stderr)
+                sys.exit(1)
+            doc = export_checkpoint(row)
+            if args.out:
+                with open(args.out, "w", encoding="utf-8") as handle:
+                    json.dump(doc, handle, indent=2)
+                print(f"checkpoint #{row.id} written to {args.out}")
+            else:
+                print(json.dumps(doc, indent=2))
+            sys.exit(0)
+
+        if args.cmd == "verify-artifact":
+            with open(args.path, encoding="utf-8") as handle:
+                doc = json.load(handle)
+            try:
+                result = verify_artifact(db, doc)
+            except ValueError as exc:
+                print(f"error: malformed artifact: {exc}", file=sys.stderr)
+                sys.exit(2)
+            print(json.dumps(result, indent=2, default=str))
+            sys.exit(0 if result["ok"] else 1)
+
+        if args.cmd == "resign":
+            summary = resign_checkpoints(db)
+            print(json.dumps(summary, indent=2))
+            sys.exit(1 if summary.get("error") or summary["invalid"] else 0)
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    _cli()

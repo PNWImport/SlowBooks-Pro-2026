@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -87,6 +88,41 @@ class CheckpointRequest(BaseModel):
     note: Optional[str] = None
 
 
+class CheckpointArtifactRequest(BaseModel):
+    """An exported checkpoint artifact, coming back from off-box storage.
+
+    `payload` is an untyped dict on purpose. The signature covers the exact
+    canonical JSON of whatever keys the payload carried when it was signed, so
+    a strict model that dropped an unknown field from a future version would
+    silently invalidate a genuine artifact. The service validates the shape.
+    """
+
+    payload: dict
+    signature: Optional[str] = None
+    signature_key_id: Optional[str] = None
+    signature_algorithm: Optional[str] = None
+    checkpoint_id: Optional[int] = None
+
+
+def _checkpoint_dict(checkpoint) -> dict:
+    from app.services.document_audit import verify_checkpoint_signature
+
+    return {
+        "id": checkpoint.id,
+        "tip_audit_id": checkpoint.tip_audit_id,
+        "tip_chain_hash": checkpoint.tip_chain_hash,
+        "row_count": checkpoint.row_count,
+        "note": checkpoint.note,
+        "created_at": (
+            checkpoint.created_at.isoformat() if checkpoint.created_at else None
+        ),
+        "signature": checkpoint.signature,
+        "signature_key_id": checkpoint.signature_key_id,
+        "signature_algorithm": checkpoint.signature_algorithm,
+        "signature_status": verify_checkpoint_signature(checkpoint)["status"],
+    }
+
+
 @router.get("/chain/verify")
 def verify_audit_chain(
     limit: Optional[int] = Query(default=None, ge=1),
@@ -109,17 +145,7 @@ def list_checkpoints(
     rows = (
         db.query(AuditCheckpoint).order_by(AuditCheckpoint.id.desc()).limit(limit).all()
     )
-    return [
-        {
-            "id": c.id,
-            "tip_audit_id": c.tip_audit_id,
-            "tip_chain_hash": c.tip_chain_hash,
-            "row_count": c.row_count,
-            "note": c.note,
-            "created_at": c.created_at.isoformat() if c.created_at else None,
-        }
-        for c in rows
-    ]
+    return [_checkpoint_dict(c) for c in rows]
 
 
 @router.post("/chain/checkpoints", status_code=201)
@@ -127,7 +153,12 @@ def create_audit_checkpoint(data: CheckpointRequest, db: Session = Depends(get_d
     """Pin the current chain tip so later tail-truncation is detectable.
 
     Refuses on a broken chain — checkpointing known-bad state would launder
-    the break into the baseline. Keep copies off the box.
+    the break into the baseline.
+
+    The row is signed under the operator-held key when one is configured, so
+    database write access alone cannot forge one. `signature_status` in the
+    response says `unsigned` when no key is set — take that as a setup gap,
+    and export the artifact off the box either way.
     """
     from app.services.document_audit import create_checkpoint
 
@@ -135,18 +166,19 @@ def create_audit_checkpoint(data: CheckpointRequest, db: Session = Depends(get_d
         checkpoint = create_checkpoint(db, note=data.note)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    return {
-        "id": checkpoint.id,
-        "tip_audit_id": checkpoint.tip_audit_id,
-        "tip_chain_hash": checkpoint.tip_chain_hash,
-        "row_count": checkpoint.row_count,
-        "created_at": checkpoint.created_at.isoformat(),
-    }
+    return _checkpoint_dict(checkpoint)
 
 
 @router.get("/chain/checkpoints/{checkpoint_id}/verify")
 def verify_checkpoint(checkpoint_id: int, db: Session = Depends(get_db)):
-    """Prove the chain still contains everything it did at checkpoint time."""
+    """Prove the chain still contains everything it did at checkpoint time.
+
+    `ok` requires the chain to verify, the checkpointed state to still be
+    contained, AND the checkpoint's own signature to check out.
+    `contains_checkpointed_state` reports the containment finding on its own,
+    so an unsigned checkpoint reads as "no truncation, but unsigned" rather
+    than as an integrity failure.
+    """
     from app.services.document_audit import verify_against_checkpoint
 
     checkpoint = (
@@ -155,3 +187,49 @@ def verify_checkpoint(checkpoint_id: int, db: Session = Depends(get_db)):
     if not checkpoint:
         raise HTTPException(status_code=404, detail="Checkpoint not found")
     return verify_against_checkpoint(db, checkpoint)
+
+
+@router.get("/chain/checkpoints/{checkpoint_id}/export")
+def export_audit_checkpoint(checkpoint_id: int, db: Session = Depends(get_db)):
+    """Download the signed artifact to keep off the box.
+
+    This is the half of the integrity story the database cannot provide: an
+    attacker with full write access can delete every checkpoint row, but not a
+    file already written to WORM storage or another system. Bring it back
+    through the verify-artifact endpoint below.
+    """
+    from app.services.document_audit import export_checkpoint
+
+    checkpoint = (
+        db.query(AuditCheckpoint).filter(AuditCheckpoint.id == checkpoint_id).first()
+    )
+    if not checkpoint:
+        raise HTTPException(status_code=404, detail="Checkpoint not found")
+    artifact = export_checkpoint(checkpoint)
+    return JSONResponse(
+        content=artifact,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="slowbooks-checkpoint-{checkpoint.id}.json"'
+            )
+        },
+    )
+
+
+@router.post("/chain/checkpoints/verify-artifact")
+def verify_audit_checkpoint_artifact(
+    data: CheckpointArtifactRequest, db: Session = Depends(get_db)
+):
+    """Verify an off-box artifact against the live chain.
+
+    Needs no checkpoint row: `checkpoint_row_present: false` in the response
+    means the database's own copy is gone and only this artifact still attests
+    to that state — which is exactly the case the in-database checkpoint alone
+    could never cover.
+    """
+    from app.services.document_audit import verify_artifact
+
+    try:
+        return verify_artifact(db, data.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"malformed artifact: {exc}")

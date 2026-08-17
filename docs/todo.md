@@ -123,10 +123,20 @@ operator submits themselves.
   (the ACA month-of-coverage derivation needs them). Encrypting them means
   adding deterministic blind-index columns so the queries still work. See
   docs/hipaa-compliance.md § 4.
-- **Sign + off-box the audit checkpoints** — the hash chain detects
-  alteration/deletion/reordering and checkpoints detect truncation, but an
-  attacker with full DB write access can delete checkpoints too. Sign them
-  with an operator-held key and ship them to WORM storage or a second system.
+- ~~**Sign + off-box the audit checkpoints**~~ — DONE: checkpoints carry an
+  HMAC-SHA256 signature over `(v, tip_audit_id, tip_chain_hash, row_count,
+  created_at, note)` under `AUDIT_CHECKPOINT_SIGNING_SECRET` (no dev default,
+  no fallback to the payroll key), verified on every read; `export`/
+  `verify-artifact` endpoints plus a
+  `python -m app.services.document_audit` CLI produce and check
+  self-contained artifacts that verify against the live chain with **no**
+  checkpoint row present, so deleting every checkpoint is now a named
+  finding. `resign` handles rotation and refuses to back-sign
+  never-signed rows. Remaining, and documented as such: the MAC is
+  symmetric, so a compromised *application host* holds the signing key —
+  an asymmetric signature or an external timestamping/notary service would
+  close that, and both need key infrastructure the app deliberately does
+  not own.
 - ~~**Benefits records**~~ — DONE: plans/enrollments/dependents
   (`/api/benefits`), ACA 1095 coverage derivation + 1094 counts at
   `GET /api/tax-forms/1095?year=` (JSON; any-day-of-month rule,

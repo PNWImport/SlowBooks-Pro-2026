@@ -81,6 +81,21 @@ PAYROLL_ENCRYPTION_SECRET = os.getenv(
     "PAYROLL_ENCRYPTION_SECRET", "slowbooks-dev-payroll-key-change-me"
 )
 
+# Operator-held key that signs audit checkpoints (HMAC-SHA256), so an attacker
+# with database write access cannot forge one. Deliberately has NO development
+# default and does NOT fall back to PAYROLL_ENCRYPTION_SECRET: a signature
+# under a well-known key is worse than no signature, because it looks like
+# proof. Unset means checkpoints are created unsigned and every verification
+# reports that. See app/services/audit_signing.py for the rotation procedure.
+AUDIT_CHECKPOINT_SIGNING_SECRET = os.getenv(
+    "AUDIT_CHECKPOINT_SIGNING_SECRET", ""
+).strip()
+AUDIT_CHECKPOINT_SIGNING_SECRET_PREV = os.getenv(
+    "AUDIT_CHECKPOINT_SIGNING_SECRET_PREV", ""
+).strip()
+# Label stored alongside each signature so an auditor knows which key to use.
+AUDIT_CHECKPOINT_KEY_ID = os.getenv("AUDIT_CHECKPOINT_KEY_ID", "primary").strip()
+
 # Employer identifiers and rates used by payroll tax forms / state engines.
 EMPLOYER_EIN = os.getenv("EMPLOYER_EIN", "")
 EMPLOYER_STATE = os.getenv("EMPLOYER_STATE", "WA")

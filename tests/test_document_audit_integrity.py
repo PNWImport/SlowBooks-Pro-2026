@@ -227,12 +227,13 @@ def test_checkpoint_detects_tail_truncation(client, db_session, seed_accounts):
     )
     assert cp.status_code == 201, cp.text
     cp_id = cp.json()["id"]
-    assert (
-        client.get(f"/api/document-audits/chain/checkpoints/{cp_id}/verify").json()[
-            "ok"
-        ]
-        is True
-    )
+    # `contains_checkpointed_state` is the containment finding on its own.
+    # Top-level `ok` also requires the checkpoint's signature to verify, and
+    # no signing key is configured in the test environment — that dimension
+    # is covered in tests/test_audit_checkpoint_signing.py.
+    before = client.get(f"/api/document-audits/chain/checkpoints/{cp_id}/verify").json()
+    assert before["contains_checkpointed_state"] is True
+    assert before["problems"] == []
 
     # Lop off the tail.
     tip = db_session.query(DocumentAudit).order_by(DocumentAudit.id.desc()).first()
@@ -244,6 +245,7 @@ def test_checkpoint_detects_tail_truncation(client, db_session, seed_accounts):
     # ...but the checkpoint catches it.
     result = client.get(f"/api/document-audits/chain/checkpoints/{cp_id}/verify").json()
     assert result["ok"] is False
+    assert result["contains_checkpointed_state"] is False
     assert any("truncated" in p for p in result["problems"])
     assert result["current_row_count"] < result["checkpoint_row_count"]
 
