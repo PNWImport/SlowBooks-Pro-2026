@@ -273,6 +273,10 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("POST", "/api/payroll/forms/w3/{year}"),
     ("POST", "/api/payroll/forms/940/{year}"),
     ("POST", "/api/payroll/forms/941/{year}/{quarter}"),
+    # SUI quarterly wage report — JSON is the machine-readable contract
+    # (the SPA's Generate button hits the /pdf variant, wired in
+    # tax_forms.js like the other forms).
+    ("POST", "/api/payroll/forms/sui/{year}/{quarter}"),
     # /decision is the canonical endpoint; /approve and /reject are aliases
     # the SPA actually calls. Decision route stays for scripts / API users.
     ("POST", "/api/pto/requests/{request_id}/decision"),

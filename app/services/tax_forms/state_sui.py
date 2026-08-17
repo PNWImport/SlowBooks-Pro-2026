@@ -118,3 +118,28 @@ def compute_sui(db, year: int, quarter: int, state: str | None = None) -> dict:
         "total_suta_tax": _q(total_suta_tax),
         "employees": breakdown,
     }
+
+
+def generate_sui_pdf(
+    db,
+    year: int,
+    quarter: int,
+    state: str | None,
+    company: dict,
+    audit: dict | None = None,
+) -> bytes:
+    """Render the quarterly SUI wage report to a PDF.
+
+    This is the generic wage-detail layout every state's quarterly UI
+    return is built from (employee, SSN, total wages, taxable wages, tax) —
+    not a pixel replica of any state's own form. States accept their own
+    layouts only, so match the figures against the state's form or upload
+    portal before filing.
+    """
+    from app.services.pdf_service import _jinja_env, _safe_url_fetcher
+    from weasyprint import HTML
+
+    data = compute_sui(db, year, quarter, state)
+    template = _jinja_env.get_template("state_sui.html")
+    html_str = template.render(data=data, company=company or {}, audit=audit or {})
+    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()

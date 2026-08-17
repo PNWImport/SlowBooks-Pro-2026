@@ -42,6 +42,7 @@ from app.services.document_audit import (
 from app.services.settings_service import get_all_settings
 from app.services.tax_forms.form_940 import compute_940, generate_940_pdf
 from app.services.tax_forms.form_941 import compute_941, generate_941_pdf
+from app.services.tax_forms.state_sui import compute_sui, generate_sui_pdf
 from app.services.tax_forms.w2_w3 import (
     compute_w2,
     compute_w3,
@@ -971,6 +972,34 @@ def generate_form_940_pdf(year: int, db: Session = Depends(get_db)):
     return _pdf_response(pdf, f"form_940_{year}.pdf")
 
 
+@router.post("/forms/sui/{year}/{quarter}", response_class=Response)
+def generate_sui_report(
+    year: int,
+    quarter: int,
+    state: str = Query(default=None, max_length=2),
+    db: Session = Depends(get_db),
+):
+    """Quarterly state unemployment (SUI) wage report — machine-readable.
+
+    Optional ?state=XX filters to employees whose work_state matches; omit
+    it for a multi-state employer's combined view.
+    """
+    if quarter not in (1, 2, 3, 4):
+        raise HTTPException(status_code=400, detail="quarter must be 1-4")
+    data = compute_sui(db, year, quarter, state.upper() if state else None)
+
+    def _plain(value):
+        if isinstance(value, Decimal):
+            return str(value)
+        if isinstance(value, list):
+            return [_plain(v) for v in value]
+        if isinstance(value, dict):
+            return {k: _plain(v) for k, v in value.items()}
+        return value
+
+    return JSONResponse(content=_plain(data), status_code=200)
+
+
 @router.post("/forms/941/{year}/{quarter}/pdf", response_class=Response)
 def generate_form_941_pdf(year: int, quarter: int, db: Session = Depends(get_db)):
     """Form 941 (quarterly FICA) PDF for year + quarter."""
@@ -986,3 +1015,21 @@ def generate_form_941_pdf(year: int, quarter: int, db: Session = Depends(get_db)
     )
     pdf = generate_941_pdf(db, year, quarter, company, audit=audit)
     return _pdf_response(pdf, f"form_941_{year}_q{quarter}.pdf")
+
+
+@router.post("/forms/sui/{year}/{quarter}/pdf", response_class=Response)
+def generate_sui_report_pdf(
+    year: int,
+    quarter: int,
+    state: str = Query(default=None, max_length=2),
+    db: Session = Depends(get_db),
+):
+    """Quarterly SUI wage report PDF, audit-hashed like the other tax forms."""
+    if quarter not in (1, 2, 3, 4):
+        raise HTTPException(status_code=400, detail="quarter must be 1-4")
+    st = state.upper() if state else None
+    company = _company_for_pdf(db)
+    key = f"yr{year}-q{quarter}" + (f"-{st}" if st else "")
+    audit = _hash_and_audit(db, "sui", key, company, compute_sui(db, year, quarter, st))
+    pdf = generate_sui_pdf(db, year, quarter, st, company, audit=audit)
+    return _pdf_response(pdf, f"sui_{year}_q{quarter}{('_' + st) if st else ''}.pdf")

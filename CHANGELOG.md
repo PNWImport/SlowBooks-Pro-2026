@@ -7,6 +7,18 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Quarterly SUI wage report — endpoints for the existing aggregation
+
+`compute_sui` shipped as scaffolding with the tier-3 tax forms but had no
+endpoint. Now: `POST /api/payroll/forms/sui/{year}/{quarter}` (JSON, the
+machine-readable contract) and `.../pdf` (WeasyPrint, audit-hashed via
+`document_audits` like every other tax form), both taking an optional
+`?state=XX` filter for multi-state employers. The PDF is the generic
+per-employee wage-detail layout every state's quarterly UI return is built
+from (employee, SSN last-4, total wages, SUI-taxable wages, SUI tax) — a
+transcription source for the state's own form or upload portal, not a
+pixel replica, and it says so on the page. 15 new tests (536 -> 551).
+
 ### Local / municipal payroll tax layer
 
 The tax layer below the states: PA EIT + LST, OH municipal + school

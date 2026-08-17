@@ -21,7 +21,7 @@ what's in each tier, where each piece lives, and what's still pending.
 | **50-state withholding** | Table-driven engine + per-state SUTA rates/wage bases | ✅ | n/a | ✅ |
 | **Local/municipal taxes** | PA EIT+LST, OH muni+SD, NYC/Yonkers, MD/IN county, KY, MI | ✅ | n/a | ✅ |
 
-536 tests pass across the full suite.
+551 tests pass across the full suite.
 
 State coverage went from 4 states (WA/CA/NY/OR, hand-written) to all 50 plus
 DC. The other 47 are driven by reviewable JSON tables — see
@@ -125,6 +125,8 @@ the header and a tamper-evident audit hash in the footer. The SPA's
 | `POST /api/payroll/forms/940/{year}/pdf` | Form 940 PDF |
 | `POST /api/payroll/forms/941/{year}/{quarter}` | Quarterly FICA aggregation (JSON) |
 | `POST /api/payroll/forms/941/{year}/{quarter}/pdf` | Form 941 PDF |
+| `POST /api/payroll/forms/sui/{year}/{quarter}?state=XX` | Quarterly SUI wage report, per-employee detail (JSON) |
+| `POST /api/payroll/forms/sui/{year}/{quarter}/pdf?state=XX` | Quarterly SUI PDF + `document_audits` row |
 | `GET /api/document-audits` | List audit rows (newest first), filterable by `doc_type` + `doc_key` |
 | `GET /api/document-audits/{id}` | One audit row — for verifying a PDF by its footer ID |
 | `GET /api/document-audits/verify/{content_hash}` | Find rows by full SHA-256 hash |
@@ -205,8 +207,6 @@ pay-run auto-population are all live. What's left is in `docs/todo.md`:
   withholding guides; see [state-tax-tables.md](state-tax-tables.md)
 - **State W-4 allowances** — `exemption_allowance` assumes one allowance
   per employee because `Employee` has no `state_allowances` column
-- **State SUI filings** — `app/services/tax_forms/state_sui.py` has
-  scaffolding; needs per-state form rendering + an endpoint
 - **E-Verify submission flow** — schema has `everify_case_number` but
   no integration with the federal system
 - **Portal-token UI on admin side** — show expiry and last-used

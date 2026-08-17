@@ -65,8 +65,10 @@ operator submits themselves.
     localities into one line
   - **MI residence credit cap** + **LST low-income exemption** — documented
     simplifications
-- **State unemployment filings (SUI)** — `app/services/tax_forms/state_sui.py`
-  has scaffolding; needs per-state form rendering + an endpoint.
+- ~~**State unemployment filings (SUI)**~~ — DONE: generic wage-detail PDF
+  (audit-hashed) + JSON at `POST /api/payroll/forms/sui/{year}/{quarter}`
+  with optional `?state=XX`. States accept their own layouts, so the PDF is
+  a transcription source, not a filing replica.
 - **EFW2 / 1099 transmittal files** — fixed-width SSA and IRS formats, for
   the operator to upload.
 - **Deposit schedule + liability calendar** — IRS lookback rule (monthly vs

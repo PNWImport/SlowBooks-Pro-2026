@@ -85,6 +85,32 @@ const TaxFormsPage = {
                 </div>
             </div>
 
+            <div class="card" style="margin-bottom:16px;padding:16px">
+                <h3>Quarterly SUI (State Unemployment)</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Year</label>
+                        <input id="sui-year" type="number" value="${currentYear}" min="2000" max="2099" style="width:100px">
+                    </div>
+                    <div class="form-group">
+                        <label>Quarter</label>
+                        <select id="sui-quarter">
+                            <option value="1">Q1 (Jan–Mar)</option>
+                            <option value="2">Q2 (Apr–Jun)</option>
+                            <option value="3">Q3 (Jul–Sep)</option>
+                            <option value="4">Q4 (Oct–Dec)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>State (optional)</label>
+                        <input id="sui-state" type="text" maxlength="2" placeholder="All" style="width:70px;text-transform:uppercase">
+                    </div>
+                </div>
+                <div class="form-actions" style="margin-top:8px">
+                    <button class="btn btn-primary" onclick="TaxFormsPage.generateSUI()">Generate SUI Report</button>
+                </div>
+            </div>
+
             <div class="card" style="padding:16px;background:#fffbe6;border-left:4px solid #f5a623">
                 <p style="margin:0"><strong>Note:</strong> Tax forms are for reference. Verify calculations with a licensed tax professional before filing.</p>
             </div>`;
@@ -112,6 +138,19 @@ const TaxFormsPage = {
         const year = yearEl ? yearEl.value : '';
         if (!year) { toast('Please enter a year', 'error'); return; }
         await _openPDF(`/api/payroll/forms/940/${year}/pdf`, 'POST');
+    },
+
+    async generateSUI() {
+        const yearEl = document.getElementById('sui-year');
+        const quarterEl = document.getElementById('sui-quarter');
+        const stateEl = document.getElementById('sui-state');
+        const year = yearEl ? yearEl.value : '';
+        const quarter = quarterEl ? quarterEl.value : '';
+        const state = stateEl ? stateEl.value.trim().toUpperCase() : '';
+        if (!year) { toast('Please enter a year', 'error'); return; }
+        if (!quarter) { toast('Please select a quarter', 'error'); return; }
+        const qs = state ? `?state=${encodeURIComponent(state)}` : '';
+        await _openPDF(`/api/payroll/forms/sui/${year}/${quarter}/pdf${qs}`, 'POST');
     },
 
     async generate941() {
