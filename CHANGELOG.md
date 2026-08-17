@@ -7,6 +7,22 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Pay schedules — named pay calendars
+
+A bare PayFrequency enum says "biweekly" but not which Fridays, when the
+submission cutoff falls, or what happens on a weekend pay date. New
+`PaySchedule` (frequency + anchor pay date + submission_lead_days +
+weekend_shift) pins all three. `/api/pay-schedules`: CRUD, an
+`/upcoming` preview (derived dates, shifted flags, per-date cutoffs),
+and `/assign/{emp_id}` which attaches the employee and keeps
+pay_frequency synced so withholding annualization follows the schedule.
+Date math: weekly/biweekly step from the anchor; semi-monthly pays the
+anchor day + that day ±15 capped to month end (Feb 30th → 28th);
+monthly caps the 31st; shifting applies last so it never changes which
+period a date belongs to. Migration c3d4e5f6a7b8. Holiday calendars and
+blackout dates are follow-ups (weekend-only shifting today). 9 new
+tests (595 -> 604).
+
 ### Contractor pay runs — 1099 payees get the payroll shape
 
 Contractors previously lived only in AP (create bill, pay bill). Paying a

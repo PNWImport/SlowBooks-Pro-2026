@@ -87,7 +87,9 @@ operator submits themselves.
   per vendor), contractor payments join bill payments in 1099-NEC totals.
   Follow-ups: no SPA page yet (API-first); no void endpoint for a processed
   contractor run yet (mirror the payroll void).
-- **Pay-schedule object** — cutoffs, weekend/holiday shifting, blackout dates.
+- ~~**Pay-schedule object**~~ — DONE: `/api/pay-schedules` CRUD + upcoming
+  preview + employee assignment (syncs pay_frequency). Follow-ups: holiday
+  calendar (weekend-only shifting today), blackout dates, SPA page.
 - **Retro pay / mid-period proration** — mid-period rate changes.
 - **Termination + final paycheck** — per-state timing rules, PTO payout.
 - **Garnishment remittance** — withholding is calculated but never remitted;

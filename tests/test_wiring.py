@@ -279,6 +279,12 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("POST", "/api/contractor-runs/{run_id}/nacha"),
     ("GET", "/api/contractor-runs/vendors/{vendor_id}/bank"),
     ("POST", "/api/contractor-runs/vendors/{vendor_id}/bank"),
+    # Pay schedules — API-first; SPA page tracked in docs/todo.md.
+    ("GET", "/api/pay-schedules"),
+    ("POST", "/api/pay-schedules"),
+    ("PUT", "/api/pay-schedules/{schedule_id}"),
+    ("GET", "/api/pay-schedules/{schedule_id}/upcoming"),
+    ("POST", "/api/pay-schedules/{schedule_id}/assign/{emp_id}"),
     # Legacy JSON-mode tax form endpoints — superseded by /pdf variants.
     # Kept for machine readers / future e-file integration.
     ("POST", "/api/payroll/forms/w2/{emp_id}"),

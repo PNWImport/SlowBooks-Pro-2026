@@ -91,6 +91,9 @@ class Employee(Base):
     pay_type = Column(Enum(PayType), default=PayType.HOURLY)
     pay_rate = Column(Numeric(12, 2), default=0)  # hourly rate or annual salary
     pay_frequency = Column(Enum(PayFrequency), default=PayFrequency.BIWEEKLY)
+    # Optional named pay calendar; when set, assignment keeps pay_frequency
+    # synced to the schedule's frequency (see routes/pay_schedules.py).
+    pay_schedule_id = Column(Integer, ForeignKey("pay_schedules.id"), nullable=True)
     filing_status = Column(Enum(FilingStatus), default=FilingStatus.SINGLE)
 
     # --- 2020+ Form W-4 (the redesign removed "allowances" entirely) ---
