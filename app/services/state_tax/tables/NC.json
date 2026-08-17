@@ -1,0 +1,25 @@
+{
+  "state": "NC",
+  "name": "North Carolina",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://www.ncdor.gov/taxes-forms/withholding-tax",
+  "notes": "Approximate figures pending review against the source above. Bracket edges, deduction and exemption amounts, and the SUTA wage base all change annually \u2014 confirm before running live payroll in this state.",
+  "income_tax": {
+    "method": "flat",
+    "rate": "0.0399",
+    "supplemental_rate": "0.0399",
+    "standard_deduction": {
+      "single": "12750",
+      "married": "25500",
+      "head_of_household": "19125"
+    },
+    "exemption_allowance": {}
+  },
+  "suta": {
+    "wage_base": "32600",
+    "default_rate": "0.01"
+  },
+  "employee_other": [],
+  "employer_other": []
+}

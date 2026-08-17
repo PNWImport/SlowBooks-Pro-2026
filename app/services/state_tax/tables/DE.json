@@ -1,0 +1,56 @@
+{
+  "state": "DE",
+  "name": "Delaware",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://revenue.delaware.gov/withholding-tax/",
+  "notes": "Approximate figures pending review against the source above. Bracket edges, deduction and exemption amounts, and the SUTA wage base all change annually \u2014 confirm before running live payroll in this state.",
+  "income_tax": {
+    "method": "brackets",
+    "brackets": {
+      "single": [
+        [
+          "0",
+          "0"
+        ],
+        [
+          "2000",
+          "0.022"
+        ],
+        [
+          "5000",
+          "0.039"
+        ],
+        [
+          "10000",
+          "0.048"
+        ],
+        [
+          "20000",
+          "0.052"
+        ],
+        [
+          "25000",
+          "0.0555"
+        ],
+        [
+          "60000",
+          "0.066"
+        ]
+      ]
+    },
+    "supplemental_rate": "0.066",
+    "standard_deduction": {
+      "single": "3250",
+      "married": "6500",
+      "head_of_household": "3250"
+    },
+    "exemption_allowance": {}
+  },
+  "suta": {
+    "wage_base": "12500",
+    "default_rate": "0.018"
+  },
+  "employee_other": [],
+  "employer_other": []
+}

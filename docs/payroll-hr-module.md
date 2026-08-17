@@ -18,8 +18,14 @@ what's in each tier, where each piece lives, and what's still pending.
 | **Tier 3 — Portal hardening** | Expiration, no-referrer, rate limiting, employer branding | ✅ | ✅ | ✅ |
 | **PTO year-end carryover** | Batch endpoint applies policy carryover caps + resets YTD | ✅ | n/a | ✅ |
 | **Time-entry → pay-run auto-population** | Pay-run form checkbox pulls approved unpaid hours | ✅ | ✅ | ✅ |
+| **50-state withholding** | Table-driven engine + per-state SUTA rates/wage bases | ✅ | n/a | ✅ |
 
-452 tests pass across the full suite.
+500 tests pass across the full suite.
+
+State coverage went from 4 states (WA/CA/NY/OR, hand-written) to all 50 plus
+DC. The other 47 are driven by reviewable JSON tables — see
+[state-tax-tables.md](state-tax-tables.md), and note that every table ships
+unverified until an operator checks it against the state's published guide.
 
 ---
 
@@ -193,6 +199,11 @@ The major Tier 3 work has shipped — tax PDFs with audit hashes, the
 cookie-based portal session, PTO year-end carryover, and time-entry →
 pay-run auto-population are all live. What's left is in `docs/todo.md`:
 
+- **State tax table verification** — all 47 table-driven states ship
+  `"verified": false`. Verify the states you pay in against their published
+  withholding guides; see [state-tax-tables.md](state-tax-tables.md)
+- **State W-4 allowances** — `exemption_allowance` assumes one allowance
+  per employee because `Employee` has no `state_allowances` column
 - **State SUI filings** — `app/services/tax_forms/state_sui.py` has
   scaffolding; needs per-state form rendering + an endpoint
 - **E-Verify submission flow** — schema has `everify_case_number` but

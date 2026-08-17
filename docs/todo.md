@@ -45,9 +45,44 @@ item, asserting (a) construction with required fields, (b) defaults,
 
 ## Payroll / HR — still open
 
+Measured against a full-service provider (Gusto et al.), the local-only gaps
+are ordered below. Anything needing an external API — ACH origination, EFTPS
+remittance, e-file transport, carrier feeds — is deliberately out of scope;
+what's listed is all buildable in-repo as computation, records, or files the
+operator submits themselves.
+
+- ~~**50-state withholding**~~ — DONE: table-driven engine + 47 JSON tables
+  + per-state SUTA rates and wage bases. See `docs/state-tax-tables.md`.
+  Follow-ups it created:
+  - **Verify the tables** — all 47 ship `"verified": false`
+  - **State W-4 allowances** — needs an `Employee.state_allowances` column;
+    `exemption_allowance` currently assumes one allowance
+- **Local / municipal tax layer** — PA EIT, OH municipal + school district,
+  NYC/Yonkers, MD county, IN county, KY, MI cities. Same table approach;
+  needs local tax columns on `PayStub`.
 - **State unemployment filings (SUI)** — `app/services/tax_forms/state_sui.py`
-  has scaffolding; needs per-state form rendering + an endpoint. Only
-  remaining payroll feature on the wishlist.
+  has scaffolding; needs per-state form rendering + an endpoint.
+- **EFW2 / 1099 transmittal files** — fixed-width SSA and IRS formats, for
+  the operator to upload.
+- **Deposit schedule + liability calendar** — IRS lookback rule (monthly vs
+  semiweekly depositor), due-date calendar, $100k next-day rule.
+- **Contractor pay runs** — contractors are AP vendors today, so 1099-NEC is
+  derived from `bill_payments` rather than from a pay run.
+- **Pay-schedule object** — cutoffs, weekend/holiday shifting, blackout dates.
+- **Retro pay / mid-period proration** — mid-period rate changes.
+- **Termination + final paycheck** — per-state timing rules, PTO payout.
+- **Garnishment remittance** — withholding is calculated but never remitted;
+  needs agency payees, a remittance register, and e-IWO output.
+- **Tipped wages** — tip credit, reported vs allocated tips, 8846, 8027.
+- **Multi-location** — locations as records with their own tax jurisdiction.
+- **Benefits records** — plans, enrollment, eligibility, ACA 1095-B/C + 1094,
+  COBRA notices. Records and documents only, no carrier integration.
+- **Workers' comp** — per-class-code rates and a premium report by class.
+- **E-signature** — offer letters, I-9, handbook acknowledgment, riding on
+  the existing `document_audits` hash chain.
+- **Org chart / PTO calendar / performance reviews.**
+- **Payroll report library** — journal, workers' comp, deduction register,
+  contractor payments, department and job-cost allocation.
 
 ---
 

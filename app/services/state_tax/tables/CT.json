@@ -1,0 +1,92 @@
+{
+  "state": "CT",
+  "name": "Connecticut",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://portal.ct.gov/drs",
+  "notes": "Approximate figures pending review against the source above. Bracket edges, deduction and exemption amounts, and the SUTA wage base all change annually \u2014 confirm before running live payroll in this state.",
+  "income_tax": {
+    "method": "brackets",
+    "brackets": {
+      "single": [
+        [
+          "0",
+          "0.02"
+        ],
+        [
+          "10000",
+          "0.045"
+        ],
+        [
+          "50000",
+          "0.055"
+        ],
+        [
+          "100000",
+          "0.06"
+        ],
+        [
+          "200000",
+          "0.065"
+        ],
+        [
+          "250000",
+          "0.069"
+        ],
+        [
+          "500000",
+          "0.0699"
+        ]
+      ],
+      "married": [
+        [
+          "0",
+          "0.02"
+        ],
+        [
+          "20000",
+          "0.045"
+        ],
+        [
+          "100000",
+          "0.055"
+        ],
+        [
+          "200000",
+          "0.06"
+        ],
+        [
+          "400000",
+          "0.065"
+        ],
+        [
+          "500000",
+          "0.069"
+        ],
+        [
+          "1000000",
+          "0.0699"
+        ]
+      ]
+    },
+    "supplemental_rate": "0.0699",
+    "standard_deduction": {},
+    "exemption_allowance": {
+      "single": "15000",
+      "married": "24000",
+      "head_of_household": "19000"
+    }
+  },
+  "suta": {
+    "wage_base": "26100",
+    "default_rate": "0.0295"
+  },
+  "employee_other": [
+    {
+      "label": "CT Paid Leave",
+      "rate": "0.005",
+      "wage_base": "184500"
+    }
+  ],
+  "employer_other": []
+}

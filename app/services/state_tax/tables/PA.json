@@ -1,0 +1,21 @@
+{
+  "state": "PA",
+  "name": "Pennsylvania",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://www.revenue.pa.gov/employerwithholding",
+  "notes": "Approximate figures pending review against the source above. Bracket edges, deduction and exemption amounts, and the SUTA wage base all change annually \u2014 confirm before running live payroll in this state.",
+  "income_tax": {
+    "method": "flat",
+    "rate": "0.0307",
+    "supplemental_rate": "0.0307",
+    "standard_deduction": {},
+    "exemption_allowance": {}
+  },
+  "suta": {
+    "wage_base": "10000",
+    "default_rate": "0.03822"
+  },
+  "employee_other": [],
+  "employer_other": []
+}

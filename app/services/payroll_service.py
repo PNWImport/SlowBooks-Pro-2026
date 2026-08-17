@@ -295,6 +295,42 @@ def suta(
     return _q(taxable * Decimal(str(rate)))
 
 
+def resolve_suta_rate(explicit=None, work_state: str = None) -> Decimal:
+    """Pick the SUTA rate to apply for one stub, most specific source first.
+
+    1. An explicit per-pay-run rate passed by the caller.
+    2. SUTA_RATE_BY_STATE — the experience rate the state assigned this
+       employer. Multi-state employers have a different one in each state.
+    3. SUTA_RATE, when the stub is in the employer's own state. This is the
+       single-state setting that predates per-state rates, and an operator who
+       set it means it for their home state — a published new-employer rate
+       must not quietly override the real experience rate they entered.
+    4. The state's new-employer rate from its tax table. Reached only for a
+       state the operator never configured, where a state-specific published
+       rate beats applying the home state's rate to wages earned elsewhere.
+    5. SUTA_RATE, for a state with no table at all.
+    """
+    if explicit is not None:
+        return Decimal(str(explicit))
+
+    from app.config import EMPLOYER_STATE, SUTA_RATE, SUTA_RATE_BY_STATE
+    from app.services.state_tax import suta_rate_for
+
+    state = (work_state or "").strip().upper()
+
+    configured = suta_rate_for(state, SUTA_RATE_BY_STATE, tables=False)
+    if configured is not None:
+        return configured
+
+    if not state or state == (EMPLOYER_STATE or "").strip().upper():
+        return Decimal(str(SUTA_RATE))
+
+    from_table = suta_rate_for(state, None)
+    if from_table is not None:
+        return from_table
+    return Decimal(str(SUTA_RATE))
+
+
 def calculate_withholdings(
     gross_pay,
     *,
@@ -327,8 +363,6 @@ def calculate_withholdings(
     Returns employee-side withholding, employer-side taxes, the per-state
     results, and an itemized ``detail`` map for pay-stub / form rendering.
     """
-    from app.config import SUTA_RATE
-
     gross = _q(gross_pay)
     ytd = Decimal(str(ytd_gross))
     pretax = Decimal(str(pretax_deductions))
@@ -425,7 +459,9 @@ def calculate_withholdings(
         )
         state_income = wh.income_tax
 
-    rate = Decimal(str(suta_rate)) if suta_rate is not None else Decimal(str(SUTA_RATE))
+    # SUTA follows the WORK state — reciprocity moves income tax to the
+    # residence state but never unemployment tax.
+    rate = resolve_suta_rate(suta_rate, work_state)
     suta_tax = suta(fica_wages, ytd, rate, engine.suta_wage_base)
 
     total_employee = federal + state_income + state.employee_other + ss_emp + med_emp

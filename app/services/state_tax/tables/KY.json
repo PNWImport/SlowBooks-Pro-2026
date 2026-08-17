@@ -1,0 +1,25 @@
+{
+  "state": "KY",
+  "name": "Kentucky",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://revenue.ky.gov/Business/Pages/Employer-Payroll-Withholding.aspx",
+  "notes": "Approximate figures pending review against the source above. Bracket edges, deduction and exemption amounts, and the SUTA wage base all change annually \u2014 confirm before running live payroll in this state.",
+  "income_tax": {
+    "method": "flat",
+    "rate": "0.035",
+    "supplemental_rate": "0.035",
+    "standard_deduction": {
+      "single": "3270",
+      "married": "3270",
+      "head_of_household": "3270"
+    },
+    "exemption_allowance": {}
+  },
+  "suta": {
+    "wage_base": "11700",
+    "default_rate": "0.027"
+  },
+  "employee_other": [],
+  "employer_other": []
+}

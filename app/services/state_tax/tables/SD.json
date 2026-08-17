@@ -1,0 +1,17 @@
+{
+  "state": "SD",
+  "name": "South Dakota",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://dlr.sd.gov/ra/",
+  "notes": "No state income tax on wages. The SUTA wage base still changes annually \u2014 confirm before running live payroll in this state.",
+  "income_tax": {
+    "method": "none"
+  },
+  "suta": {
+    "wage_base": "15000",
+    "default_rate": "0.012"
+  },
+  "employee_other": [],
+  "employer_other": []
+}

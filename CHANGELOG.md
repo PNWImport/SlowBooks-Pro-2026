@@ -7,6 +7,70 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### 50-state payroll withholding — table-driven state engines
+
+Payroll worked in four states. WA, CA, NY and OR had hand-written engines;
+every other state resolved to `GenericStateEngine(flat_rate=0)` and withheld
+**no state income tax at all**. An employee in Illinois got a paycheck with a
+blank state line. That was a deliberate, honest fallback — a wrong guess is
+worse than nothing — but it capped the product at four states.
+
+**What was added:**
+
+- `app/services/state_tax/table_engine.py` — `TableDrivenStateEngine`, one
+  implementation of the shape almost every state shares: annualize the
+  period's taxable wages, subtract a standard deduction and exemption
+  allowance, apply a flat rate or walk a progressive bracket schedule, divide
+  back down to the period. State-specific disability / paid-leave premiums
+  are applied against their own wage bases. Tables are validated at load —
+  a malformed one raises `StateTaxTableError` at startup or in tests, never
+  partway through a pay run.
+
+- `app/services/state_tax/tables/*.json` — 47 tables covering every state
+  without a dedicated engine, plus DC. Rates, bracket edges, deductions,
+  exemptions, SUTA wage bases and premium definitions all live here as
+  reviewable data rather than constants buried in Python. Each table carries
+  its own provenance: `tax_year`, a `source` URL pointing at the state's
+  published withholding guide, and a `verified` flag.
+
+- Dedicated engines still win. WA (per-hour L&I by risk class) and OR
+  (transit taxes) have rules the generic shape cannot express, so the
+  registry checks `_DEDICATED` before the tables.
+
+**Verification status — every table ships `"verified": false`.** The figures
+approximate the published 2026 schedules and are in the right neighbourhood,
+but nobody has checked them against the source. Bracket edges, deductions and
+wage bases change annually. `python -m app.services.state_tax.table_engine`
+prints coverage and verification status so the unchecked states stay visible.
+`PAYROLL_STRICT_TAX_TABLES=1` makes an unverified table withhold nothing and
+label the omission on the stub, for operators who would rather fail loud than
+withhold an unreviewed amount.
+
+**Per-state SUTA.** A single global `SUTA_RATE` was applied in every state,
+which is wrong the moment you hire outside your home state — wage bases alone
+range from $7,000 (FL, AR) to $72,800 (WA). Rate resolution is now, most
+specific first: an explicit per-run rate → `SUTA_RATE_BY_STATE`
+(`"WA:0.0121,OR:0.024"`) → `SUTA_RATE` when the stub is in `EMPLOYER_STATE` →
+the state's published new-employer rate → `SUTA_RATE`. Step three matters: an
+operator who set `SUTA_RATE` meant it for their home state, and a published
+new-employer rate must not silently override the real experience rate they
+entered. The wage base always follows the work state; reciprocity moves
+income tax to the residence state but never unemployment tax.
+
+**Known simplification:** `exemption_allowance` is a per-status annual amount
+assuming one allowance. States computing exemptions from allowances claimed
+on a state W-4 need an `Employee.state_allowances` column, which does not
+exist yet — so those employees are over-withheld slightly. Tracked in
+`docs/todo.md`.
+
+- `tests/test_state_tax_tables.py` — 48 tests. Structural coverage (every
+  jurisdiction resolves to a real engine, tables validate, malformed input
+  rejected) plus hand-derived arithmetic for a flat state (IL), a bracket
+  state (VA) and a premium state (NJ), and the full SUTA resolution order.
+- `docs/state-tax-tables.md` — schema reference and the verification workflow.
+
+452 → 500 tests.
+
 ### AP void — `POST /api/bill-payments/{id}/void`
 
 The customer-payment void (`POST /api/payments/{id}/void`) had no AP mirror.

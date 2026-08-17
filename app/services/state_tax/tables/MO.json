@@ -1,0 +1,60 @@
+{
+  "state": "MO",
+  "name": "Missouri",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://dor.mo.gov/taxation/business/tax-types/withholding/",
+  "notes": "Approximate figures pending review against the source above. Bracket edges, deduction and exemption amounts, and the SUTA wage base all change annually \u2014 confirm before running live payroll in this state.",
+  "income_tax": {
+    "method": "brackets",
+    "brackets": {
+      "single": [
+        [
+          "0",
+          "0"
+        ],
+        [
+          "1273",
+          "0.02"
+        ],
+        [
+          "2546",
+          "0.025"
+        ],
+        [
+          "3819",
+          "0.03"
+        ],
+        [
+          "5092",
+          "0.035"
+        ],
+        [
+          "6365",
+          "0.04"
+        ],
+        [
+          "7638",
+          "0.045"
+        ],
+        [
+          "8911",
+          "0.047"
+        ]
+      ]
+    },
+    "supplemental_rate": "0.047",
+    "standard_deduction": {
+      "single": "14600",
+      "married": "29200",
+      "head_of_household": "21900"
+    },
+    "exemption_allowance": {}
+  },
+  "suta": {
+    "wage_base": "9500",
+    "default_rate": "0.0251"
+  },
+  "employee_other": [],
+  "employer_other": []
+}

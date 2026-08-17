@@ -1,0 +1,25 @@
+{
+  "state": "LA",
+  "name": "Louisiana",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://revenue.louisiana.gov/WithholdingTax",
+  "notes": "Approximate figures pending review against the source above. Bracket edges, deduction and exemption amounts, and the SUTA wage base all change annually \u2014 confirm before running live payroll in this state.",
+  "income_tax": {
+    "method": "flat",
+    "rate": "0.03",
+    "supplemental_rate": "0.03",
+    "standard_deduction": {
+      "single": "12500",
+      "married": "25000",
+      "head_of_household": "12500"
+    },
+    "exemption_allowance": {}
+  },
+  "suta": {
+    "wage_base": "7700",
+    "default_rate": "0.0209"
+  },
+  "employee_other": [],
+  "employer_other": []
+}

@@ -1,0 +1,17 @@
+{
+  "state": "NV",
+  "name": "Nevada",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://ui.nv.gov/",
+  "notes": "No state income tax on wages. The SUTA wage base still changes annually \u2014 confirm before running live payroll in this state.",
+  "income_tax": {
+    "method": "none"
+  },
+  "suta": {
+    "wage_base": "41800",
+    "default_rate": "0.0295"
+  },
+  "employee_other": [],
+  "employer_other": []
+}

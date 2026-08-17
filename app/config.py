@@ -85,4 +85,48 @@ PAYROLL_ENCRYPTION_SECRET = os.getenv(
 EMPLOYER_EIN = os.getenv("EMPLOYER_EIN", "")
 EMPLOYER_STATE = os.getenv("EMPLOYER_STATE", "WA")
 # State unemployment (SUTA) experience rate as a decimal, e.g. 0.012 for 1.2%.
+# This is the rate for the employer's home state (EMPLOYER_STATE above).
 SUTA_RATE = float(os.getenv("SUTA_RATE", "0.012"))
+
+
+def _parse_state_rates(raw: str) -> dict:
+    """Parse a "WA:0.012,OR:0.021" rate list into {state: rate}.
+
+    Malformed pairs are skipped rather than raising: a typo in an environment
+    variable should not stop the application from booting, and the per-state
+    resolver already falls back to the state's new-employer rate.
+    """
+    rates: dict[str, float] = {}
+    for pair in (raw or "").split(","):
+        pair = pair.strip()
+        if not pair or ":" not in pair:
+            continue
+        state, _, value = pair.partition(":")
+        state = state.strip().upper()
+        if len(state) != 2:
+            continue
+        try:
+            rates[state] = float(value.strip())
+        except ValueError:
+            continue
+    return rates
+
+
+# Per-state SUTA experience rates for multi-state employers, as a
+# comma-separated "ST:rate" list — e.g. SUTA_RATE_BY_STATE="WA:0.0121,OR:0.024".
+# States assign each employer its own experience rate, so applying one rate
+# across every state (which a single SUTA_RATE does) is wrong the moment you
+# hire outside your home state. Unlisted states fall back to the state's
+# new-employer rate from its tax table, then to SUTA_RATE.
+SUTA_RATE_BY_STATE = _parse_state_rates(os.getenv("SUTA_RATE_BY_STATE", ""))
+
+# When true, a state tax table whose `verified` flag is still false withholds
+# NO state income tax and labels the omission on the pay stub, instead of
+# withholding an amount nobody has reviewed. Off by default — an approximate
+# withholding is usually closer than zero — but operators running live payroll
+# may prefer to fail loud. See app/services/state_tax/table_engine.py.
+PAYROLL_STRICT_TAX_TABLES = os.getenv("PAYROLL_STRICT_TAX_TABLES", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)

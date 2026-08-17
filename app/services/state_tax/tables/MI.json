@@ -1,0 +1,25 @@
+{
+  "state": "MI",
+  "name": "Michigan",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://www.michigan.gov/taxes/business-taxes/withholding",
+  "notes": "Approximate figures pending review against the source above. Bracket edges, deduction and exemption amounts, and the SUTA wage base all change annually \u2014 confirm before running live payroll in this state.",
+  "income_tax": {
+    "method": "flat",
+    "rate": "0.0425",
+    "supplemental_rate": "0.0425",
+    "standard_deduction": {},
+    "exemption_allowance": {
+      "single": "5800",
+      "married": "11600",
+      "head_of_household": "5800"
+    }
+  },
+  "suta": {
+    "wage_base": "9500",
+    "default_rate": "0.027"
+  },
+  "employee_other": [],
+  "employer_other": []
+}

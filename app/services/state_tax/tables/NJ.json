@@ -1,0 +1,101 @@
+{
+  "state": "NJ",
+  "name": "New Jersey",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://www.nj.gov/treasury/taxation/businesses/payroll/",
+  "notes": "Approximate figures pending review against the source above. Bracket edges, deduction and exemption amounts, and the SUTA wage base all change annually \u2014 confirm before running live payroll in this state.",
+  "income_tax": {
+    "method": "brackets",
+    "brackets": {
+      "single": [
+        [
+          "0",
+          "0.014"
+        ],
+        [
+          "20000",
+          "0.0175"
+        ],
+        [
+          "35000",
+          "0.035"
+        ],
+        [
+          "40000",
+          "0.05525"
+        ],
+        [
+          "75000",
+          "0.0637"
+        ],
+        [
+          "500000",
+          "0.0897"
+        ],
+        [
+          "1000000",
+          "0.1075"
+        ]
+      ],
+      "married": [
+        [
+          "0",
+          "0.014"
+        ],
+        [
+          "20000",
+          "0.0175"
+        ],
+        [
+          "50000",
+          "0.0245"
+        ],
+        [
+          "70000",
+          "0.035"
+        ],
+        [
+          "80000",
+          "0.05525"
+        ],
+        [
+          "150000",
+          "0.0637"
+        ],
+        [
+          "500000",
+          "0.0897"
+        ],
+        [
+          "1000000",
+          "0.1075"
+        ]
+      ]
+    },
+    "supplemental_rate": "0.0637",
+    "standard_deduction": {},
+    "exemption_allowance": {
+      "single": "1000",
+      "married": "2000",
+      "head_of_household": "1000"
+    }
+  },
+  "suta": {
+    "wage_base": "43300",
+    "default_rate": "0.028"
+  },
+  "employee_other": [
+    {
+      "label": "NJ SDI",
+      "rate": "0.0023",
+      "wage_base": "165400"
+    },
+    {
+      "label": "NJ FLI",
+      "rate": "0.0009",
+      "wage_base": "165400"
+    }
+  ],
+  "employer_other": []
+}

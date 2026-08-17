@@ -1,0 +1,48 @@
+{
+  "state": "WV",
+  "name": "West Virginia",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://tax.wv.gov/Business/Withholding/",
+  "notes": "Approximate figures pending review against the source above. Bracket edges, deduction and exemption amounts, and the SUTA wage base all change annually \u2014 confirm before running live payroll in this state.",
+  "income_tax": {
+    "method": "brackets",
+    "brackets": {
+      "single": [
+        [
+          "0",
+          "0.0222"
+        ],
+        [
+          "10000",
+          "0.0296"
+        ],
+        [
+          "25000",
+          "0.0333"
+        ],
+        [
+          "40000",
+          "0.0444"
+        ],
+        [
+          "60000",
+          "0.0482"
+        ]
+      ]
+    },
+    "supplemental_rate": "0.0482",
+    "standard_deduction": {},
+    "exemption_allowance": {
+      "single": "2000",
+      "married": "4000",
+      "head_of_household": "2000"
+    }
+  },
+  "suta": {
+    "wage_base": "9500",
+    "default_rate": "0.027"
+  },
+  "employee_other": [],
+  "employer_other": []
+}
