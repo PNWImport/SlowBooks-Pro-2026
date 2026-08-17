@@ -139,8 +139,14 @@ operator submits themselves.
   `GET /api/hr/pto-calendar?start=&end=` (overlap semantics, pending
   flagged), and `/api/hr/reviews` (draft → submitted → acknowledged,
   draft-only edits, 1-5 rating). SPA pages pending.
-- **Payroll report library** — journal, workers' comp, deduction register,
-  contractor payments, department and job-cost allocation.
+- ~~**Payroll report library**~~ — DONE: payroll journal
+  (`GET /api/reports/payroll-journal?start=&end=`, per-stub columns +
+  window totals + GL transaction ids), deduction register
+  (`/deduction-register?year=`), contractor payments by path
+  (`/contractor-payments?year=`). Workers' comp, liability calendar,
+  SUI, and the remittance register live at their own endpoints.
+  Follow-up: department / job-cost allocation needs a department
+  dimension the app doesn't have.
 
 ---
 

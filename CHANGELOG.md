@@ -7,6 +7,23 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Payroll report library
+
+The reporting surface over what the payroll features write.
+`GET /api/reports/payroll-journal?start=&end=` — every processed run
+itemized per employee (gross, each employee-side tax, deductions,
+garnishments, net, employer-side taxes) with window totals that foot
+and each run's GL transaction id for reconciliation.
+`/deduction-register?year=` — per-employee pre/post-tax + garnishment
+totals, the view for reconciling benefit invoices and 401(k)
+remittances. `/contractor-payments?year=` — per-vendor totals split by
+payment path (AP vs contractor runs), the same split the 1099 sums.
+Sibling reports (workers'-comp premium, liability calendar, SUI,
+garnishment remittance register) live at their own endpoints and are
+not duplicated. Department/job-cost allocation needs a department
+dimension the app doesn't have — tracked in docs/todo.md. 3 new tests
+(673 -> 676).
+
 ### Org chart, team PTO calendar, performance reviews
 
 Three HR views on data that mostly already existed. `GET
