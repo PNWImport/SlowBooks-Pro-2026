@@ -569,6 +569,39 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
         )
         run.transaction_id = txn.id
 
+    # Garnishment remittance rows: every withheld garnishment dollar now
+    # owes somebody a payment. Stub detail_json carries per-order amounts
+    # as "garnishment:{type}:{order_id}" keys.
+    from app.models.deductions import GarnishmentRemittance
+
+    for s in run.stubs:
+        if not s.detail_json:
+            continue
+        try:
+            detail = json.loads(s.detail_json)
+        except ValueError:
+            continue
+        for key, value in detail.items():
+            if not key.startswith("garnishment:"):
+                continue
+            parts = key.split(":")
+            try:
+                order_id = int(parts[2])
+                amount = Decimal(str(value))
+            except (IndexError, ValueError, ArithmeticError):
+                continue
+            if amount <= 0:
+                continue
+            db.add(
+                GarnishmentRemittance(
+                    order_id=order_id,
+                    pay_run_id=run.id,
+                    employee_id=s.employee_id,
+                    amount=amount,
+                    withheld_date=run.pay_date,
+                )
+            )
+
     run.status = PayRunStatus.PROCESSED
     db.commit()
     return {

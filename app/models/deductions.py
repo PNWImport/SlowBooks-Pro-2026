@@ -12,6 +12,7 @@ from sqlalchemy import (
     String,
     Numeric,
     DateTime,
+    Date,
     Enum,
     Boolean,
     ForeignKey,
@@ -107,6 +108,12 @@ class GarnishmentOrder(Base):
 
     priority = Column(Integer, default=0)
     case_number = Column(String(80), nullable=True)
+    # Remittance target: who the withheld money is actually owed to. A
+    # garnishment without an agency can still be withheld, but its
+    # remittance rows will nag until the payee is filled in.
+    agency_name = Column(String(200), nullable=True)
+    agency_address = Column(String(300), nullable=True)
+    remit_reference = Column(String(80), nullable=True)  # payee's case/remit id
     # Child-support CCPA modifiers.
     supports_secondary_family = Column(Boolean, default=False)
     in_arrears_12_weeks = Column(Boolean, default=False)
@@ -114,4 +121,32 @@ class GarnishmentOrder(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    employee = relationship("Employee")
+
+
+class GarnishmentRemittance(Base):
+    """One order's withholding from one processed pay run — money that must
+    now be forwarded to the agency. Created automatically when a pay run
+    processes; the operator marks rows remitted with a payment reference
+    once the check/ACH actually goes out. The register endpoint lists what
+    is still owed, so withheld-but-never-forwarded money — the classic
+    small-employer garnishment failure — stays visible."""
+
+    __tablename__ = "garnishment_remittances"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(
+        Integer, ForeignKey("garnishment_orders.id"), nullable=False, index=True
+    )
+    pay_run_id = Column(Integer, ForeignKey("pay_runs.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
+    amount = Column(Numeric(12, 2), nullable=False, default=0)
+    withheld_date = Column(Date, nullable=False)
+
+    remitted_at = Column(DateTime(timezone=True), nullable=True)
+    remit_payment_reference = Column(String(120), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    order = relationship("GarnishmentOrder")
     employee = relationship("Employee")

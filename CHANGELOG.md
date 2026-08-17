@@ -7,6 +7,21 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Garnishment remittance — the withheld money now owes someone a payment
+
+Garnishments were calculated and withheld, then the money vanished into
+"Other payroll deductions payable" with no record of who it was owed to
+— the classic small-employer garnishment failure. Now: orders carry the
+agency payee (agency_name/address, remit_reference); every processed
+pay run writes a `garnishment_remittances` row per order (parsed from
+the stub's per-order detail, so the amount is exactly what was
+withheld, CCPA-limited percent orders included); the register at
+`GET /api/deductions/garnishments/remittances` shows pending totals and
+nags rows whose order has no agency on file; mark-remitted records the
+outgoing payment reference and is double-remit-proof. Draft runs create
+nothing. e-IWO / NACHA CCD+ child-support addenda remain follow-ups.
+Migration e5f6a7b8c9d1. 8 new tests (624 -> 632).
+
 ### Termination workflow — final-paycheck deadlines + PTO payout
 
 `POST /api/employees/{id}/terminate` answers the two questions every

@@ -52,6 +52,9 @@ class GarnishmentOrderCreate(BaseModel):
     amount: float = 0
     priority: int = 0
     case_number: Optional[str] = None
+    agency_name: Optional[str] = None
+    agency_address: Optional[str] = None
+    remit_reference: Optional[str] = None
     supports_secondary_family: bool = False
     in_arrears_12_weeks: bool = False
 
@@ -64,6 +67,9 @@ class GarnishmentOrderResponse(BaseModel):
     amount: float = 0
     priority: int = 0
     case_number: Optional[str] = None
+    agency_name: Optional[str] = None
+    agency_address: Optional[str] = None
+    remit_reference: Optional[str] = None
     supports_secondary_family: bool = False
     in_arrears_12_weeks: bool = False
     is_active: bool = True

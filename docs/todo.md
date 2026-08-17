@@ -102,8 +102,11 @@ operator submits themselves.
   run, deductions deactivated, portal token revoked. Rules are
   approximate — verify against the state labor department. Sick payout
   is opt-in.
-- **Garnishment remittance** — withholding is calculated but never remitted;
-  needs agency payees, a remittance register, and e-IWO output.
+- ~~**Garnishment remittance**~~ — DONE: agency payee fields on orders,
+  auto-created `garnishment_remittances` rows at pay-run processing, the
+  pending register (`GET /api/deductions/garnishments/remittances`) with
+  agency-missing nagging, and mark-remitted with a payment reference.
+  Follow-ups: child-support e-IWO / NACHA CCD+ addenda output; SPA page.
 - **Tipped wages** — tip credit, reported vs allocated tips, 8846, 8027.
 - **Multi-location** — locations as records with their own tax jurisdiction.
 - **Benefits records** — plans, enrollment, eligibility, ACA 1095-B/C + 1094,
