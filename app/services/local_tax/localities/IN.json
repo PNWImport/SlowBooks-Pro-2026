@@ -1,0 +1,49 @@
+{
+  "state": "IN",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://www.in.gov/dor/business-tax/county-tax-information/",
+  "notes": "Approximate figures pending review against the source above. Local rates change frequently \u2014 PA EIT rates are set per municipality pair, OH school districts vote on levies \u2014 so confirm with the collector before running live payroll for this locality. Indiana county of residence is fixed as of January 1 for the whole year.",
+  "localities": [
+    {
+      "code": "IN-MARION",
+      "name": "Marion County",
+      "state": "IN",
+      "kind": "percent",
+      "basis": "residence",
+      "resident_rate": "0.0202"
+    },
+    {
+      "code": "IN-ALLEN",
+      "name": "Allen County",
+      "state": "IN",
+      "kind": "percent",
+      "basis": "residence",
+      "resident_rate": "0.0148"
+    },
+    {
+      "code": "IN-HAMILTON",
+      "name": "Hamilton County",
+      "state": "IN",
+      "kind": "percent",
+      "basis": "residence",
+      "resident_rate": "0.011"
+    },
+    {
+      "code": "IN-LAKE",
+      "name": "Lake County",
+      "state": "IN",
+      "kind": "percent",
+      "basis": "residence",
+      "resident_rate": "0.015"
+    },
+    {
+      "code": "IN-ST-JOSEPH",
+      "name": "St. Joseph County",
+      "state": "IN",
+      "kind": "percent",
+      "basis": "residence",
+      "resident_rate": "0.0175"
+    }
+  ]
+}

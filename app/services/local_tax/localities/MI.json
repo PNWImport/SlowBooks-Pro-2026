@@ -1,0 +1,45 @@
+{
+  "state": "MI",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://www.michigan.gov/taxes/citytax",
+  "notes": "Approximate figures pending review against the source above. Local rates change frequently \u2014 PA EIT rates are set per municipality pair, OH school districts vote on levies \u2014 so confirm with the collector before running live payroll for this locality. Residence-city credit is simplified to the full work-city amount; Michigan caps the credit at the residence city's nonresident rate, so this under-withholds slightly.",
+  "localities": [
+    {
+      "code": "MI-DETROIT",
+      "name": "Detroit",
+      "state": "MI",
+      "kind": "percent",
+      "basis": "work_or_residence",
+      "resident_rate": "0.024",
+      "nonresident_rate": "0.012"
+    },
+    {
+      "code": "MI-GRAND-RAPIDS",
+      "name": "Grand Rapids",
+      "state": "MI",
+      "kind": "percent",
+      "basis": "work_or_residence",
+      "resident_rate": "0.015",
+      "nonresident_rate": "0.0075"
+    },
+    {
+      "code": "MI-LANSING",
+      "name": "Lansing",
+      "state": "MI",
+      "kind": "percent",
+      "basis": "work_or_residence",
+      "resident_rate": "0.01",
+      "nonresident_rate": "0.005"
+    },
+    {
+      "code": "MI-FLINT",
+      "name": "Flint",
+      "state": "MI",
+      "kind": "percent",
+      "basis": "work_or_residence",
+      "resident_rate": "0.01",
+      "nonresident_rate": "0.005"
+    }
+  ]
+}

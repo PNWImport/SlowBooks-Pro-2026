@@ -108,8 +108,18 @@
                 <div class="box-val">{{ data.box17_state_income_tax | currency }}</div>
             </td>
             <td>
-                <div class="box-num">&nbsp;</div>
-                <div class="box-val">&nbsp;</div>
+                <div class="box-num">Box 18 &mdash; Local wages, tips, etc.</div>
+                <div class="box-val">{{ data.box18_local_wages | currency }}</div>
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <div class="box-num">Box 19 &mdash; Local income tax</div>
+                <div class="box-val">{{ data.box19_local_income_tax | currency }}</div>
+            </td>
+            <td>
+                <div class="box-num">Box 20 &mdash; Locality name</div>
+                <div class="box-val">{{ data.box20_locality_name or '' }}</div>
             </td>
         </tr>
     </table>

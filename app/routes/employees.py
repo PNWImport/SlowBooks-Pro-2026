@@ -270,6 +270,7 @@ def get_employee_ytd(
         federal=float(totals["federal"]),
         state=float(totals["state"]),
         state_other=float(totals["state_other"]),
+        local=float(totals["local"]),
         ss=float(totals["ss"]),
         medicare=float(totals["medicare"]),
         pretax_deductions=float(totals["pretax_deductions"]),

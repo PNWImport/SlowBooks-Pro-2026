@@ -27,6 +27,8 @@ class EmployeeCreate(BaseModel):
     zip: Optional[str] = None
     work_state: Optional[str] = None
     residence_state: Optional[str] = None
+    work_locality: Optional[str] = None
+    residence_locality: Optional[str] = None
     wc_class_code: Optional[str] = None
     email: Optional[str] = None
     role: str = "employee"
@@ -55,6 +57,8 @@ class EmployeeUpdate(BaseModel):
     zip: Optional[str] = None
     work_state: Optional[str] = None
     residence_state: Optional[str] = None
+    work_locality: Optional[str] = None
+    residence_locality: Optional[str] = None
     wc_class_code: Optional[str] = None
     email: Optional[str] = None
     role: Optional[str] = None
@@ -85,6 +89,8 @@ class EmployeeResponse(BaseModel):
     zip: Optional[str] = None
     work_state: Optional[str] = None
     residence_state: Optional[str] = None
+    work_locality: Optional[str] = None
+    residence_locality: Optional[str] = None
     wc_class_code: Optional[str] = None
     email: Optional[str] = None
     role: str = "employee"
@@ -112,6 +118,7 @@ class PayStubInput(BaseModel):
     supplemental: bool = False  # treat as supplemental wages (bonus/off-cycle)
     supplemental_method: str = "flat"  # "flat" 22% or "aggregate"
     work_state: Optional[str] = None  # per-stub work location (multi-state)
+    work_locality: Optional[str] = None  # per-stub local jurisdiction
     use_time_entries: bool = (
         False  # pull approved time entries for the period instead of `hours`
     )
@@ -168,6 +175,9 @@ class PayStubResponse(BaseModel):
     reimbursements: float = 0
     net_pay: float = 0
     work_state: Optional[str] = None
+    work_locality: Optional[str] = None
+    local_tax: float = 0
+    local_tax_employer: float = 0
     employer_ss_tax: float = 0
     employer_medicare_tax: float = 0
     futa_tax: float = 0
@@ -201,6 +211,7 @@ class YTDResponse(BaseModel):
     federal: float = 0
     state: float = 0
     state_other: float = 0
+    local: float = 0
     ss: float = 0
     medicare: float = 0
     pretax_deductions: float = 0

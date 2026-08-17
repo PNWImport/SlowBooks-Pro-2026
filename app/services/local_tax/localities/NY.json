@@ -1,0 +1,81 @@
+{
+  "state": "NY",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://www.tax.ny.gov/pdf/publications/withholding/nys50_t_nyc.pdf",
+  "notes": "Approximate figures pending review against the source above. Local rates change frequently \u2014 PA EIT rates are set per municipality pair, OH school districts vote on levies \u2014 so confirm with the collector before running live payroll for this locality.",
+  "localities": [
+    {
+      "code": "NY-NYC",
+      "name": "New York City",
+      "state": "NY",
+      "kind": "brackets",
+      "basis": "residence",
+      "brackets": {
+        "single": [
+          [
+            "0",
+            "0.03078"
+          ],
+          [
+            "12000",
+            "0.03762"
+          ],
+          [
+            "25000",
+            "0.03819"
+          ],
+          [
+            "50000",
+            "0.03876"
+          ]
+        ],
+        "married": [
+          [
+            "0",
+            "0.03078"
+          ],
+          [
+            "21600",
+            "0.03762"
+          ],
+          [
+            "45000",
+            "0.03819"
+          ],
+          [
+            "90000",
+            "0.03876"
+          ]
+        ],
+        "head_of_household": [
+          [
+            "0",
+            "0.03078"
+          ],
+          [
+            "14400",
+            "0.03762"
+          ],
+          [
+            "30000",
+            "0.03819"
+          ],
+          [
+            "60000",
+            "0.03876"
+          ]
+        ]
+      }
+    },
+    {
+      "code": "NY-YONKERS",
+      "name": "Yonkers",
+      "state": "NY",
+      "kind": "percent_of_state_tax",
+      "basis": "residence",
+      "resident_rate": "0.1675",
+      "nonresident_rate": "0.005"
+    }
+  ]
+}

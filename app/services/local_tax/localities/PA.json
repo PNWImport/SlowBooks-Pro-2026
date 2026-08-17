@@ -1,0 +1,58 @@
+{
+  "state": "PA",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://dced.pa.gov/local-government/local-income-tax-information/",
+  "notes": "Approximate figures pending review against the source above. Local rates change frequently \u2014 PA EIT rates are set per municipality pair, OH school districts vote on levies \u2014 so confirm with the collector before running live payroll for this locality.",
+  "localities": [
+    {
+      "code": "PA-PHILADELPHIA",
+      "name": "Philadelphia",
+      "state": "PA",
+      "kind": "percent",
+      "basis": "work",
+      "resident_rate": "0.0375",
+      "nonresident_rate": "0.0344"
+    },
+    {
+      "code": "PA-PITTSBURGH",
+      "name": "Pittsburgh",
+      "state": "PA",
+      "kind": "percent",
+      "basis": "higher_of",
+      "resident_rate": "0.03",
+      "nonresident_rate": "0.01",
+      "lst_per_year": "52"
+    },
+    {
+      "code": "PA-SCRANTON",
+      "name": "Scranton",
+      "state": "PA",
+      "kind": "percent",
+      "basis": "higher_of",
+      "resident_rate": "0.034",
+      "nonresident_rate": "0.01",
+      "lst_per_year": "156"
+    },
+    {
+      "code": "PA-ALLENTOWN",
+      "name": "Allentown",
+      "state": "PA",
+      "kind": "percent",
+      "basis": "higher_of",
+      "resident_rate": "0.0135",
+      "nonresident_rate": "0.01",
+      "lst_per_year": "52"
+    },
+    {
+      "code": "PA-GENERIC-1PCT",
+      "name": "PA municipality (1% EIT)",
+      "state": "PA",
+      "kind": "percent",
+      "basis": "higher_of",
+      "resident_rate": "0.01",
+      "nonresident_rate": "0.01",
+      "lst_per_year": "52"
+    }
+  ]
+}

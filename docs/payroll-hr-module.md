@@ -19,8 +19,9 @@ what's in each tier, where each piece lives, and what's still pending.
 | **PTO year-end carryover** | Batch endpoint applies policy carryover caps + resets YTD | ✅ | n/a | ✅ |
 | **Time-entry → pay-run auto-population** | Pay-run form checkbox pulls approved unpaid hours | ✅ | ✅ | ✅ |
 | **50-state withholding** | Table-driven engine + per-state SUTA rates/wage bases | ✅ | n/a | ✅ |
+| **Local/municipal taxes** | PA EIT+LST, OH muni+SD, NYC/Yonkers, MD/IN county, KY, MI | ✅ | n/a | ✅ |
 
-500 tests pass across the full suite.
+536 tests pass across the full suite.
 
 State coverage went from 4 states (WA/CA/NY/OR, hand-written) to all 50 plus
 DC. The other 47 are driven by reviewable JSON tables — see

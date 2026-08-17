@@ -57,9 +57,14 @@ operator submits themselves.
   - **Verify the tables** — all 47 ship `"verified": false`
   - **State W-4 allowances** — needs an `Employee.state_allowances` column;
     `exemption_allowance` currently assumes one allowance
-- **Local / municipal tax layer** — PA EIT, OH municipal + school district,
-  NYC/Yonkers, MD county, IN county, KY, MI cities. Same table approach;
-  needs local tax columns on `PayStub`.
+- ~~**Local / municipal tax layer**~~ — DONE: `app/services/local_tax/`
+  with 32 seeded localities across PA/OH/NY/MD/IN/KY/MI, W-2 boxes 18-20,
+  JE + garnishment integration. See `docs/local-taxes.md`. Follow-ups:
+  - **Verify the locality files** — all ship `"verified": false`
+  - **Per-locality W-2 row split** — box 20 currently joins multiple
+    localities into one line
+  - **MI residence credit cap** + **LST low-income exemption** — documented
+    simplifications
 - **State unemployment filings (SUI)** — `app/services/tax_forms/state_sui.py`
   has scaffolding; needs per-state form rendering + an endpoint.
 - **EFW2 / 1099 transmittal files** — fixed-width SSA and IRS formats, for

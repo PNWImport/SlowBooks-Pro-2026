@@ -51,7 +51,9 @@ def _employee_box_totals(stubs: list[PayStub]) -> dict:
     ss_tax = Decimal("0")
     medicare_tax = Decimal("0")
     state_tax = Decimal("0")
+    local_tax = Decimal("0")
     medicare_wages = Decimal("0")
+    localities = set()
 
     for s in stubs:
         gross += Decimal(str(s.gross_pay or 0))
@@ -60,7 +62,10 @@ def _employee_box_totals(stubs: list[PayStub]) -> dict:
         ss_tax += Decimal(str(s.ss_tax or 0))
         medicare_tax += Decimal(str(s.medicare_tax or 0))
         state_tax += Decimal(str(s.state_tax or 0))
+        local_tax += Decimal(str(s.local_tax or 0))
         medicare_wages += Decimal(str(s.gross_pay or 0))
+        if s.work_locality:
+            localities.add(s.work_locality)
 
     # Box 1 — federal wages are gross less pre-tax deductions.
     box1 = gross - pretax
@@ -78,6 +83,12 @@ def _employee_box_totals(stubs: list[PayStub]) -> dict:
         "box6_medicare_tax_withheld": _q(medicare_tax),
         "box16_state_wages": _q(box1),
         "box17_state_income_tax": _q(state_tax),
+        # Boxes 18-20 — local wages piggyback on the income-tax wage base.
+        # Multiple localities in one year are joined; a per-locality split
+        # (real W-2s print one row per locality) is future work.
+        "box18_local_wages": _q(box1) if local_tax else Decimal("0.00"),
+        "box19_local_income_tax": _q(local_tax),
+        "box20_locality_name": ", ".join(sorted(localities)),
         "gross_pay": _q(gross),
         "pretax_deductions": _q(pretax),
     }
@@ -134,6 +145,8 @@ def compute_w3(db, year: int) -> dict:
         "box6_medicare_tax_withheld": Decimal("0"),
         "box16_state_wages": Decimal("0"),
         "box17_state_income_tax": Decimal("0"),
+        "box18_local_wages": Decimal("0"),
+        "box19_local_income_tax": Decimal("0"),
     }
     for w2 in w2s:
         for key in totals:

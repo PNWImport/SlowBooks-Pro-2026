@@ -90,6 +90,7 @@ def employee_ytd(db: Session, employee_id: int, year: int, before: date = None) 
         "federal": Decimal("0"),
         "state": Decimal("0"),
         "state_other": Decimal("0"),
+        "local": Decimal("0"),
         "ss": Decimal("0"),
         "medicare": Decimal("0"),
         "pretax_deductions": Decimal("0"),
@@ -100,6 +101,7 @@ def employee_ytd(db: Session, employee_id: int, year: int, before: date = None) 
         totals["federal"] += s.federal_tax or 0
         totals["state"] += s.state_tax or 0
         totals["state_other"] += s.state_other_employee or 0
+        totals["local"] += s.local_tax or 0
         totals["ss"] += s.ss_tax or 0
         totals["medicare"] += s.medicare_tax or 0
         totals["pretax_deductions"] += s.pretax_deductions or 0
@@ -305,6 +307,9 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
         # state's income tax is actually withheld.
         work_state = (stub_input.work_state or emp.work_state or "WA").upper()
         wh_state = withholding_state(work_state, emp.residence_state)
+        # Local jurisdiction: per-stub override, falling back to the
+        # employee's configured work locality.
+        work_locality = stub_input.work_locality or emp.work_locality
 
         regular_wages = Decimal("0")
         if stub_input.supplemental and stub_input.supplemental_method == "aggregate":
@@ -324,6 +329,8 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             ytd_gross=ytd["gross"],
             work_state=work_state,
             withholding_state=wh_state,
+            work_locality=work_locality,
+            residence_locality=emp.residence_locality,
             wc_class_code=emp.wc_class_code,
             hours=total_hours,
             pretax_deductions=pretax,
@@ -370,6 +377,9 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             garnishments=garnish_total,
             reimbursements=reimbursements,
             work_state=work_state,
+            work_locality=work_locality,
+            local_tax=result["local_tax"],
+            local_tax_employer=result["local_tax_employer"],
             net_pay=net,
             employer_ss_tax=result["employer_ss"],
             employer_medicare_tax=result["employer_medicare"],
@@ -470,12 +480,14 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
         + _s("posttax_deductions")
         + _s("garnishments")
     )
+    total_local = _s("local_tax") + _s("local_tax_employer")
     total_employer = (
         _s("employer_ss_tax")
         + _s("employer_medicare_tax")
         + total_futa
         + total_suta
         + _s("state_other_employer")
+        + _s("local_tax_employer")
     )
     total_reimb = _s("reimbursements")
     total_net = _s("net_pay")
@@ -517,6 +529,7 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
         (total_futa, futa_acct, "FUTA payable"),
         (total_suta, suta_acct, "SUTA payable"),
         (total_other, other_acct, "Other payroll deductions payable"),
+        (total_local, other_acct, "Local tax payable"),
         (total_net, bank, "Net payroll"),
     ]:
         if amount and amount > 0 and acct:
@@ -576,6 +589,8 @@ def gross_up_paycheck(data: GrossUpRequest, db: Session = Depends(get_db)):
             ytd_gross=ytd["gross"],
             work_state=work_state,
             withholding_state=wh_state,
+            work_locality=emp.work_locality,
+            residence_locality=emp.residence_locality,
             wc_class_code=emp.wc_class_code,
             supplemental=bool(data.supplemental),
         )["net"]

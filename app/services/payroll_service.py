@@ -344,6 +344,8 @@ def calculate_withholdings(
     ytd_gross=Decimal("0"),
     work_state: str = "WA",
     withholding_state: str = None,
+    work_locality: str = None,
+    residence_locality: str = None,
     wc_class_code: str = None,
     hours=Decimal("0"),
     pretax_deductions=Decimal("0"),
@@ -378,6 +380,9 @@ def calculate_withholdings(
             "medicare": zero,
             "state_income": zero,
             "state_other_employee": zero,
+            "local_tax": zero,
+            "local_tax_employer": zero,
+            "unknown_localities": [],
             "employer_ss": zero,
             "employer_medicare": zero,
             "futa": zero,
@@ -464,8 +469,29 @@ def calculate_withholdings(
     rate = resolve_suta_rate(suta_rate, work_state)
     suta_tax = suta(fica_wages, ytd, rate, engine.suta_wage_base)
 
-    total_employee = federal + state_income + state.employee_other + ss_emp + med_emp
-    total_employer = ss_empr + med_empr + futa_tax + suta_tax + state.employer_other
+    # --- Local / municipal taxes (the layer below the state) ---
+    from app.services.local_tax import calculate_local_taxes
+
+    local = calculate_local_taxes(
+        work_locality=work_locality,
+        residence_locality=residence_locality,
+        taxable=fed_taxable,
+        pay_periods=pay_periods,
+        filing_status=filing_status,
+        state_income_tax=state_income,
+    )
+
+    total_employee = (
+        federal
+        + state_income
+        + state.employee_other
+        + local.employee
+        + ss_emp
+        + med_emp
+    )
+    total_employer = (
+        ss_empr + med_empr + futa_tax + suta_tax + state.employer_other + local.employer
+    )
     net = gross - total_employee - pretax
 
     detail = {
@@ -481,6 +507,9 @@ def calculate_withholdings(
     }
     detail.update(state.detail)
     detail["state_income_tax"] = state_income
+    detail.update(local.detail)
+    if local.employee or local.employer:
+        detail["local_tax_total"] = local.employee
 
     return {
         "gross": gross,
@@ -489,6 +518,9 @@ def calculate_withholdings(
         "medicare": med_emp,
         "state_income": state_income,
         "state_other_employee": state.employee_other,
+        "local_tax": local.employee,
+        "local_tax_employer": local.employer,
+        "unknown_localities": local.unknown,
         "employer_ss": ss_empr,
         "employer_medicare": med_empr,
         "futa": futa_tax,

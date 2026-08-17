@@ -1,0 +1,34 @@
+{
+  "state": "KY",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://revenue.ky.gov/Business/Pages/Employer-Payroll-Withholding.aspx",
+  "notes": "Approximate figures pending review against the source above. Local rates change frequently \u2014 PA EIT rates are set per municipality pair, OH school districts vote on levies \u2014 so confirm with the collector before running live payroll for this locality.",
+  "localities": [
+    {
+      "code": "KY-LOUISVILLE",
+      "name": "Louisville Metro occupational tax",
+      "state": "KY",
+      "kind": "percent",
+      "basis": "work",
+      "resident_rate": "0.022",
+      "nonresident_rate": "0.0145"
+    },
+    {
+      "code": "KY-LEXINGTON",
+      "name": "Lexington-Fayette occupational tax",
+      "state": "KY",
+      "kind": "percent",
+      "basis": "work",
+      "resident_rate": "0.0225"
+    },
+    {
+      "code": "KY-COVINGTON",
+      "name": "Covington occupational tax",
+      "state": "KY",
+      "kind": "percent",
+      "basis": "work",
+      "resident_rate": "0.0245"
+    }
+  ]
+}

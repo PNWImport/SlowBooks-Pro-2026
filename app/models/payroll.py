@@ -114,6 +114,12 @@ class Employee(Base):
     # State of residence — drives reciprocity (withhold for the residence
     # state instead of the work state when an agreement exists).
     residence_state = Column(String(2), nullable=True)
+    # Local tax jurisdictions — codes into app/services/local_tax/localities/
+    # (e.g. "PA-PHILADELPHIA", "NY-NYC", "IN-MARION"). Work locality drives
+    # municipal/occupational taxes; residence locality drives county,
+    # school-district and resident-city taxes. Null = no local tax.
+    work_locality = Column(String(40), nullable=True)
+    residence_locality = Column(String(40), nullable=True)
     # Workers' comp / WA L&I risk classification code.
     wc_class_code = Column(String(20), nullable=True)
 
@@ -229,6 +235,13 @@ class PayStub(Base):
     # Work-location state for this stub (multi-state employees) — drives SUTA
     # situs and state withholding independently of the employee's home state.
     work_state = Column(String(2), nullable=True)
+    # Local jurisdiction for this stub, and the local tax it produced.
+    # local_tax is employee-side withholding (goes in W-2 box 19);
+    # local_tax_employer is employer-side levies (head taxes, employer
+    # occupational-privilege shares) — a company expense, not withheld.
+    work_locality = Column(String(40), nullable=True)
+    local_tax = Column(Numeric(12, 2), default=0)
+    local_tax_employer = Column(Numeric(12, 2), default=0)
 
     # Employer-side taxes (not withheld from the employee — company expense)
     employer_ss_tax = Column(Numeric(12, 2), default=0)

@@ -7,6 +7,33 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Local / municipal payroll tax layer
+
+The tax layer below the states: PA EIT + LST, OH municipal + school
+district, NYC/Yonkers, MD and IN county taxes, KY occupational license
+fees, MI city income taxes. Same table-driven design as the state work —
+one engine (`app/services/local_tax/engine.py`), reviewable JSON under
+`localities/` with per-file provenance and a `verified` flag (all shipping
+unverified), validation at load.
+
+Rules declare a `basis` — `work` (OH municipal, KY, Philadelphia),
+`residence` (MD/IN counties, OH school districts, NYC), `higher_of`
+(PA Act 32), `work_or_residence` (MI cities with the residence-city
+credit) — and an amount kind: `percent`, `brackets` (NYC progressive),
+or `percent_of_state_tax` (Yonkers resident surcharge; its nonresident
+wage tax rides the same rule). PA LST flat annual amounts prorate into
+level per-period installments. Residency is never assumed: an unset
+residence_locality withholds at the nonresident rate, and unknown codes
+are surfaced in `unknown_localities` rather than silently taxing $0.
+
+Plumbing: `Employee.work_locality` / `residence_locality` (+ per-stub
+override), `PayStub.local_tax` / `local_tax_employer` / `work_locality`
+(migration a1b2c3d4e5f6), W-2 boxes 18-20, payroll JE "Local tax payable"
+line, disposable-earnings interaction with garnishments, YTD `local`
+total, gross-up awareness. 36 new tests (500 -> 536). Simplifications
+(MI credit, Act 32 pairing, no LST exemption) documented in
+docs/local-taxes.md.
+
 ### 50-state payroll withholding — table-driven state engines
 
 Payroll worked in four states. WA, CA, NY and OR had hand-written engines;

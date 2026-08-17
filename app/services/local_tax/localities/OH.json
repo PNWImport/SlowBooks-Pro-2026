@@ -1,0 +1,65 @@
+{
+  "state": "OH",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://tax.ohio.gov/business/municipalities/municipalities",
+  "notes": "Approximate figures pending review against the source above. Local rates change frequently \u2014 PA EIT rates are set per municipality pair, OH school districts vote on levies \u2014 so confirm with the collector before running live payroll for this locality.",
+  "localities": [
+    {
+      "code": "OH-COLUMBUS",
+      "name": "Columbus",
+      "state": "OH",
+      "kind": "percent",
+      "basis": "work",
+      "resident_rate": "0.025"
+    },
+    {
+      "code": "OH-CLEVELAND",
+      "name": "Cleveland",
+      "state": "OH",
+      "kind": "percent",
+      "basis": "work",
+      "resident_rate": "0.025"
+    },
+    {
+      "code": "OH-CINCINNATI",
+      "name": "Cincinnati",
+      "state": "OH",
+      "kind": "percent",
+      "basis": "work",
+      "resident_rate": "0.018"
+    },
+    {
+      "code": "OH-TOLEDO",
+      "name": "Toledo",
+      "state": "OH",
+      "kind": "percent",
+      "basis": "work",
+      "resident_rate": "0.025"
+    },
+    {
+      "code": "OH-AKRON",
+      "name": "Akron",
+      "state": "OH",
+      "kind": "percent",
+      "basis": "work",
+      "resident_rate": "0.025"
+    },
+    {
+      "code": "OH-SD-BEXLEY",
+      "name": "Bexley CSD (2501) school district",
+      "state": "OH",
+      "kind": "percent",
+      "basis": "residence",
+      "resident_rate": "0.0075"
+    },
+    {
+      "code": "OH-SD-BIGWALNUT",
+      "name": "Big Walnut LSD (2101) school district",
+      "state": "OH",
+      "kind": "percent",
+      "basis": "residence",
+      "resident_rate": "0.0075"
+    }
+  ]
+}

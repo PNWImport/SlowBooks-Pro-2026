@@ -1,0 +1,57 @@
+{
+  "state": "MD",
+  "tax_year": 2026,
+  "verified": false,
+  "source": "https://www.marylandtaxes.gov/individual/income/tax-info/local-tax-rates.php",
+  "notes": "Approximate figures pending review against the source above. Local rates change frequently \u2014 PA EIT rates are set per municipality pair, OH school districts vote on levies \u2014 so confirm with the collector before running live payroll for this locality.",
+  "localities": [
+    {
+      "code": "MD-BALTIMORE-CITY",
+      "name": "Baltimore City county tax",
+      "state": "MD",
+      "kind": "percent",
+      "basis": "residence",
+      "resident_rate": "0.032"
+    },
+    {
+      "code": "MD-BALTIMORE-CO",
+      "name": "Baltimore County county tax",
+      "state": "MD",
+      "kind": "percent",
+      "basis": "residence",
+      "resident_rate": "0.032"
+    },
+    {
+      "code": "MD-MONTGOMERY",
+      "name": "Montgomery County county tax",
+      "state": "MD",
+      "kind": "percent",
+      "basis": "residence",
+      "resident_rate": "0.032"
+    },
+    {
+      "code": "MD-PRINCE-GEORGES",
+      "name": "Prince George's County county tax",
+      "state": "MD",
+      "kind": "percent",
+      "basis": "residence",
+      "resident_rate": "0.032"
+    },
+    {
+      "code": "MD-ANNE-ARUNDEL",
+      "name": "Anne Arundel County county tax",
+      "state": "MD",
+      "kind": "percent",
+      "basis": "residence",
+      "resident_rate": "0.0281"
+    },
+    {
+      "code": "MD-HOWARD",
+      "name": "Howard County county tax",
+      "state": "MD",
+      "kind": "percent",
+      "basis": "residence",
+      "resident_rate": "0.032"
+    }
+  ]
+}
