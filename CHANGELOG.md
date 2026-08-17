@@ -7,6 +7,33 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Electronic filing exports — EFW2 (SSA) + Pub 1220 (IRS 1099)
+
+Year-end forms existed as PDFs only; the electronic upload formats now
+generate in-repo (no transport — the operator uploads the files
+themselves):
+
+- `POST /api/payroll/forms/efw2/{year}` — SSA Pub 42-007 EFW2 file,
+  fixed-width 512-char RA/RE/RW/RT/RF records, unsigned zero-filled
+  cents, CRLF. Because the app deliberately stores only SSN last-4,
+  every RW ships a zero-filled SSN and a per-employee warning naming who
+  needs it filled before upload. Missing EIN is a clean 400.
+- `GET /api/tax-forms/1099/fire?year=` — IRS Pub 1220 1099-NEC file,
+  750-char T/A/B/C/F records with Payment Amount 1 (NEC) and control
+  totals. Vendors over the threshold without a 9-digit TIN are skipped
+  *and named* in warnings; a missing Transmitter Control Code is warned.
+- Both wired into the Tax Forms page (blob download; warnings surfaced
+  as a toast + console detail).
+- Fixed a pre-existing wiring bug found on the way: `compute_1099_data`
+  filtered on `Vendor.is_1099_eligible`, a column no schema or route
+  ever exposed — API-created vendors could never appear on the 1099
+  report. It now honors `is_1099_vendor` (the field the API/UI actually
+  sets) as well, and `w9_on_file` is settable through the vendor API.
+
+Layouts are best-effort transcriptions of the specs — run EFW2 output
+through SSA AccuWage and verify both against the current-year pubs
+before uploading. 12 new tests (551 -> 563).
+
 ### Quarterly SUI wage report — endpoints for the existing aggregation
 
 `compute_sui` shipped as scaffolding with the tier-3 tax forms but had no

@@ -79,9 +79,20 @@ def compute_1099_data(db: Session, year: int) -> list[dict]:
     threshold (`reportable`), and whether a W-9 is on file.
     """
     totals = _vendor_payment_totals(db, year)
+    # Two flags for historical reasons: the vendor API/UI sets
+    # is_1099_vendor; is_1099_eligible predates it and was only ever
+    # settable directly in the DB. Honor either so no configured vendor
+    # silently drops off the year-end report.
+    from sqlalchemy import or_
+
     vendors = (
         db.query(Vendor)
-        .filter(Vendor.is_1099_eligible.is_(True))
+        .filter(
+            or_(
+                Vendor.is_1099_eligible.is_(True),
+                Vendor.is_1099_vendor.is_(True),
+            )
+        )
         .order_by(Vendor.name)
         .all()
     )

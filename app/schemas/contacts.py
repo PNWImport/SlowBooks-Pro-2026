@@ -113,6 +113,7 @@ class VendorCreate(BaseModel):
     default_expense_account_id: Optional[int] = None
     is_1099_vendor: bool = False
     vendor_1099_type: Optional[str] = None
+    w9_on_file: bool = False
     notes: Optional[str] = None
 
 
@@ -135,6 +136,7 @@ class VendorUpdate(BaseModel):
     default_expense_account_id: Optional[int] = None
     is_1099_vendor: Optional[bool] = None
     vendor_1099_type: Optional[str] = None
+    w9_on_file: Optional[bool] = None
     notes: Optional[str] = None
     is_active: Optional[bool] = None
 

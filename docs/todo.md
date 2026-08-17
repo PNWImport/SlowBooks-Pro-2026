@@ -69,8 +69,13 @@ operator submits themselves.
   (audit-hashed) + JSON at `POST /api/payroll/forms/sui/{year}/{quarter}`
   with optional `?state=XX`. States accept their own layouts, so the PDF is
   a transcription source, not a filing replica.
-- **EFW2 / 1099 transmittal files** — fixed-width SSA and IRS formats, for
-  the operator to upload.
+- ~~**EFW2 / 1099 transmittal files**~~ — DONE: SSA Pub 42-007 EFW2
+  (512-char RA/RE/RW/RT/RF) at `POST /api/payroll/forms/efw2/{year}` and
+  IRS Pub 1220 1099-NEC (750-char T/A/B/C/F) at
+  `GET /api/tax-forms/1099/fire?year=`, both returning the file + a
+  warnings list. Follow-ups: SSNs are zero-filled (app stores last-4
+  only), no TCC config yet, layouts need verification against the
+  current-year specs / AccuWage.
 - **Deposit schedule + liability calendar** — IRS lookback rule (monthly vs
   semiweekly depositor), due-date calendar, $100k next-day rule.
 - **Contractor pay runs** — contractors are AP vendors today, so 1099-NEC is

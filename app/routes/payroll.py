@@ -43,6 +43,7 @@ from app.services.settings_service import get_all_settings
 from app.services.tax_forms.form_940 import compute_940, generate_940_pdf
 from app.services.tax_forms.form_941 import compute_941, generate_941_pdf
 from app.services.tax_forms.state_sui import compute_sui, generate_sui_pdf
+from app.services.tax_forms.efw2 import generate_efw2
 from app.services.tax_forms.w2_w3 import (
     compute_w2,
     compute_w3,
@@ -970,6 +971,31 @@ def generate_form_940_pdf(year: int, db: Session = Depends(get_db)):
     audit = _hash_and_audit(db, "940", f"yr{year}", company, compute_940(db, year))
     pdf = generate_940_pdf(db, year, company, audit=audit)
     return _pdf_response(pdf, f"form_940_{year}.pdf")
+
+
+@router.post("/forms/efw2/{year}")
+def generate_efw2_file(year: int, db: Session = Depends(get_db)):
+    """EFW2 electronic W-2 file (SSA Pub 42-007) for the year.
+
+    Returns the fixed-width file content plus a warnings list — the app
+    stores only SSN last-4, so every RW record ships with a zero-filled
+    SSN that must be completed before upload. Run the result through
+    SSA AccuWage before filing.
+    """
+    company = _company_for_pdf(db)
+    try:
+        content, warnings = generate_efw2(db, year, company)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return JSONResponse(
+        content={
+            "year": year,
+            "filename": f"W2REPORT_{year}.txt",
+            "record_length": 512,
+            "warnings": warnings,
+            "content": content,
+        }
+    )
 
 
 @router.post("/forms/sui/{year}/{quarter}", response_class=Response)

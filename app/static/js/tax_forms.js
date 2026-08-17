@@ -12,6 +12,28 @@ async function _openPDF(url, method = 'POST') {
     setTimeout(() => URL.revokeObjectURL(u), 15000);
 }
 
+async function _downloadEfile(url, fallbackName) {
+    const res = await fetch(url, { method: url.includes('/efw2/') ? 'POST' : 'GET', credentials: 'same-origin' });
+    if (!res.ok) {
+        let msg = 'E-file generation failed';
+        try { msg = (await res.json()).detail || msg; } catch (_) {}
+        toast(msg, 'error');
+        return;
+    }
+    const data = await res.json();
+    if (data.warnings && data.warnings.length) {
+        toast(`${data.warnings.length} warning(s) — fix before upload (see console)`, 'error');
+        for (const w of data.warnings) console.warn('e-file:', w);
+    }
+    const blob = new Blob([data.content], { type: 'text/plain' });
+    const u = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = u;
+    a.download = data.filename || fallbackName;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(u), 15000);
+}
+
 const TaxFormsPage = {
     async render() {
         const currentYear = new Date().getFullYear();
@@ -47,6 +69,7 @@ const TaxFormsPage = {
                 <div class="form-actions" style="margin-top:8px">
                     <button class="btn btn-primary" onclick="TaxFormsPage.generateW2()">Generate W-2</button>
                     <button class="btn btn-secondary" onclick="TaxFormsPage.generateW3()">Generate W-3 (All Employees)</button>
+                    <button class="btn btn-secondary" onclick="TaxFormsPage.generateEFW2()">EFW2 E-File (SSA upload)</button>
                 </div>
             </div>
 
@@ -111,6 +134,19 @@ const TaxFormsPage = {
                 </div>
             </div>
 
+            <div class="card" style="margin-bottom:16px;padding:16px">
+                <h3>1099-NEC E-File (IRS FIRE/IRIS)</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Year</label>
+                        <input id="fire-year" type="number" value="${currentYear}" min="2000" max="2099" style="width:100px">
+                    </div>
+                </div>
+                <div class="form-actions" style="margin-top:8px">
+                    <button class="btn btn-primary" onclick="TaxFormsPage.generateFire()">Download 1099 E-File</button>
+                </div>
+            </div>
+
             <div class="card" style="padding:16px;background:#fffbe6;border-left:4px solid #f5a623">
                 <p style="margin:0"><strong>Note:</strong> Tax forms are for reference. Verify calculations with a licensed tax professional before filing.</p>
             </div>`;
@@ -138,6 +174,20 @@ const TaxFormsPage = {
         const year = yearEl ? yearEl.value : '';
         if (!year) { toast('Please enter a year', 'error'); return; }
         await _openPDF(`/api/payroll/forms/940/${year}/pdf`, 'POST');
+    },
+
+    async generateEFW2() {
+        const yearEl = document.getElementById('w2-year');
+        const year = yearEl ? yearEl.value : '';
+        if (!year) { toast('Please enter a year', 'error'); return; }
+        await _downloadEfile(`/api/payroll/forms/efw2/${year}`, `W2REPORT_${year}.txt`);
+    },
+
+    async generateFire() {
+        const yearEl = document.getElementById('fire-year');
+        const year = yearEl ? yearEl.value : '';
+        if (!year) { toast('Please enter a year', 'error'); return; }
+        await _downloadEfile(`/api/tax-forms/1099/fire?year=${year}`, `IRS1099NEC_${year}.txt`);
     },
 
     async generateSUI() {

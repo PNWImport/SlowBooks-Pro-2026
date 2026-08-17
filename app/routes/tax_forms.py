@@ -121,6 +121,29 @@ def get_1099(year: int = Query(...), db: Session = Depends(get_db)):
     }
 
 
+@router.get("/1099/fire")
+def get_1099_fire(year: int = Query(...), db: Session = Depends(get_db)):
+    """IRS Pub 1220 electronic 1099-NEC file (FIRE/IRIS upload format).
+
+    Returns the fixed-width file plus warnings — vendors without a 9-digit
+    tax id are skipped and named, and the Transmitter Control Code the IRS
+    assigns on FIRE enrollment must be added before upload.
+    """
+    from app.services.tax_forms.irs1220 import generate_1099_fire
+
+    try:
+        content, warnings = generate_1099_fire(db, year, _company())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "year": year,
+        "filename": f"IRS1099NEC_{year}.txt",
+        "record_length": 750,
+        "warnings": warnings,
+        "content": content,
+    }
+
+
 @router.get("/1099/{vendor_id}/pdf")
 def get_1099_pdf(vendor_id: int, year: int = Query(...), db: Session = Depends(get_db)):
     try:
