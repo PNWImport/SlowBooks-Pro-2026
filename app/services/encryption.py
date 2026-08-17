@@ -21,9 +21,13 @@
 
 import base64
 import logging
+from datetime import date as _date
 import os
 
 from cryptography.fernet import Fernet, InvalidToken
+import sqlalchemy as sa
+from sqlalchemy import String
+from sqlalchemy.types import TypeDecorator
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
@@ -89,6 +93,72 @@ def decrypt(token: str | None) -> str | None:
     return None
 
 
+# --- transparent column types ----------------------------------------------
+#
+# Wrapping a column in one of these encrypts on the way to the database and
+# decrypts on the way back, so call sites read and write plaintext and the
+# ciphertext never leaves this module. Used for the ePHI surface the benefits
+# module introduced (carrier name, dependent identifiers).
+#
+# TRADE-OFF: Fernet output is randomized, so an encrypted column cannot be
+# filtered, sorted, grouped or uniquely indexed in SQL. Only wrap columns the
+# application reads whole. Anything that needs a WHERE clause needs either a
+# separate blind index or to stay plaintext.
+
+
+class EncryptedString(TypeDecorator):
+    """A Unicode column stored as Fernet ciphertext."""
+
+    impl = String
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None or value == "":
+            return None
+        return encrypt(str(value))
+
+    def process_result_value(self, value, dialect):
+        if not value:
+            return None
+        plaintext = decrypt(value)
+        if plaintext is None and value:
+            # Undecryptable ciphertext: decrypt() has already logged. Return
+            # None rather than raising so one unreadable row cannot take down
+            # a whole payroll or ACA run — the absence is visible in output.
+            return None
+        return plaintext
+
+
+class EncryptedDate(TypeDecorator):
+    """A Date column stored as an ISO-8601 string in Fernet ciphertext.
+
+    Dates of birth are identifiers under HIPAA's safe-harbor list, so a
+    dependent's DOB gets the same treatment as their name.
+    """
+
+    impl = String
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = _date.fromisoformat(value)
+        return encrypt(value.isoformat())
+
+    def process_result_value(self, value, dialect):
+        if not value:
+            return None
+        plaintext = decrypt(value)
+        if not plaintext:
+            return None
+        try:
+            return _date.fromisoformat(plaintext)
+        except ValueError:
+            logger.error("Encrypted date column held an unparseable value")
+            return None
+
+
 def _is_encrypted_with_current(token: str) -> bool:
     """True if the value decrypts under the CURRENT key. False if it
     decrypts only under the previous key, or doesn't decrypt at all."""
@@ -105,8 +175,12 @@ def _is_encrypted_with_current(token: str) -> bool:
 def rewrap_all(db, dry_run: bool = False) -> dict:
     """Re-encrypt every stored ciphertext under the CURRENT key.
 
-    Iterates every row in every model that stores a Fernet ciphertext —
-    today that's EmployeeBankAccount.{routing_number_enc, account_number_enc}.
+    Iterates every row in every model that stores a Fernet ciphertext:
+    EmployeeBankAccount, VendorBankAccount, and the benefits ePHI columns
+    (BenefitPlan.carrier_name, BenefitDependent.{name, ssn_last_four, dob}).
+    A field missing from this list survives rotation only until the previous
+    key is dropped, so keep it in sync when a new encrypted column lands —
+    tests/test_benefits_encryption.py asserts the coverage.
     For each value:
       - if it decrypts under the current key, skip (already rewrapped)
       - if it decrypts under PREV, re-encrypt with current and update
@@ -118,32 +192,90 @@ def rewrap_all(db, dry_run: bool = False) -> dict:
     `dry_run=True` runs the same scan and reports what WOULD change
     without committing.
     """
+    from sqlalchemy import inspect as sa_inspect
+
     from app.models.bank_accounts import EmployeeBankAccount
+    from app.models.benefits import BenefitDependent, BenefitPlan
+    from app.models.contractor_payments import VendorBankAccount
 
     summary = {"checked": 0, "rewrapped": 0, "already_current": 0, "failed": 0}
-    accounts = db.query(EmployeeBankAccount).all()
 
-    for acct in accounts:
-        for field in ("routing_number_enc", "account_number_enc"):
-            blob = getattr(acct, field)
-            if not blob:
-                continue
-            summary["checked"] += 1
-            if _is_encrypted_with_current(blob):
-                summary["already_current"] += 1
-                continue
-            plaintext = decrypt(blob)
-            if plaintext is None:
-                summary["failed"] += 1
-                logger.error(
-                    "rewrap: account #%s field %s did not decrypt under any key",
-                    acct.id,
-                    field,
-                )
-                continue
-            if not dry_run:
-                setattr(acct, field, encrypt(plaintext))
-            summary["rewrapped"] += 1
+    # (model, [raw ciphertext column names]) — these hold the ciphertext
+    # directly, so read/write bypasses the TypeDecorator.
+    RAW_TARGETS = [
+        (EmployeeBankAccount, ("routing_number_enc", "account_number_enc")),
+        (VendorBankAccount, ("routing_number_enc", "account_number_enc")),
+    ]
+    # (model, [columns wrapped in EncryptedString/EncryptedDate]) — the ORM
+    # decrypts these on read, so rewrapping means reading the plaintext and
+    # writing it straight back: the bind processor re-encrypts under the
+    # current key.
+    TYPED_TARGETS = [
+        (BenefitPlan, ("carrier_name",)),
+        (BenefitDependent, ("name", "ssn_last_four", "dob")),
+    ]
+
+    for model, fields in RAW_TARGETS:
+        for row in db.query(model).all():
+            for field in fields:
+                blob = getattr(row, field)
+                if not blob:
+                    continue
+                summary["checked"] += 1
+                if _is_encrypted_with_current(blob):
+                    summary["already_current"] += 1
+                    continue
+                plaintext = decrypt(blob)
+                if plaintext is None:
+                    summary["failed"] += 1
+                    logger.error(
+                        "rewrap: %s #%s field %s did not decrypt under any key",
+                        model.__tablename__,
+                        row.id,
+                        field,
+                    )
+                    continue
+                if not dry_run:
+                    setattr(row, field, encrypt(plaintext))
+                summary["rewrapped"] += 1
+
+    for model, fields in TYPED_TARGETS:
+        for row in db.query(model).all():
+            state = sa_inspect(row)
+            for field in fields:
+                # Read the stored ciphertext without the type's decryption,
+                # so "already under the current key" can be answered.
+                blob = db.execute(
+                    sa.text(f"SELECT {field} FROM {model.__tablename__} WHERE id = :i"),
+                    {"i": row.id},
+                ).scalar()
+                if not blob:
+                    continue
+                summary["checked"] += 1
+                if _is_encrypted_with_current(blob):
+                    summary["already_current"] += 1
+                    continue
+                plaintext = getattr(row, field)  # decrypts via the type
+                if plaintext is None:
+                    summary["failed"] += 1
+                    logger.error(
+                        "rewrap: %s #%s field %s did not decrypt under any key",
+                        model.__tablename__,
+                        row.id,
+                        field,
+                    )
+                    continue
+                if not dry_run:
+                    # Re-assign so the bind processor re-encrypts under the
+                    # current key; force the flush even though the decrypted
+                    # value compares equal to itself.
+                    setattr(row, field, plaintext)
+                    state.attrs[field].history  # noqa: B018 - mark dirty
+                    db.add(row)
+                    from sqlalchemy.orm.attributes import flag_modified
+
+                    flag_modified(row, field)
+                summary["rewrapped"] += 1
 
     if not dry_run:
         db.commit()

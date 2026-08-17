@@ -117,6 +117,16 @@ operator submits themselves.
   locality + default WC class, jurisdiction-validated), employee
   attachment, and payroll fallback chain (stub override > employee
   explicit > location > default). SPA page pending.
+- **Blind index for benefit enrollment metadata** — dependent identifiers
+  and carrier names are Fernet-encrypted, but plan kind / coverage windows /
+  employee_id stay plaintext because they are filtered and joined on
+  (the ACA month-of-coverage derivation needs them). Encrypting them means
+  adding deterministic blind-index columns so the queries still work. See
+  docs/hipaa-compliance.md § 4.
+- **Sign + off-box the audit checkpoints** — the hash chain detects
+  alteration/deletion/reordering and checkpoints detect truncation, but an
+  attacker with full DB write access can delete checkpoints too. Sign them
+  with an operator-held key and ship them to WORM storage or a second system.
 - ~~**Benefits records**~~ — DONE: plans/enrollments/dependents
   (`/api/benefits`), ACA 1095 coverage derivation + 1094 counts at
   `GET /api/tax-forms/1095?year=` (JSON; any-day-of-month rule,

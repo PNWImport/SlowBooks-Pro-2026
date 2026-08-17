@@ -27,9 +27,9 @@ health, healthcare provision, or payment for healthcare.
 | HSA deduction *amount* | Not PHI | Reveals only that an HSA exists, not health details |
 | Health insurance deduction *amount* | Not PHI | Same — premium amount without enrollment/claim details |
 | Pre-tax FSA / dependent-care amount | Not PHI | Same |
-| Insurance carrier name | **Borderline — now stored** | `BenefitPlan.carrier_name` (added with the benefits module) |
-| Health-plan enrollment + coverage dates | **Likely ePHI in a BA context** | `BenefitEnrollment` — identifies a person *and* relates to payment for healthcare |
-| Covered dependents (name, DOB, SSN last-4) | **Likely ePHI in a BA context** | `BenefitDependent` — family members who are not employees |
+| Insurance carrier name | Borderline — stored, **encrypted** | `BenefitPlan.carrier_name`, Fernet at rest |
+| Health-plan enrollment + coverage dates | **Likely ePHI in a BA context** — plaintext | `BenefitEnrollment` — identifies a person *and* relates to payment for healthcare. Coverage dates and plan kind are filtered/joined on, so encrypting them needs a blind index (§ 4) |
+| Covered dependents (name, DOB, SSN last-4) | **Likely ePHI in a BA context** — **encrypted** | `BenefitDependent`, Fernet at rest; DOB is an identifier under the safe-harbor list |
 | Months-of-coverage (ACA 1095) | **Likely ePHI in a BA context** | Derived, not stored, but rendered per person by `/api/tax-forms/1095` |
 | COBRA qualifying event + plan | **Likely ePHI in a BA context** | Coverage-loss event tied to a named individual |
 | Actual claims, diagnoses, treatment | Would be PHI | **We still don't store any of this** |
@@ -45,7 +45,10 @@ a Covered Entity, which isn't the design intent.
 > enrollment, carrier names, coverage windows, and covered dependents, and
 > derives per-person months-of-coverage for ACA reporting. That is
 > individually identifiable information relating to payment for
-> healthcare. It is still not a Covered Entity workflow (an employer
+> healthcare. The identifying fields (carrier name, dependent name/SSN
+> last-4/DOB) are now Fernet-encrypted at rest — see § 164.312(a)(2)(iv) —
+> which closes the worst of it; the enrollment metadata around them is not.
+> It is still not a Covered Entity workflow (an employer
 > administering its own group plan is generally acting as employer, not as
 > a health plan), but the earlier line "we don't store any of this" is no
 > longer true, and § 4's gap list applies with more force. If a deployment
@@ -154,6 +157,9 @@ above, including the truncation case.
 | Employee SSN | ⚠ Only last 4 digits stored — full SSN never collected |
 | Employee name / address | ⚠ Plaintext (not PHI in HIPAA terms) |
 | HSA / health-insurance deduction amounts | ⚠ Plaintext (not PHI in HIPAA terms) |
+| Benefit carrier name | ✅ Fernet-encrypted |
+| Benefit dependent name / SSN last-4 / DOB | ✅ Fernet-encrypted |
+| Benefit plan kind, coverage dates, premiums | ⚠ Plaintext — queried and joined on; needs a blind index to encrypt |
 
 ---
 
@@ -186,7 +192,7 @@ to change to fully align with the Security Rule:
 
 | Gap | Severity | Fix |
 |-----|----------|-----|
-| **Benefit tables hold health-plan enrollment in plaintext** | High | `benefit_plans`, `benefit_enrollments`, `benefit_dependents` store carrier, plan kind, coverage windows and dependent identifiers unencrypted. If treated as ePHI, they need the same Fernet wrapping as the bank fields, and dependents need the "minimum necessary" access story below |
+| **Enrollment metadata still plaintext** | Medium | Dependent identifiers and carrier names are now Fernet-encrypted, but plan kind, coverage windows and the employee foreign key are not — they are filtered, sorted and joined on, and Fernet output is randomized. An attacker with table access can still tell *which employees hold medical coverage over which months*, just not who the dependents are. Closing it needs deterministic blind-index columns alongside the encrypted values |
 | **Audit checkpoints are not cryptographically signed or off-boxed** | Medium | The hash chain (§ 164.312(c)(1)) now detects alteration, deletion and reordering, and checkpoints detect truncation — but an attacker with full database write access can delete the checkpoints too. Fix: sign checkpoints with an operator-held key and ship them off the box (WORM storage, or a second system) |
 | **No role-based access control** | High | SlowBooks is single-operator. HIPAA expects "minimum necessary" — different staff see different data. Would require a user model + role assignment + per-field access checks |
 | **Employee data not encrypted at rest** | Medium | Names, addresses, hire date, etc. are plaintext. If treated as PHI, would need Fernet wrapping (same scheme as bank fields) |
@@ -248,4 +254,6 @@ Two substantive changes: the benefits module moved the PHI posture (§ 1),
 and the `document_audits` ledger-vs-chain distinction is now stated
 accurately (§ 164.312(c)(1)) instead of being papered over by the word
 "chain" — and then made into an actual linked chain with checkpoints, so
-the claim and the code now agree.
+the claim and the code now agree. Follow-up in the same series: the
+benefits ePHI identifiers are now encrypted at rest (§ 164.312(a)(2)(iv)),
+leaving enrollment metadata as the remaining plaintext surface.
