@@ -177,3 +177,28 @@ def test_idle_timeout_extends_with_activity(unauthed_client, monkeypatch):
         monkeypatch.setattr(main_module._time, "time", lambda o=offset: base + o)
         r = unauthed_client.get("/api/analytics/dashboard")
         assert r.status_code != 401, f"unexpected expiry at +{offset}s"
+
+
+def test_new_payroll_hr_endpoints_require_auth(unauthed_client):
+    """Deny-by-default regression: the pages added in the payroll/HR SPA
+    wave must all sit behind the session middleware."""
+    for method, path in [
+        ("GET", "/api/pay-schedules"),
+        ("GET", "/api/locations"),
+        ("GET", "/api/hr/org-chart"),
+        ("GET", "/api/hr/pto-calendar?start=2026-01-01&end=2026-01-31"),
+        ("GET", "/api/hr/reviews"),
+        ("GET", "/api/tax-forms/deposit-schedule?year=2026"),
+        ("GET", "/api/tax-forms/liability-calendar?year=2026"),
+        ("GET", "/api/workers-comp/rates"),
+        ("GET", "/api/workers-comp/premium-report?year=2026"),
+        ("GET", "/api/reports/payroll-journal?start=2026-01-01&end=2026-12-31"),
+        ("GET", "/api/reports/deduction-register?year=2026"),
+        ("GET", "/api/reports/contractor-payments?year=2026"),
+        ("GET", "/api/contractor-runs"),
+        ("GET", "/api/deductions/garnishments/remittances"),
+        ("POST", "/api/payroll/retro-pay/preview"),
+        ("POST", "/api/employees/1/terminate"),
+    ]:
+        r = unauthed_client.request(method, path)
+        assert r.status_code == 401, f"{method} {path} returned {r.status_code}"
