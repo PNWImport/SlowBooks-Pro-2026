@@ -26,6 +26,7 @@ const EmployeesPage = {
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="EmployeesPage.showForm(${e.id})">Edit</button>
                         <button class="btn btn-sm btn-secondary" onclick="EmployeesPage.viewDetails(${e.id})">Details</button>
+                        ${e.is_active ? `<button class="btn btn-sm btn-danger" onclick="EmployeesPage.showTerminateForm(${e.id})">Terminate</button>` : ''}
                     </td>
                 </tr>`;
             }
@@ -684,6 +685,75 @@ const EmployeesPage = {
             await API.del(`/employees/${empId}/documents/${docId}`);
             toast('Document deleted');
             EmployeesPage._loadDocuments(empId);
+        } catch (err) {
+            toast(err.message, 'error');
+        }
+    },
+
+    // Termination — sets termination fields, deactivates deductions and
+    // portal access, resolves the state final-paycheck deadline, and
+    // (when required or requested) stages the accrued-PTO payout as a
+    // draft off-cycle run. The final regular paycheck stays manual.
+    showTerminateForm(id) {
+        openModal('Terminate Employee', `
+            <div style="background:#fef3c7;border:1px solid #fbbf24;padding:6px 10px;margin-bottom:10px;font-size:10px;color:#92400e;">
+                This deactivates the employee, their deductions, and portal access.
+                Run their final regular paycheck separately — the statutory deadline
+                is shown after termination.
+            </div>
+            <div class="form-group"><label>Termination date</label>
+                <input type="date" id="term-date" value="${todayISO()}"></div>
+            <div class="form-group"><label>Reason</label>
+                <select id="term-reason">
+                    <option value="voluntary">Voluntary (quit)</option>
+                    <option value="involuntary">Involuntary (fired / laid off)</option>
+                </select></div>
+            <div class="form-group"><label>Pay out accrued PTO</label>
+                <select id="term-payout">
+                    <option value="yes">Yes (default; state may require it)</option>
+                    <option value="no">No (forfeit, where the state allows)</option>
+                </select></div>
+            <div class="form-group"><label>Include sick balance in payout</label>
+                <select id="term-sick">
+                    <option value="no">No</option>
+                    <option value="yes">Yes</option>
+                </select></div>
+            <div id="term-result"></div>
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-danger" onclick="EmployeesPage.terminate(${id})">Terminate</button>
+            </div>`);
+    },
+
+    async terminate(id) {
+        const termDate = $('#term-date')?.value;
+        if (!termDate) return toast('Termination date is required', 'error');
+        try {
+            const result = await API.post(`/employees/${id}/terminate`, {
+                termination_date: termDate,
+                reason: $('#term-reason').value,
+                payout_pto: $('#term-payout').value === 'yes',
+                include_sick_payout: $('#term-sick').value === 'yes',
+            });
+            const d = result.final_paycheck;
+            const p = result.pto_payout;
+            $('#term-result').innerHTML = `
+                <div style="background:var(--primary-light); border:1px solid var(--qb-gold); padding:8px 10px; margin:8px 0; font-size:11px;">
+                    <strong>Terminated.</strong><br>
+                    Final paycheck deadline:
+                    <strong>${d.due_date ? formatDate(d.due_date) : escapeHtml(d.deadline_description || 'see state rule')}</strong>
+                    (${escapeHtml(d.deadline_description || '')})<br>
+                    PTO payout: ${formatCurrency(p.total_payout)}
+                    ${result.pto_payout_staged
+                        ? ` — staged as draft run #${result.pto_payout_run_id}`
+                        : ' — not staged'}<br>
+                    Deductions deactivated: ${result.deductions_deactivated};
+                    portal token revoked.
+                </div>
+                <div class="form-actions">
+                    <button class="btn btn-primary" onclick="closeModal(); App.navigate('#/employees')">Done</button>
+                </div>`;
+            toast('Employee terminated');
         } catch (err) {
             toast(err.message, 'error');
         }

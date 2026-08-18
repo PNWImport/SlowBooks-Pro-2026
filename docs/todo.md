@@ -99,14 +99,16 @@ operator submits themselves.
   blend via `rate_change_date`/`old_rate` on the stub input;
   `POST /api/payroll/retro-pay/preview|apply` (apply raises the rate and
   stages a draft off-cycle supplemental run). Clawbacks (negative retro)
-  deliberately rejected.
+  deliberately rejected. SPA affordance: Retro Pay button on the Payroll
+  page (preview table + apply).
 - ~~**Termination + final paycheck**~~ — DONE:
   `POST /api/employees/{id}/terminate` — state deadline rules (CA
   immediate/72h shape, ~16 states listed, rest default next-payday),
   PTO payout at the hourly-equivalent rate staged as a draft off-cycle
   run, deductions deactivated, portal token revoked. Rules are
   approximate — verify against the state labor department. Sick payout
-  is opt-in.
+  is opt-in. SPA affordance: Terminate button on active Employee rows
+  (modal shows deadline, payout, and staged-run id after termination).
 - ~~**Garnishment remittance**~~ — DONE: agency payee fields on orders,
   auto-created `garnishment_remittances` rows at pay-run processing, the
   pending register (`GET /api/deductions/garnishments/remittances`) with
