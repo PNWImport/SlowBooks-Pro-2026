@@ -375,22 +375,10 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     # an audit trail. This endpoint exists for data-correction overrides
     # only and is deliberately not surfaced in the deductions UI.
     ("DELETE", "/api/deductions/garnishments/{order_id}"),
-    # DocumentAudit hash-chain viewer/verifier — endpoints ready, the
-    # admin UI ("Compliance" tab) is future work (docs/todo.md).
-    ("GET", "/api/document-audits"),
+    # Single-audit lookup by row id — reached from a PDF footer's printed
+    # ID, which is a support/auditor path rather than a page control. The
+    # Compliance tab lists rows and looks them up by content hash instead.
     ("GET", "/api/document-audits/{audit_id}"),
-    ("GET", "/api/document-audits/verify/{content_hash}"),
-    # Audit-chain verification — operator/auditor tooling, no SPA page yet.
-    ("GET", "/api/document-audits/chain/verify"),
-    ("GET", "/api/document-audits/chain/checkpoints"),
-    ("POST", "/api/document-audits/chain/checkpoints"),
-    ("GET", "/api/document-audits/chain/checkpoints/{checkpoint_id}/verify"),
-    # Off-box checkpoint artifacts — export/verify is an operator workflow
-    # aimed at a WORM mount and a cron job, not a browser. The CLI
-    # (`python -m app.services.document_audit checkpoint --export …`) is the
-    # intended entry point; see docs/operations.md.
-    ("GET", "/api/document-audits/chain/checkpoints/{checkpoint_id}/export"),
-    ("POST", "/api/document-audits/chain/checkpoints/verify-artifact"),
 }
 
 

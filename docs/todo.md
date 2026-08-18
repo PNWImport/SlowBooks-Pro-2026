@@ -245,9 +245,16 @@ operator submits themselves.
   config (Entra app registration walkthrough in setup-mail.md) + a Mail
   queue UI page. Depends on the Email integration item above (shared SMTP
   + IMAP wiring).
-- **DocumentAudit (hash-ledger) viewer UI** — endpoints ready
-  (`/api/document-audits`, `/api/document-audits/verify/{hash}`); need an
-  admin "Compliance" tab.
+- ~~**DocumentAudit (hash-ledger) viewer UI**~~ — DONE: the Compliance tab
+  (`#/compliance`, `app/static/js/compliance.js`) surfaces all four questions
+  an auditor asks — does this document match its data (hash lookup), has
+  anything been removed (chain verify), was the tail truncated (checkpoints),
+  and were the checkpoints themselves deleted (paste an exported artifact
+  back in). Checkpoint create / verify / export are one click each.
+  Containment and signature are reported SEPARATELY, so an unsigned
+  checkpoint over a clean chain reads as a setup gap rather than as
+  tampering. Driven end-to-end in Chromium including the
+  delete-the-tail-and-every-checkpoint case; 12 contract tests in CI.
 - **Portal time-entry submit flow** — server endpoint
   `POST /api/time-entries/{id}/submit` exists for employee self-service;
   portal UI page does not.

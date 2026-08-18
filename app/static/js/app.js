@@ -57,6 +57,9 @@ const App = {
         // Phase 10: Quick Wins + Medium Effort Features
         '/budgets':       { page: 'budgets',         label: 'Budget vs Actual',   render: () => BudgetsPage.render() },
         '/bank-rules':    { page: 'bank-rules',      label: 'Bank Rules',         render: () => BankRulesPage.render() },
+        // Compliance: the document hash chain, its checkpoints, and off-box
+        // artifact verification (docs/hipaa-compliance.md § 164.312(c)(1)).
+        '/compliance':    { page: 'compliance',      label: 'Compliance',         render: () => CompliancePage.render() },
     },
 
     async navigate(hash) {
