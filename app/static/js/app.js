@@ -70,6 +70,8 @@ const App = {
         '/payroll/schedules': { page: 'payroll-schedules', label: 'Pay Schedules', render: () => PaySchedulesPage.render() },
         // Work locations: multi-site jurisdiction management.
         '/payroll/locations': { page: 'payroll-locations', label: 'Work Locations', render: () => LocationsPage.render() },
+        // HR team views: org chart, PTO calendar, performance reviews.
+        '/hr/team': { page: 'hr-team', label: 'HR Team', render: () => HRViewsPage.render() },
     },
 
     async navigate(hash) {

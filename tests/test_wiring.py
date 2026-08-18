@@ -283,14 +283,6 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("POST", "/api/esign"),
     ("POST", "/api/esign/{envelope_id}/void"),
     ("GET", "/api/esign/{envelope_id}/verify"),
-    # HR views — API-first; SPA pages tracked in docs/todo.md.
-    ("GET", "/api/hr/org-chart"),
-    ("GET", "/api/hr/pto-calendar"),
-    ("GET", "/api/hr/reviews"),
-    ("POST", "/api/hr/reviews"),
-    ("PUT", "/api/hr/reviews/{review_id}"),
-    ("POST", "/api/hr/reviews/{review_id}/submit"),
-    ("POST", "/api/hr/reviews/{review_id}/acknowledge"),
     # Payroll report library — API-first; SPA cards tracked in docs/todo.md.
     ("GET", "/api/reports/payroll-journal"),
     ("GET", "/api/reports/deduction-register"),

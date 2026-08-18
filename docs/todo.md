@@ -180,7 +180,9 @@ operator submits themselves.
   `GET /api/hr/org-chart` (manager tree, cycle-safe),
   `GET /api/hr/pto-calendar?start=&end=` (overlap semantics, pending
   flagged), and `/api/hr/reviews` (draft → submitted → acknowledged,
-  draft-only edits, 1-5 rating). SPA pages pending.
+  draft-only edits, 1-5 rating). SPA page at `#/hr/team` — three tabs:
+  org chart (nested manager tree, cycle warning), PTO calendar (windowed
+  list), reviews (create/edit/submit/acknowledge).
 - ~~**Payroll report library**~~ — DONE: payroll journal
   (`GET /api/reports/payroll-journal?start=&end=`, per-stub columns +
   window totals + GL transaction ids), deduction register
