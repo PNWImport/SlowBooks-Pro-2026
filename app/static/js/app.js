@@ -62,6 +62,10 @@ const App = {
         '/compliance':    { page: 'compliance',      label: 'Compliance',         render: () => CompliancePage.render() },
         // Benefits: plans, enrollment, dependents, COBRA, ACA 1095/1094.
         '/hr/benefits':   { page: 'hr-benefits',     label: 'Benefits',           render: () => BenefitsPage.render() },
+        // Contractor pay runs: batch contractor payments, JE, NACHA export.
+        '/payroll/contractors': { page: 'payroll-contractors', label: 'Contractor Runs', render: () => ContractorRunsPage.render() },
+        // Garnishment remittance register: withheld money owed to agencies.
+        '/payroll/remittances': { page: 'payroll-remittances', label: 'Garnishment Remittances', render: () => GarnishmentRemittancesPage.render() },
     },
 
     async navigate(hash) {

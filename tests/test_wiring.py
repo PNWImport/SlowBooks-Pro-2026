@@ -273,14 +273,6 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("GET", "/api/tax-forms/liability-calendar"),
     ("GET", "/api/tax-forms/fica-tip-credit"),
     ("GET", "/api/tax-forms/1095"),
-    # Benefits — API-first; SPA page tracked in docs/todo.md.
-    ("GET", "/api/benefits/plans"),
-    ("POST", "/api/benefits/plans"),
-    ("GET", "/api/benefits/enrollments"),
-    ("POST", "/api/benefits/enrollments"),
-    ("POST", "/api/benefits/enrollments/{enrollment_id}/end"),
-    ("POST", "/api/benefits/enrollments/{enrollment_id}/dependents"),
-    ("POST", "/api/benefits/enrollments/{enrollment_id}/cobra-notice"),
     # Workers' comp — API-first; SPA page tracked in docs/todo.md.
     ("GET", "/api/workers-comp/rates"),
     ("POST", "/api/workers-comp/rates"),
@@ -303,12 +295,8 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("GET", "/api/reports/payroll-journal"),
     ("GET", "/api/reports/deduction-register"),
     ("GET", "/api/reports/contractor-payments"),
-    # Contractor pay runs — API-first; SPA page tracked in docs/todo.md.
-    ("GET", "/api/contractor-runs"),
-    ("GET", "/api/contractor-runs/{run_id}"),
-    ("POST", "/api/contractor-runs"),
-    ("POST", "/api/contractor-runs/{run_id}/process"),
-    ("POST", "/api/contractor-runs/{run_id}/nacha"),
+    # Contractor pay runs — vendor bank-account management is admin/scripting;
+    # the SPA page calls the run + process + NACHA endpoints directly.
     ("GET", "/api/contractor-runs/vendors/{vendor_id}/bank"),
     ("POST", "/api/contractor-runs/vendors/{vendor_id}/bank"),
     # Pay schedules — API-first; SPA page tracked in docs/todo.md.
@@ -328,9 +316,6 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("POST", "/api/payroll/retro-pay/apply"),
     # Termination workflow — API-first; SPA affordance tracked in docs/todo.md.
     ("POST", "/api/employees/{emp_id}/terminate"),
-    # Garnishment remittance register — API-first; SPA page in docs/todo.md.
-    ("GET", "/api/deductions/garnishments/remittances"),
-    ("POST", "/api/deductions/garnishments/remittances/{remittance_id}/mark-remitted"),
     # Legacy JSON-mode tax form endpoints — superseded by /pdf variants.
     # Kept for machine readers / future e-file integration.
     ("POST", "/api/payroll/forms/w2/{emp_id}"),

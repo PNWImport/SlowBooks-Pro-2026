@@ -85,8 +85,9 @@ operator submits themselves.
 - ~~**Contractor pay runs**~~ — DONE: `/api/contractor-runs` (batch create
   → process JE → NACHA), `VendorBankAccount` (Fernet-encrypted, one active
   per vendor), contractor payments join bill payments in 1099-NEC totals.
-  Follow-ups: no SPA page yet (API-first); no void endpoint for a processed
-  contractor run yet (mirror the payroll void).
+  Follow-ups: no void endpoint for a processed contractor run yet (mirror
+  the payroll void). SPA page at `#/payroll/contractors` — create runs, add
+  payees, process (posts the JE), NACHA export modal.
 - ~~**Pay-schedule object**~~ — DONE: `/api/pay-schedules` CRUD + upcoming
   preview + employee assignment (syncs pay_frequency). Follow-ups: holiday
   calendar (weekend-only shifting today), blackout dates, SPA page.
@@ -106,7 +107,9 @@ operator submits themselves.
   auto-created `garnishment_remittances` rows at pay-run processing, the
   pending register (`GET /api/deductions/garnishments/remittances`) with
   agency-missing nagging, and mark-remitted with a payment reference.
-  Follow-ups: child-support e-IWO / NACHA CCD+ addenda output; SPA page.
+  Follow-ups: child-support e-IWO / NACHA CCD+ addenda output. SPA page
+  at `#/payroll/remittances` — pending/remitted/all filter, agency-missing
+  highlight, mark-remitted with payment reference.
 - ~~**Tipped wages**~~ — DONE: reported vs paycheck tips on stubs,
   automatic minimum-wage top-up for hourly tipped stubs, balanced JE
   (reported tips excluded from wage expense — customers paid them), and
