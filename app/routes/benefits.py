@@ -71,6 +71,11 @@ def _enrollment_response(e: BenefitEnrollment) -> dict:
         "employee_name": e.employee.full_name if e.employee else None,
         "plan_id": e.plan_id,
         "plan_name": e.plan.name if e.plan else None,
+        # The UI needs the kind to know whether COBRA applies to this
+        # enrollment. Joining plans client-side to find that out would be a
+        # client re-implementing a server rule; `kind` is decrypted here
+        # anyway (see app/models/benefits.py on why it is encrypted).
+        "plan_kind": (e.plan.kind.value if e.plan and e.plan.kind else None),
         "coverage_start": e.coverage_start.isoformat(),
         "coverage_end": e.coverage_end.isoformat() if e.coverage_end else None,
         "status": e.status.value if e.status else None,

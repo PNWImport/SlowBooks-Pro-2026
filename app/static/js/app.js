@@ -60,6 +60,8 @@ const App = {
         // Compliance: the document hash chain, its checkpoints, and off-box
         // artifact verification (docs/hipaa-compliance.md § 164.312(c)(1)).
         '/compliance':    { page: 'compliance',      label: 'Compliance',         render: () => CompliancePage.render() },
+        // Benefits: plans, enrollment, dependents, COBRA, ACA 1095/1094.
+        '/hr/benefits':   { page: 'hr-benefits',     label: 'Benefits',           render: () => BenefitsPage.render() },
     },
 
     async navigate(hash) {

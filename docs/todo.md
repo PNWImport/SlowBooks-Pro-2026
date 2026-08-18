@@ -153,9 +153,13 @@ operator submits themselves.
   (`/api/benefits`), ACA 1095 coverage derivation + 1094 counts at
   `GET /api/tax-forms/1095?year=` (JSON; any-day-of-month rule,
   self-insured covered-individual listing), COBRA election-notice PDF
-  (audit-hashed, 102% premium). Follow-ups: 1095-C PDF + AIR e-file,
-  ACA offer codes / affordability safe harbors (offers aren't
-  modelled), auto-end enrollments on termination, SPA page.
+  (audit-hashed, 102% premium), and the Benefits SPA page
+  (`#/hr/benefits`) — plans, enrollment, dependents, the ACA month grid
+  with 1094 counts, and COBRA. The COBRA button appears only for an ENDED
+  MEDICAL enrollment, mirroring the server rule rather than letting the
+  operator discover it through a 400. Follow-ups: 1095-C PDF + AIR e-file,
+  ACA offer codes / affordability safe harbors (offers aren't modelled),
+  auto-end enrollments on termination.
 - ~~**Workers' comp**~~ — DONE: carrier-quoted `wc_class_rates`
   (per $100 of payroll, supersede-on-re-quote) and the premium-audit
   report at `GET /api/workers-comp/premium-report?year=` grouping wages
