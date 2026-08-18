@@ -89,8 +89,10 @@ operator submits themselves.
   the payroll void). SPA page at `#/payroll/contractors` — create runs, add
   payees, process (posts the JE), NACHA export modal.
 - ~~**Pay-schedule object**~~ — DONE: `/api/pay-schedules` CRUD + upcoming
-  preview + employee assignment (syncs pay_frequency). Follow-ups: holiday
-  calendar (weekend-only shifting today), blackout dates, SPA page.
+  preview + employee assignment (syncs pay_frequency). SPA page at
+  `#/payroll/schedules` — list, create, edit, preview upcoming dates,
+  assign employees. Follow-ups: holiday calendar (weekend-only shifting
+  today), blackout dates.
 - ~~**Retro pay / mid-period proration**~~ — DONE: day-weighted salary
   blend via `rate_change_date`/`old_rate` on the stub input;
   `POST /api/payroll/retro-pay/preview|apply` (apply raises the rate and
@@ -119,7 +121,8 @@ operator submits themselves.
 - ~~**Multi-location**~~ — DONE: `WorkLocation` (address + state +
   locality + default WC class, jurisdiction-validated), employee
   attachment, and payroll fallback chain (stub override > employee
-  explicit > location > default). SPA page pending.
+  explicit > location > default). SPA page at `#/payroll/locations` —
+  list, create, edit, employee roster view, assign employees.
 - ~~**Blind index for benefit enrollment metadata**~~ — DONE, with one part
   deliberately not done. `app/services/blind_index.py` adds keyed
   deterministic indexes (`HMAC-SHA256(key, "b1|<table>.<column>|<value>")`,

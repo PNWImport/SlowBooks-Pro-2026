@@ -66,6 +66,10 @@ const App = {
         '/payroll/contractors': { page: 'payroll-contractors', label: 'Contractor Runs', render: () => ContractorRunsPage.render() },
         // Garnishment remittance register: withheld money owed to agencies.
         '/payroll/remittances': { page: 'payroll-remittances', label: 'Garnishment Remittances', render: () => GarnishmentRemittancesPage.render() },
+        // Pay schedules: frequency + anchor + preview upcoming dates.
+        '/payroll/schedules': { page: 'payroll-schedules', label: 'Pay Schedules', render: () => PaySchedulesPage.render() },
+        // Work locations: multi-site jurisdiction management.
+        '/payroll/locations': { page: 'payroll-locations', label: 'Work Locations', render: () => LocationsPage.render() },
     },
 
     async navigate(hash) {
