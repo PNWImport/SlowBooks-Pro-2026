@@ -72,6 +72,10 @@ const App = {
         '/payroll/locations': { page: 'payroll-locations', label: 'Work Locations', render: () => LocationsPage.render() },
         // HR team views: org chart, PTO calendar, performance reviews.
         '/hr/team': { page: 'hr-team', label: 'HR Team', render: () => HRViewsPage.render() },
+        // Tax deposit calendar: depositor classification + due dates.
+        '/payroll/deposit-calendar': { page: 'payroll-deposit-calendar', label: 'Deposit Calendar', render: () => DepositCalendarPage.render() },
+        // Workers' comp: class rates + premium-audit report.
+        '/payroll/workers-comp': { page: 'payroll-workers-comp', label: 'Workers Comp', render: () => WorkersCompPage.render() },
     },
 
     async navigate(hash) {

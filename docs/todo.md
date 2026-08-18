@@ -80,8 +80,10 @@ operator submits themselves.
   `GET /api/tax-forms/deposit-schedule?year=` (Pub 15 lookback →
   monthly/semiweekly) and `GET /api/tax-forms/liability-calendar?year=`
   (941 deposits, $100k next-day rule, de-minimis warnings, FUTA $500
-  floor + carryover, return due dates). Follow-ups: federal holidays not
-  modelled (weekend-only roll, so at most a day early); no SPA page yet.
+  floor + carryover, return due dates). SPA page at
+  `#/payroll/deposit-calendar` — classification cards, lookback quarters,
+  date-sorted liability table. Follow-up: federal holidays not modelled
+  (weekend-only roll, so at most a day early).
 - ~~**Contractor pay runs**~~ — DONE: `/api/contractor-runs` (batch create
   → process JE → NACHA), `VendorBankAccount` (Fernet-encrypted, one active
   per vendor), contractor payments join bill payments in 1099-NEC totals.
@@ -170,7 +172,9 @@ operator submits themselves.
   (per $100 of payroll, supersede-on-re-quote) and the premium-audit
   report at `GET /api/workers-comp/premium-report?year=` grouping wages
   by (state, class); missing rates surface as None + a named list, never
-  a silent zero. WA per-hour L&I stays in the WA engine.
+  a silent zero. WA per-hour L&I stays in the WA engine. SPA page at
+  `#/payroll/workers-comp` — rates table, new-rate modal
+  (supersede-on-create), premium report with missing-rate warnings.
 - ~~**E-signature**~~ — DONE: `SignatureEnvelope` freezes body + SHA-256;
   portal signing (typed name + explicit consent) seals
   (hash, signer, timestamp) into `document_audits`; `/api/esign/{id}/verify`

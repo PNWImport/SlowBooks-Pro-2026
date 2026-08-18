@@ -267,16 +267,8 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("GET", "/api/tax-forms/1096/pdf"),
     ("GET", "/api/tax-forms/sui"),
     ("GET", "/api/tax-forms/liability"),
-    # Deposit-schedule + liability-calendar are machine-readable siblings of
-    # /liability; no SPA page consumes them yet (tracked in docs/todo.md).
-    ("GET", "/api/tax-forms/deposit-schedule"),
-    ("GET", "/api/tax-forms/liability-calendar"),
     ("GET", "/api/tax-forms/fica-tip-credit"),
     ("GET", "/api/tax-forms/1095"),
-    # Workers' comp — API-first; SPA page tracked in docs/todo.md.
-    ("GET", "/api/workers-comp/rates"),
-    ("POST", "/api/workers-comp/rates"),
-    ("GET", "/api/workers-comp/premium-report"),
     # E-signature — admin API (signing lives in the portal, excluded there).
     ("GET", "/api/esign"),
     ("GET", "/api/esign/{envelope_id}"),
