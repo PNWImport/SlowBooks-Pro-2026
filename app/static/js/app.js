@@ -76,6 +76,8 @@ const App = {
         '/payroll/deposit-calendar': { page: 'payroll-deposit-calendar', label: 'Deposit Calendar', render: () => DepositCalendarPage.render() },
         // Workers' comp: class rates + premium-audit report.
         '/payroll/workers-comp': { page: 'payroll-workers-comp', label: 'Workers Comp', render: () => WorkersCompPage.render() },
+        // Payroll report library: journal, deduction register, contractor payments.
+        '/payroll/reports': { page: 'payroll-reports', label: 'Payroll Reports', render: () => PayrollReportsPage.render() },
     },
 
     async navigate(hash) {

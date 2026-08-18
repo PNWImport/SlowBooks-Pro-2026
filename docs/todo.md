@@ -193,6 +193,8 @@ operator submits themselves.
   (`/deduction-register?year=`), contractor payments by path
   (`/contractor-payments?year=`). Workers' comp, liability calendar,
   SUI, and the remittance register live at their own endpoints.
+  SPA page at `#/payroll/reports` — three tabs (journal by run,
+  deduction register, contractor payments by path).
   Follow-up: department / job-cost allocation needs a department
   dimension the app doesn't have.
 

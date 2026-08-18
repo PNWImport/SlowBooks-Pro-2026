@@ -275,10 +275,6 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("POST", "/api/esign"),
     ("POST", "/api/esign/{envelope_id}/void"),
     ("GET", "/api/esign/{envelope_id}/verify"),
-    # Payroll report library — API-first; SPA cards tracked in docs/todo.md.
-    ("GET", "/api/reports/payroll-journal"),
-    ("GET", "/api/reports/deduction-register"),
-    ("GET", "/api/reports/contractor-payments"),
     # Contractor pay runs — vendor bank-account management is admin/scripting;
     # the SPA page calls the run + process + NACHA endpoints directly.
     ("GET", "/api/contractor-runs/vendors/{vendor_id}/bank"),
