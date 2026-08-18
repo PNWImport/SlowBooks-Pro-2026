@@ -2,7 +2,6 @@
 
 import re
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -29,8 +28,16 @@ def test_deposit_schedule_shape(client):
     resp = client.get("/api/tax-forms/deposit-schedule?year=2026")
     assert resp.status_code == 200
     data = resp.json()
-    for key in ("year", "lookback_start", "lookback_end", "lookback_quarters",
-                "lookback_total", "threshold", "schedule", "note"):
+    for key in (
+        "year",
+        "lookback_start",
+        "lookback_end",
+        "lookback_quarters",
+        "lookback_total",
+        "threshold",
+        "schedule",
+        "note",
+    ):
         assert key in data, f"missing key {key}"
     assert data["schedule"] in ("monthly", "semiweekly")
     assert len(data["lookback_quarters"]) == 4

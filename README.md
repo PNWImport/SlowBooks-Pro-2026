@@ -27,6 +27,8 @@ The codebase is annotated with "decompilation" comments referencing `QBW32.EXE` 
 
 ## What's New
 
+**Payroll depth + a tamper-evident compliance layer** — 50-state withholding driven by reviewable tables, local/municipal taxes (PA EIT+LST, OH, NYC, MD/IN county, KY, MI), quarterly SUI returns, EFW2 and 1099 e-file exports, IRS deposit-schedule classification with a full liability calendar, contractor pay runs with NACHA export, pay schedules, work locations, garnishment remittance tracking, benefits with ACA/COBRA, workers' comp premium audit, and a payroll report library. Underneath it, `document_audits` is now a **linked hash chain** with signed checkpoints you can export off-box and verify independently — plus at-rest encryption and blind indexing on the benefits ePHI surface. Every one of these has an admin UI page; see [docs/payroll-hr-module.md](docs/payroll-hr-module.md).
+
 **Full payroll & HR module** — Onboarding checklists, time tracking, PTO policies and requests, deductions (401k, health, HSA), court-ordered garnishments, W-2/W-3/940/941 generation, and a token-accessed employee self-service portal for pay stubs, W-4 updates, direct-deposit setup, and time-off requests.
 
 **Analytics dashboard + AI Insights** — KPI cards plus four charts (12-month revenue line, expenses doughnut, A/R+A/P stacked bar, 90-day cash forecast), MTD/QTD/YTD period selector, CSV/PDF export with branded headers. Optional one-shot executive brief and 11 curated predefined analyses via bring-your-own-key for any of seven providers (xAI Grok, Groq, Cloudflare Workers AI, Anthropic Claude, OpenAI, Google Gemini); keys encrypted at rest.
@@ -110,7 +112,7 @@ For backups, restore, key rotation, and monitoring see **[docs/operations.md](do
 | [INSTALL.md](INSTALL.md) | Install / first-run / upgrade guide (Docker + native Linux/macOS) |
 | [docs/features.md](docs/features.md) | Full feature catalog + API endpoint reference + IIF interoperability |
 | [docs/development.md](docs/development.md) | Tech stack, project structure, contributor flow |
-| [docs/data-model.md](docs/data-model.md) | Database schema — 55 tables |
+| [docs/data-model.md](docs/data-model.md) | Database schema — 68 tables |
 | [docs/operations.md](docs/operations.md) | Backups, restore, key rotation, monitoring runbook |
 | [docs/payroll-hr-module.md](docs/payroll-hr-module.md) | Payroll / HR — models, routes, UI pages, pending items |
 | [docs/release-checklist.md](docs/release-checklist.md) | Production deployment checklist — secrets, TLS, backups, monitoring, pre-flight |

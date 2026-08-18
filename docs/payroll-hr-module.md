@@ -12,7 +12,7 @@ what's in each tier, where each piece lives, and what's still pending.
 | **Tier 2** | Deductions (401k, HSA, etc.), garnishments | ✅ | ✅ | ✅ |
 | **Tier 3 — Tax forms (JSON)** | W-2, W-3, Form 940, Form 941 endpoints — machine-readable | ✅ | ✅ | ✅ |
 | **Tier 3 — Tax forms (PDF)** | WeasyPrint-rendered, employer-branded, audit-hashed | ✅ | ✅ | ✅ |
-| **Tier 3 — Document audit hashes** | Per-document SHA-256 in PDF footer + `document_audits` ledger (not a linked chain — see hipaa-compliance.md) | ✅ | n/a | ✅ |
+| **Tier 3 — Document audit hashes** | Per-document SHA-256 in PDF footer + `document_audits` as a linked hash chain with signed, exportable checkpoints | ✅ | ✅ | ✅ |
 | **Tier 3 — Portal** | Token-accessed self-service for pay stubs, W-4, bank, PTO | ✅ | n/a | ✅ |
 | **Tier 3 — Portal cookie session** | URL token only at first claim; subsequent navigation is cookieless | ✅ | n/a | ✅ |
 | **Tier 3 — Portal hardening** | Expiration, no-referrer, rate limiting, employer branding | ✅ | ✅ | ✅ |
@@ -22,22 +22,22 @@ what's in each tier, where each piece lives, and what's still pending.
 | **Local/municipal taxes** | PA EIT+LST, OH muni+SD, NYC/Yonkers, MD/IN county, KY, MI | ✅ | n/a | ✅ |
 | **Quarterly SUI** | Per-employee wage report, JSON + audit-hashed PDF | ✅ | ✅ | ✅ |
 | **E-file exports** | EFW2 (SSA Pub 42-007) + IRS Pub 1220 1099-NEC | ✅ | ✅ | ✅ |
-| **Deposit schedule** | Pub 15 lookback, $100k next-day, FUTA floor, liability calendar | ✅ | n/a | ✅ |
-| **Contractor pay runs** | Batch pay 1099 payees, JE + NACHA, feeds 1099 totals | ✅ | n/a | ✅ |
-| **Pay schedules** | Anchored calendars, cutoffs, weekend shifting | ✅ | n/a | ✅ |
-| **Retro pay / proration** | Mid-period salary blend + retro shortfall staging | ✅ | n/a | ✅ |
-| **Termination** | Per-state final-paycheck deadlines + PTO payout staging | ✅ | n/a | ✅ |
-| **Garnishment remittance** | Agency payees + pending register + mark-remitted | ✅ | n/a | ✅ |
+| **Deposit schedule** | Pub 15 lookback, $100k next-day, FUTA floor, liability calendar | ✅ | ✅ | ✅ |
+| **Contractor pay runs** | Batch pay 1099 payees, JE + NACHA, feeds 1099 totals | ✅ | ✅ | ✅ |
+| **Pay schedules** | Anchored calendars, cutoffs, weekend shifting | ✅ | ✅ | ✅ |
+| **Retro pay / proration** | Mid-period salary blend + retro shortfall staging | ✅ | ✅ | ✅ |
+| **Termination** | Per-state final-paycheck deadlines + PTO payout staging | ✅ | ✅ | ✅ |
+| **Garnishment remittance** | Agency payees + pending register + mark-remitted | ✅ | ✅ | ✅ |
 | **Tipped wages** | Top-up guarantee, tip taxation, Form 8846 | ✅ | n/a | ✅ |
-| **Work locations** | First-class jurisdictions with validated state/locality | ✅ | n/a | ✅ |
-| **Benefits / ACA / COBRA** | Plans, enrollment, dependents, 1095 data, COBRA notice | ✅ | n/a | ✅ |
-| **Workers' comp** | Carrier class rates + premium-audit report | ✅ | n/a | ✅ |
+| **Work locations** | First-class jurisdictions with validated state/locality | ✅ | ✅ | ✅ |
+| **Benefits / ACA / COBRA** | Plans, enrollment, dependents, 1095 data, COBRA notice | ✅ | ✅ | ✅ |
+| **Workers' comp** | Carrier class rates + premium-audit report | ✅ | ✅ | ✅ |
 | **E-signature** | Envelopes sealed into the document-audit ledger | ✅ | portal | ✅ |
-| **Org chart / reviews** | Manager tree, team PTO calendar, review lifecycle | ✅ | n/a | ✅ |
-| **Payroll reports** | Journal, deduction register, contractor payments | ✅ | n/a | ✅ |
+| **Org chart / reviews** | Manager tree, team PTO calendar, review lifecycle | ✅ | ✅ | ✅ |
+| **Payroll reports** | Journal, deduction register, contractor payments | ✅ | ✅ | ✅ |
 | **Migration parity** | `alembic upgrade head` verified against model metadata | ✅ | n/a | ✅ |
 
-695 tests pass across the full suite.
+899 tests across the full suite (898 pass, 1 skips without PostgreSQL).
 
 State coverage went from 4 states (WA/CA/NY/OR, hand-written) to all 50 plus
 DC. The other 47 are driven by reviewable JSON tables — see
@@ -208,7 +208,22 @@ All return `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 | `#/hr/pto` | Policies + pending requests | `pto.js` |
 | `#/hr/deductions` | Types, per-employee, garnishments | `deductions.js` |
 | `#/hr/tax-forms` | W-2/W-3/940/941 generation | `tax_forms.js` |
+| `#/hr/benefits` | Plans, enrollment, dependents, COBRA, ACA 1095 | `benefits.js` |
+| `#/hr/team` | Org chart, team PTO calendar, performance reviews | `hr_views.js` |
+| `#/payroll/schedules` | Pay cadences, upcoming-date preview, assignment | `pay_schedules.js` |
+| `#/payroll/locations` | Work locations, jurisdictions, employee roster | `locations.js` |
+| `#/payroll/contractors` | Contractor pay runs, JE posting, NACHA export | `contractor_runs.js` |
+| `#/payroll/remittances` | Garnishment remittance register, mark-remitted | `garnishment_remittances.js` |
+| `#/payroll/deposit-calendar` | Depositor classification + liability calendar | `deposit_calendar.js` |
+| `#/payroll/workers-comp` | Class rates + premium-audit report | `workers_comp.js` |
+| `#/payroll/reports` | Payroll journal, deduction register, contractors | `payroll_reports.js` |
+| `#/compliance` | Audit hash chain, checkpoints, artifact verification | `compliance.js` |
 | `#/employees/{id}` | Details modal with portal/YTD/bank/docs tabs | `employees.js` |
+
+Two workflows are affordances on existing pages rather than pages of
+their own: **Retro Pay** (button on `#/payroll` — preview table, then
+apply) and **Terminate** (button on active `#/employees` rows — deadline,
+PTO payout, staged run).
 
 ---
 
@@ -225,14 +240,13 @@ pay-run auto-population are all live. What's left is in `docs/todo.md`:
   per employee because `Employee` has no `state_allowances` column
 - **E-Verify submission flow** — schema has `everify_case_number` but
   no integration with the federal system
-- **Portal-token UI on admin side** — show expiry and last-used
-  inline (the API already returns `expires_at`)
-- **CSP nonce mode** — drop `'unsafe-inline'` once the inline bootstrap
-  script in `index.html` moves to an external file
+- **CSP nonce mode** — `script-src` still carries `'unsafe-inline'`. The
+  inline bootstrap script is already gone from `index.html`, but ~446
+  inline event handlers (`onclick=`, `oninput=`, `onsubmit=`) across the
+  SPA modules need `'unsafe-inline'` just as much. Nonce mode means
+  converting all of them to `addEventListener` wiring — a real refactor,
+  not a header flip.
 - **Penetration test against a staging deploy** — never done
-- **Encryption rewrap CLI** — `python -m app.services.encryption rewrap`
-  for offline key rotation; in-flight rotation via
-  `PAYROLL_ENCRYPTION_SECRET_PREV` already works
 
 ---
 

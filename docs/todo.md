@@ -1,9 +1,66 @@
 # TODO / Working Notes
 
-Internal scratchpad for things we know we need to do but haven't shipped
-yet. Not user-facing — the README and CHANGELOG don't link here on
-purpose. When something on this list lands, move it to `CHANGELOG.md`
-under `[Unreleased]` and delete it from here.
+Internal scratchpad. Not user-facing — the README and CHANGELOG don't
+link here on purpose.
+
+**Layout:** open work first (payroll/HR follow-ups, test-coverage gaps,
+security/ops, future work), then the shipped archive. Shipped entries
+stay because they carry the design rationale and the follow-ups each
+feature created — but every one of those follow-ups is also lifted into
+the open section at the top, so nothing actionable hides behind a
+strikethrough. When something lands, summarize it in `CHANGELOG.md`
+under `[Unreleased]` and move its entry down to the archive.
+
+---
+
+## Open work — payroll/HR follow-ups
+
+Every item below was created by a shipped feature and is currently
+recorded only inside a struck-through entry further down this file.
+Pulled up here so the open surface is visible in one place.
+
+**Blocking real payroll use — data verification:**
+- **Verify the 47 state withholding tables** — all ship
+  `"verified": false`. Verify the states you actually pay in against
+  their published guides; see `docs/state-tax-tables.md`.
+- **Verify the 32 locality files** — same, all `"verified": false`.
+  See `docs/local-taxes.md`.
+- **Verify e-file layouts** — EFW2 / Pub 1220 output has never been run
+  through AccuWage or checked against current-year specs.
+
+**Missing schema dimensions (each blocks a named feature):**
+- **`Employee.state_allowances`** — `exemption_allowance` assumes one
+  allowance per employee because the column doesn't exist.
+- **Department / job-cost dimension** — payroll reports can't allocate
+  by department without it.
+- **Gross-receipts tracking** — Form 8027 (allocated tips) needs it.
+- **ACA offer codes + affordability safe harbors** — offers aren't
+  modelled, so 1095-C lines 14-16 can't be derived.
+- **Full SSNs for EFW2** — the app stores last-4 only, so the
+  transmittal zero-fills. Also needs a TCC config field.
+
+**Feature gaps with a known shape:**
+- **Contractor run void** — no void endpoint for a processed run;
+  mirror the payroll void (row-lock, reversing JE, idempotent flag).
+- **Holiday calendar + blackout dates** — pay schedules shift weekends
+  only, so a pay date landing on a federal holiday isn't moved.
+- **Federal holidays in the deposit calendar** — same gap; the roll is
+  weekend-only, so a due date can read at most a day early.
+- **Per-locality W-2 box 20 split** — multiple localities currently
+  join into one line.
+- **Auto-end benefit enrollments on termination** — termination
+  deactivates deductions but leaves enrollments open.
+- **1095-C PDF + AIR e-file** — JSON derivation ships; rendering and
+  transport do not.
+- **Child-support e-IWO / NACHA CCD+ addenda** — remittance register
+  tracks the money but emits no agency-facing file.
+- **MI residence credit cap + LST low-income exemption** — documented
+  simplifications in the local-tax engine.
+
+**Needs an outside party:**
+- **E-signature past counsel** — before relying on it for I-9s
+  specifically (federal e-signature rules).
+- **Penetration test against a staging deploy** — external scope.
 
 ---
 
@@ -43,13 +100,14 @@ item, asserting (a) construction with required fields, (b) defaults,
 
 ---
 
-## Payroll / HR — still open
+## Shipped — payroll/HR (kept for the design notes)
 
-Measured against a full-service provider (Gusto et al.), the local-only gaps
-are ordered below. Anything needing an external API — ACH origination, EFTPS
-remittance, e-file transport, carrier feeds — is deliberately out of scope;
-what's listed is all buildable in-repo as computation, records, or files the
-operator submits themselves.
+Measured against a full-service provider (Gusto et al.). Everything below
+has shipped — backend, admin UI, and tests. Anything needing an external
+API — ACH origination, EFTPS remittance, e-file transport, carrier feeds —
+was deliberately left out of scope; what shipped is computation, records,
+and files the operator submits themselves. Entries keep their design notes
+and their follow-ups (all of which also appear in the open section above).
 
 - ~~**50-state withholding**~~ — DONE: table-driven engine + 47 JSON tables
   + per-state SUTA rates and wage bases. See `docs/state-tax-tables.md`.
@@ -202,7 +260,7 @@ operator submits themselves.
 
 ---
 
-## Security / ops — still open
+## Security / ops — open
 
 - **CSP `script-src` `'unsafe-inline'` removal** — index.html is clean
   as of the bootstrap.js refactor. What's left: the inline `onclick=`

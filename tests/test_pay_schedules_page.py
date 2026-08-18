@@ -1,9 +1,7 @@
 """Tests for the Pay Schedules SPA page and its backend contracts."""
 
 import re
-from datetime import date
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -45,8 +43,15 @@ def test_create_schedule(client):
     )
     assert resp.status_code == 201
     data = resp.json()
-    for key in ("id", "name", "frequency", "anchor_pay_date", "submission_lead_days",
-                "weekend_shift", "is_active"):
+    for key in (
+        "id",
+        "name",
+        "frequency",
+        "anchor_pay_date",
+        "submission_lead_days",
+        "weekend_shift",
+        "is_active",
+    ):
         assert key in data, f"missing key {key}"
     assert data["name"] == "Biweekly Friday"
     assert data["frequency"] == "biweekly"

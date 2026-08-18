@@ -2,7 +2,6 @@
 
 import re
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -45,7 +44,9 @@ def test_navigate_targets_resolve():
     for fname in ("payroll.js", "employees.js"):
         js = _raw.get(f"/static/js/{fname}").text
         for target in re.findall(r"App\.navigate\(['\"]#(/[^'\"]+)", js):
-            assert target in routes, f"{fname}: navigate target {target} not in App.routes"
+            assert (
+                target in routes
+            ), f"{fname}: navigate target {target} not in App.routes"
 
 
 def test_retro_preview_shape(client):
@@ -56,8 +57,14 @@ def test_retro_preview_shape(client):
     )
     assert resp.status_code == 200
     data = resp.json()
-    for key in ("employee_id", "current_rate", "new_rate", "effective_date",
-                "periods", "retro_pay_due"):
+    for key in (
+        "employee_id",
+        "current_rate",
+        "new_rate",
+        "effective_date",
+        "periods",
+        "retro_pay_due",
+    ):
         assert key in data, f"missing key {key}"
     assert data["retro_pay_due"] == 0.0  # no pay history yet
 
@@ -79,9 +86,17 @@ def test_terminate_response_shape(client):
     )
     assert resp.status_code == 200
     data = resp.json()
-    for key in ("employee_id", "termination_date", "reason", "final_paycheck",
-                "pto_payout", "pto_payout_staged", "pto_payout_run_id",
-                "deductions_deactivated", "portal_token_revoked"):
+    for key in (
+        "employee_id",
+        "termination_date",
+        "reason",
+        "final_paycheck",
+        "pto_payout",
+        "pto_payout_staged",
+        "pto_payout_run_id",
+        "deductions_deactivated",
+        "portal_token_revoked",
+    ):
         assert key in data, f"missing key {key}"
     # Keys the terminate modal renders.
     assert "deadline_description" in data["final_paycheck"]

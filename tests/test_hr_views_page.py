@@ -2,7 +2,6 @@
 
 import re
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -91,9 +90,21 @@ def test_review_lifecycle(client):
     )
     assert created.status_code == 201
     review = created.json()
-    for key in ("id", "employee_id", "employee_name", "reviewer_name",
-                "period_start", "period_end", "status", "rating", "goals",
-                "feedback", "employee_comment", "submitted_at", "acknowledged_at"):
+    for key in (
+        "id",
+        "employee_id",
+        "employee_name",
+        "reviewer_name",
+        "period_start",
+        "period_end",
+        "status",
+        "rating",
+        "goals",
+        "feedback",
+        "employee_comment",
+        "submitted_at",
+        "acknowledged_at",
+    ):
         assert key in review, f"missing key {key}"
     assert review["status"] == "draft"
     rid = review["id"]

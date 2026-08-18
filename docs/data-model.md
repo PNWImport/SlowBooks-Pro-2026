@@ -1,8 +1,11 @@
 # Data Model
 
-Schema reference for the Slowbooks PostgreSQL database. 55 tables on
+Schema reference for the Slowbooks PostgreSQL database. 68 tables on
 a double-entry accounting foundation. For migration history, see the
 files under `migrations/versions/`; for model code, see `app/models/`.
+
+`tests/test_data_model_doc.py` asserts this table list matches
+`Base.metadata` exactly — a new model without a row here fails CI.
 
 | Table | Purpose |
 |-------|---------|
@@ -48,7 +51,34 @@ files under `migrations/versions/`; for model code, see `app/models/`.
 | `email_templates` | Customizable email templates |
 | `inventory_movements` | Per-item qty/cost ledger (purchases, sales, adjustments) |
 | `saved_reports` | Named (report_type + parameters) tuples |
-| `document_audits` | Per-document SHA-256 ledger for generated documents (W-2/W-3/940/941/SUI/COBRA/e-signature). Independent rows, not a linked chain |
+| `document_audits` | Per-document SHA-256 ledger for generated documents (W-2/W-3/940/941/SUI/COBRA/e-signature). A linked hash chain — each row commits to its predecessor, so a deletion or edit breaks verification |
+| `audit_checkpoints` | Signed chain-tip snapshots of `document_audits`, exportable off-box for independent verification |
+| `signature_envelopes` | E-signature envelopes — frozen document body + SHA-256, sealed into the audit chain on signing |
 | `portal_accesses` | Audit log for self-service portal hits (success + failure) |
 | `login_attempts` | Authentication-attempt audit log |
 | `reseller_permits` | Per-entity sales-tax reseller permits with expiration + verification trail |
+
+## Payroll & HR
+
+| Table | Purpose |
+|-------|---------|
+| `onboarding_tasks` | Per-employee onboarding checklist items with completion tracking |
+| `time_entries` | Hours worked, approval state, and the pay run that consumed them |
+| `pto_policies` | Accrual policies — rate, method, carryover cap, max balance |
+| `pto_accruals` | Per-employee balance, accrued YTD, and used YTD against a policy |
+| `pto_requests` | Time-off requests with approve/reject lifecycle |
+| `deduction_types` | Deduction catalog (401k, HSA, health) with pre/post-tax treatment |
+| `employee_deductions` | Per-employee recurring deduction enrollments |
+| `garnishment_orders` | Court-ordered garnishments — type, calc method, priority, agency |
+| `garnishment_remittances` | Money withheld and owed to an agency, with mark-remitted trail |
+| `pay_schedules` | Named pay cadences — frequency, anchor date, lead days, weekend shift |
+| `work_locations` | Places of work with validated state/locality tax jurisdictions |
+| `employee_bank_accounts` | Direct-deposit destinations (encrypted at rest) |
+| `contractor_pay_runs` | Batch 1099 contractor pay runs with JE + NACHA export |
+| `contractor_payments` | Per-vendor payment lines inside a contractor run |
+| `vendor_bank_accounts` | Contractor ACH destinations for NACHA generation |
+| `benefit_plans` | Benefit plan catalog — carrier, type, coverage tiers, costs |
+| `benefit_enrollments` | Per-employee elections (ePHI — encrypted, blind-indexed) |
+| `benefit_dependents` | Dependents covered under an enrollment (ePHI — encrypted) |
+| `wc_class_rates` | Workers' comp carrier class rates per $100 of payroll |
+| `performance_reviews` | Review lifecycle — draft, submitted, acknowledged |

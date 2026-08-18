@@ -3,7 +3,6 @@
 import re
 from datetime import date
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient

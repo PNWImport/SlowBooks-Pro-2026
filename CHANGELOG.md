@@ -7,6 +7,121 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### CI lint gate was red, and floating pins were why
+
+`ci.yml` installed `black>=24.8.0` and `ruff>=0.6.0` with no upper bound,
+so every run linted against whatever had shipped most recently. Ruff has
+since widened its default rule set considerably: on an unchanged tree,
+ruff 0.16 reports 2526 findings where 0.6 reports none of them — 426 are
+B008, which flags FastAPI's own `Depends()` default-argument idiom, so
+they were never going to be actionable. With `test` gated behind
+`needs: lint`, the whole pipeline was blocked. Both tools are now pinned
+to the minor series the tree was actually swept against, in `ci.yml` and
+`requirements-dev.txt`, so the gate is reproducible and upgrades happen
+deliberately alongside a formatting sweep.
+
+Pinning surfaced 16 genuine findings that had accumulated under the
+broken gate — unused imports across `app/models/reviews.py`,
+`app/routes/benefits.py`, `app/routes/esign.py` and eight test modules,
+plus a mid-file `pydantic` import in `app/routes/employees.py` (E402)
+now hoisted to the top block. Tree is clean under both black 24.10 and
+ruff 0.6.9, verified at the exact versions CI installs. 901 tests.
+
+### Admin UI for the whole payroll/HR surface
+
+Every payroll and HR feature built over the preceding tiers had a
+backend and tests but no page; `_INTENTIONAL_BACKEND_ONLY` in
+`tests/test_wiring.py` had grown into a 30-route parking lot. This wave
+cleared it. Ten new SPA pages — contractor pay runs
+(`#/payroll/contractors`, create/process/NACHA export), garnishment
+remittances (`#/payroll/remittances`, pending filter + mark-remitted),
+pay schedules (`#/payroll/schedules`, CRUD + upcoming-date preview +
+assignment), work locations (`#/payroll/locations`, CRUD + roster +
+assignment), HR team (`#/hr/team`, org chart / PTO calendar / reviews in
+three tabs), tax deposit calendar (`#/payroll/deposit-calendar`,
+classification + liability table), workers' comp
+(`#/payroll/workers-comp`, rates + premium audit), payroll reports
+(`#/payroll/reports`, journal / deduction register / contractor
+payments), plus benefits and compliance from the preceding entries. Two
+workflows landed as affordances on existing pages rather than pages of
+their own: Retro Pay on `#/payroll` (preview table, then apply) and
+Terminate on active `#/employees` rows (deadline, PTO payout, staged
+run). The wiring test now runs with 15 fewer allowlist entries; what
+remains is genuinely backend-only (webhooks, admin scripting). A
+deny-by-default regression test asserts all 16 new endpoint groups 401
+without a session. 676 -> 898 tests.
+
+### Docs — schema reference caught up, and pinned
+
+`docs/data-model.md` had drifted 22 tables behind the models (it claimed
+55; there are 68) and still described `document_audits` as "independent
+rows, not a linked chain" three commits after it became one.
+Regenerated with every payroll/HR table, and `tests/test_data_model_doc.py`
+now asserts the doc lists exactly `Base.metadata.tables` and states the
+right count — so a new model without a doc row fails CI instead of
+rotting quietly. Also corrected: the payroll module's status snapshot
+(11 rows claimed "Admin UI: n/a" for pages that now exist), its stale
+695-test figure, and a "pending" list carrying two items that had
+already shipped. The CSP note was wrong about its own blocker — the
+inline bootstrap script is long gone, but ~446 inline event handlers
+across the SPA modules need `'unsafe-inline'` just as much, so nonce
+mode is a real refactor rather than a header flip. 899 tests.
+
+### Tamper-evident audit chain + ePHI encryption at rest
+
+The compliance wave, in the order the gaps were found and closed.
+
+**Migration/model parity.** Five migrations declared native PostgreSQL
+enums the models never matched, which meant `alembic upgrade head`
+produced a schema the app couldn't write to on Postgres (SQLite dev
+never noticed). Fixed, and `tests/test_migration_schema_parity.py` now
+guards enum DDL, table coverage, and column drift so the pair can't
+separate again. The same pass rewrote the HIPAA doc's claim about the
+audit ledger to state its actual limitation rather than its intent.
+
+**A real linked hash chain.** `document_audits` was independent SHA-256
+rows — it detected alteration of a document's *content* and nothing
+else, so deleting an audit row left every survivor verifying perfectly.
+Each row now commits to its predecessor
+(`chain_hash(N) = SHA256(prev_hash | content_hash | doc_type | doc_key
+| created_at)`, genesis = 64 zeros), with `doc_type`, `doc_key`, and
+`created_at` inside the hash so a row can't be relabelled or back-dated
+either. Content alteration, audit-row alteration, mid-chain deletion,
+reordering, insertion, and back-dating are each detected and reported
+distinctly. Appends take a row lock (`SELECT FOR UPDATE` on Postgres) so
+concurrent writers can't fork the chain.
+
+**Checkpoints, signed and exportable.** Tail truncation is the one thing
+linkage can't catch — a shortened chain is internally valid — so
+`audit_checkpoints` pins (tip id, tip chain hash, row count) at a moment
+in time. Checkpoints are signed and exportable off-box, because an
+attacker with full DB write access can delete checkpoint rows too; the
+verify path reports containment and signature *separately*, so an
+unsigned checkpoint over a clean chain reads as a setup gap rather than
+as tampering.
+
+**Benefits ePHI encrypted, then actually encrypted.** The benefits
+tables were treated as ePHI and encrypted at rest — but the first pass
+left plan kind, coverage window, and the employee foreign key in
+plaintext, so table access still revealed *which employees held medical
+coverage over which months*. Encrypting those breaks equality queries
+(Fernet output is randomized), so each got a blind index: a
+deterministic `HMAC-SHA256(key, "b1|<table>.<column>|<value>")` sidecar
+column that keeps lookups working, with the column name inside the hash
+so the same value can't be correlated across tables. Indexes stay in
+sync via mapper events rather than call sites, so no write path can
+silently drop a row out of every filtered query.
+
+**The Compliance tab.** `#/compliance` answers the four questions an
+auditor actually asks — does this document match its data (hash
+lookup), has anything been removed (chain verify), was the tail
+truncated (checkpoints), and were the checkpoints themselves deleted
+(paste an exported artifact back in). Create / verify / export are one
+click each. Driven end-to-end in Chromium including the
+delete-the-tail-and-every-checkpoint case.
+
+676 -> 813 tests across the wave.
+
 ### Payroll report library
 
 The reporting surface over what the payroll features write.

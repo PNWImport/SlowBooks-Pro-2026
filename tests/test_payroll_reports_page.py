@@ -2,7 +2,6 @@
 
 import re
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -31,8 +30,16 @@ def test_payroll_journal_shape(client):
     data = resp.json()
     for key in ("start", "end", "runs", "totals"):
         assert key in data, f"missing key {key}"
-    for key in ("gross", "federal", "state", "ss", "medicare", "net",
-                "employer_taxes", "garnishments"):
+    for key in (
+        "gross",
+        "federal",
+        "state",
+        "ss",
+        "medicare",
+        "net",
+        "employer_taxes",
+        "garnishments",
+    ):
         assert key in data["totals"], f"missing totals key {key}"
 
 
@@ -55,7 +62,9 @@ def test_contractor_payments_shape(client):
 
 
 def test_contractor_payments_includes_run_path(client):
-    v = client.post("/api/vendors", json={"name": "Report Vendor", "is_1099_vendor": True})
+    v = client.post(
+        "/api/vendors", json={"name": "Report Vendor", "is_1099_vendor": True}
+    )
     assert v.status_code == 201
     vid = v.json()["id"]
 

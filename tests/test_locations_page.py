@@ -2,7 +2,6 @@
 
 import re
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -44,8 +43,18 @@ def test_create_location(client):
     )
     assert resp.status_code == 201
     data = resp.json()
-    for key in ("id", "name", "state", "city", "address1", "address2",
-                "zip", "locality", "default_wc_class_code", "is_active"):
+    for key in (
+        "id",
+        "name",
+        "state",
+        "city",
+        "address1",
+        "address2",
+        "zip",
+        "locality",
+        "default_wc_class_code",
+        "is_active",
+    ):
         assert key in data, f"missing key {key}"
     assert data["name"] == "Seattle HQ"
     assert data["state"] == "WA"

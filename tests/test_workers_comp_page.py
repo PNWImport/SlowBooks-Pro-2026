@@ -2,7 +2,6 @@
 
 import re
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -37,7 +36,14 @@ def test_create_and_list_rates(client):
     )
     assert resp.status_code == 201
     rate = resp.json()
-    for key in ("id", "class_code", "state", "description", "rate_per_100", "is_active"):
+    for key in (
+        "id",
+        "class_code",
+        "state",
+        "description",
+        "rate_per_100",
+        "is_active",
+    ):
         assert key in rate, f"missing key {key}"
     assert rate["state"] == "WA"
     assert rate["is_active"] is True

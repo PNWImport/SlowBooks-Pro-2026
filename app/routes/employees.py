@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import FileResponse
+from pydantic import BaseModel as _BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -445,9 +446,6 @@ def delete_employee_document(emp_id: int, doc_id: int, db: Session = Depends(get
 
 
 # --- Termination / offboarding ----------------------------------------------
-
-
-from pydantic import BaseModel as _BaseModel
 
 
 class TerminateRequest(_BaseModel):

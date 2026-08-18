@@ -8,8 +8,6 @@
 # draft runs create nothing.
 # ============================================================================
 
-from decimal import Decimal
-
 
 def _create_employee(client, **overrides):
     body = {
