@@ -167,8 +167,61 @@ def _run_startup_security_checks():
                 "redirect becomes a no-op."
             )
 
+        _warn_on_proxy_misconfiguration()
+
     # Only after the cheap checks pass do we open a DB connection.
     Base.metadata.create_all(bind=engine)
+
+
+def _warn_on_proxy_misconfiguration():
+    """Two silent weakenings that only bite behind a reverse proxy.
+
+    Neither is fatal — the app serves correctly — so these warn rather
+    than refuse. Both degrade a security control without any visible
+    symptom, which is exactly the kind of thing that goes unnoticed for
+    a year.
+
+    1. Client IP. uvicorn parses X-Forwarded-For but only trusts it from
+       `forwarded_allow_ips`, default 127.0.0.1. A proxy in another
+       container or pod has a different address, so the header is
+       ignored and every request reports the PROXY's IP. That collapses
+       the login rate limiter into one shared bucket for all users and
+       writes the proxy's address into `login_attempts` and
+       `portal_accesses`, making the audit trail useless for forensics.
+       Fix: set FORWARDED_ALLOW_IPS to the proxy's address or CIDR.
+       uvicorn reads that env var natively.
+
+    2. Rate-limit storage. In-process counters are per-worker and
+       per-replica, so the effective limit is N times the configured one.
+       Fix: set RATE_LIMIT_STORAGE_URI to shared storage.
+    """
+    import logging
+    import os
+
+    from app.services.rate_limit import RATE_LIMIT_STORAGE_URI, _enabled
+
+    log = logging.getLogger("uvicorn.error")
+
+    if FORCE_HTTPS and not os.environ.get("FORWARDED_ALLOW_IPS", "").strip():
+        log.warning(
+            "FORWARDED_ALLOW_IPS is unset while FORCE_HTTPS is on, which implies "
+            "TLS terminates at a proxy. uvicorn trusts X-Forwarded-For only from "
+            "127.0.0.1, so client IPs will be recorded as the proxy's address: the "
+            "login rate limiter degrades to a single shared bucket and "
+            "login_attempts / portal_accesses lose forensic value. Set "
+            "FORWARDED_ALLOW_IPS to your proxy's address or CIDR."
+        )
+
+    workers = int(os.environ.get("APP_WORKERS", "1") or "1")
+    if _enabled and not RATE_LIMIT_STORAGE_URI and workers > 1:
+        log.warning(
+            "Rate limiting is on with APP_WORKERS=%d but RATE_LIMIT_STORAGE_URI is "
+            "unset, so each worker keeps its own counters — every configured limit "
+            "is effectively %dx looser (more still, across replicas). Point "
+            "RATE_LIMIT_STORAGE_URI at shared storage, e.g. redis://redis:6379/0.",
+            workers,
+            workers,
+        )
 
 
 @asynccontextmanager

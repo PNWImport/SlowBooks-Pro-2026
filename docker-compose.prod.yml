@@ -70,6 +70,21 @@ services:
       SESSION_IDLE_TIMEOUT_SECONDS: "${SESSION_IDLE_TIMEOUT_SECONDS:-14400}"
       RATE_LIMIT_ENABLED: "1"
 
+      # Client-IP trust. This file assumes a TLS-terminating proxy in front,
+      # which means the app sees the PROXY's IP unless it is told to trust
+      # that proxy's X-Forwarded-For. Without it the login rate limiter
+      # buckets every user together and the login_attempts / portal_accesses
+      # audit tables record the proxy address instead of the caller's.
+      # Set to your proxy's address or CIDR — never 0.0.0.0/0, which would
+      # let any client forge its own source IP. uvicorn reads this natively.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:?set to your reverse proxy's IP or CIDR, e.g. 172.18.0.0/16}
+
+      # Shared rate-limit counters. APP_WORKERS below defaults to 4, and
+      # in-process counters are per-worker, so leaving this unset makes every
+      # configured limit 4x looser than it reads. Point at redis for any
+      # multi-worker or multi-replica deploy.
+      RATE_LIMIT_STORAGE_URI: ${RATE_LIMIT_STORAGE_URI:-}
+
       # Required secrets. ?:err makes compose refuse to start with them empty.
       PAYROLL_ENCRYPTION_SECRET: ${PAYROLL_ENCRYPTION_SECRET:?missing PAYROLL_ENCRYPTION_SECRET — run: openssl rand -base64 32}
       SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:?missing SESSION_SECRET_KEY — run: openssl rand -hex 32}

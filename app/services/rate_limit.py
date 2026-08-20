@@ -21,4 +21,18 @@ _enabled = os.environ.get("RATE_LIMIT_ENABLED", "1").strip().lower() not in (
     "off",
 )
 
-limiter = Limiter(key_func=get_remote_address, enabled=_enabled)
+# Where the counters live. Unset = slowapi's in-process MemoryStorage, which
+# is correct for a single-worker container and WRONG the moment there is
+# more than one: every uvicorn worker and every replica keeps its own tally,
+# so a "5 per minute" login limit becomes 5 x workers x replicas. The prod
+# compose file ships APP_WORKERS=4, so the default is already 4x looser than
+# it reads. Point this at shared storage (e.g. redis://redis:6379/0) for any
+# multi-worker or multi-replica deploy; app.main warns loudly when it is
+# unset in a configuration where it matters.
+RATE_LIMIT_STORAGE_URI = os.environ.get("RATE_LIMIT_STORAGE_URI", "").strip()
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    enabled=_enabled,
+    **({"storage_uri": RATE_LIMIT_STORAGE_URI} if RATE_LIMIT_STORAGE_URI else {}),
+)
