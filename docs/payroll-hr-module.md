@@ -37,7 +37,9 @@ what's in each tier, where each piece lives, and what's still pending.
 | **Payroll reports** | Journal, deduction register, contractor payments | ✅ | ✅ | ✅ |
 | **Migration parity** | `alembic upgrade head` verified against model metadata | ✅ | n/a | ✅ |
 
-899 tests across the full suite (898 pass, 1 skips without PostgreSQL).
+~900 tests across the full suite (one skips without PostgreSQL). Exact
+count: `pytest --collect-only -q | tail -1` — prose figures rot on every
+commit, so this one is deliberately approximate.
 
 State coverage went from 4 states (WA/CA/NY/OR, hand-written) to all 50 plus
 DC. The other 47 are driven by reviewable JSON tables — see
