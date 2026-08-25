@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: slowbooks
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - pvc.yaml
+  - postgres.yaml
+  - redis.yaml
+  - migrate-job.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+
+# secret.example.yaml is deliberately NOT listed. Create the real Secret
+# out of band (see the kubectl command in that file) so a filled-in copy
+# never lands in git.
+
+images:
+  - name: slowbooks
+    newTag: latest

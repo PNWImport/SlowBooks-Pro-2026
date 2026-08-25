@@ -1,0 +1,58 @@
+# Schema migrations, run exactly once per deploy.
+#
+# This exists because app pods set RUN_MIGRATIONS=0. If every replica ran
+# `alembic upgrade head` on rollout they would contend for the same version
+# row, and the losers can exit non-zero mid-rollout — a self-inflicted
+# outage that only appears once you scale past one pod.
+#
+# Re-run on every image change. A Job's pod template is immutable, so
+# delete before re-applying:
+#   kubectl delete job slowbooks-migrate -n slowbooks --ignore-not-found
+#   kubectl apply -k k8s/
+#   kubectl wait --for=condition=complete job/slowbooks-migrate -n slowbooks --timeout=300s
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: slowbooks-migrate
+  namespace: slowbooks
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: slowbooks-migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: slowbooks:latest
+          imagePullPolicy: IfNotPresent
+          # Bypass the entrypoint: no server, just schema + seed.
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              echo "Applying migrations..."
+              alembic upgrade head
+              echo "Seeding (idempotent)..."
+              python scripts/seed_database.py
+              echo "Done."
+          envFrom:
+            - configMapRef:
+                name: slowbooks-config
+            - secretRef:
+                name: slowbooks-secrets
+          env:
+            # The startup HTTPS guard is a server concern; this pod serves
+            # nothing. Left true it would fail a schema migration over a
+            # check about redirect behaviour it never performs.
+            - name: FORCE_HTTPS
+              value: "false"
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { memory: "1Gi" }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }

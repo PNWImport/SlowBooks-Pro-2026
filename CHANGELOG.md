@@ -7,6 +7,41 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Kubernetes manifests
+
+`k8s/` deploys the app with `kubectl apply -k`: namespace, ConfigMap,
+Secret template, PVCs, Postgres StatefulSet, Redis, migrate Job,
+Deployment, Service, Ingress. Plain kustomize rather than Helm — there is
+one deployment shape here, and a chart would add indirection without
+adding choice.
+
+Two things needed changing in the image to make this correct. The
+entrypoint ran migrations unconditionally, which is fine for one compose
+container and wrong for N replicas: they would all run
+`alembic upgrade head` on rollout and contend for the version row, so the
+losers can exit non-zero mid-deploy. `RUN_MIGRATIONS=0` now hands that to
+a Job that runs once. `WAIT_FOR_POSTGRES=0` likewise drops the pg_isready
+loop, which only delays the first CrashLoopBackOff on a platform that
+already supervises restarts.
+
+`replicas: 1` and the `Recreate` strategy are deliberate: uploads and
+backups sit on ReadWriteOnce volumes, which a second pod cannot mount.
+Scaling out means switching those to ReadWriteMany and raising replicas
+together — `tests/test_k8s_manifests.py` asserts the pairing so a
+half-done change fails in CI rather than as pods stuck Pending. That file
+carries 17 checks in total: probe paths must be on the auth-exempt list
+(a probe on an authenticated path 401s and the pod never goes ready), the
+app and migrate Job must share an image, the rate limiter must point at
+shared storage, proxy trust must be set and must not be 0.0.0.0/0, and
+the Secret template must contain no real values and stay out of
+kustomization. Writing them caught one design smell:
+`CORS_ALLOW_ORIGINS` was in the Secret, though it is your own public
+origin rather than a credential — moved to the ConfigMap.
+
+The README documents what is deliberately not covered: NetworkPolicies,
+PDB/HPA, off-cluster backups, and real secret management (these are plain
+Kubernetes Secrets, which are base64 in etcd, not encrypted).
+
 ### CI lint gate was red, and floating pins were why
 
 `ci.yml` installed `black>=24.8.0` and `ruff>=0.6.0` with no upper bound,

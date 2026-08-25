@@ -1,0 +1,38 @@
+# TLS termination + routing. Written for ingress-nginx; the annotations
+# differ per controller but the shape does not.
+#
+# Two things here are load-bearing, not cosmetic:
+#
+#  - proxy-body-size. Default is 1m, and this app takes document and
+#    attachment uploads. Leave it and uploads fail at the ingress with a
+#    413 that never reaches the app logs.
+#  - The app sees the INGRESS's IP unless FORWARDED_ALLOW_IPS in the
+#    ConfigMap covers the ingress controller's pod CIDR. Get it with:
+#      kubectl get pods -n ingress-nginx -o wide
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: slowbooks
+  namespace: slowbooks
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "25m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    # The app also emits HSTS itself (FORCE_HTTPS=true).
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["books.example.com"]
+      secretName: slowbooks-tls
+  rules:
+    - host: books.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: slowbooks
+                port:
+                  name: http

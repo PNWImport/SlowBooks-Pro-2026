@@ -1,0 +1,77 @@
+# Self-contained Postgres for clusters without a managed database.
+#
+# If you have RDS / Cloud SQL / Azure Database, delete this file and point
+# DATABASE_URL in the Secret at it. That is the better option: this
+# StatefulSet has no automated backup, failover, or point-in-time restore.
+apiVersion: v1
+kind: Service
+metadata:
+  name: slowbooks-postgres
+  namespace: slowbooks
+spec:
+  clusterIP: None
+  selector:
+    app: slowbooks-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: slowbooks-postgres
+  namespace: slowbooks
+spec:
+  serviceName: slowbooks-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: slowbooks-postgres
+  template:
+    metadata:
+      labels:
+        app: slowbooks-postgres
+    spec:
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: bookkeeper
+            - name: POSTGRES_DB
+              value: slowbooks
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: slowbooks-secrets
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "bookkeeper", "-d", "slowbooks"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "bookkeeper", "-d", "slowbooks"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { memory: "2Gi" }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi

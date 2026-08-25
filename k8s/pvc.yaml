@@ -1,0 +1,30 @@
+# Uploads and backups are written to the pod filesystem.
+#
+# ReadWriteOnce is the default because every cluster has it. It also caps
+# the Deployment at replicas: 1 — a second pod cannot mount the same RWO
+# volume (barring same-node scheduling, which you should not rely on).
+#
+# To scale past one replica you need ReadWriteMany: EFS, Azure Files,
+# CephFS, or an NFS provisioner. Change accessModes below AND raise
+# replicas in deployment.yaml. Nothing else needs to change.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: slowbooks-uploads
+  namespace: slowbooks
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: slowbooks-backups
+  namespace: slowbooks
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 20Gi

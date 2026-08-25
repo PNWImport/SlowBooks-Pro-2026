@@ -1,0 +1,43 @@
+# Non-secret configuration. Secrets live in secret.example.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: slowbooks-config
+  namespace: slowbooks
+data:
+  APP_DEBUG: "false"
+  APP_HOST: "0.0.0.0"
+  APP_PORT: "3001"
+
+  # One uvicorn worker per pod. Scale with replicas, not workers: k8s
+  # already supervises processes, and multi-worker pods make CPU requests
+  # and the rate-limit counters harder to reason about.
+  APP_WORKERS: "1"
+
+  FORCE_HTTPS: "true"
+  HSTS_MAX_AGE: "63072000"
+  SESSION_IDLE_TIMEOUT_SECONDS: "14400"
+  RATE_LIMIT_ENABLED: "1"
+
+  # Shared rate-limit counters. Without this each pod counts separately,
+  # so a "5 per minute" login limit becomes 5 x replicas per minute.
+  RATE_LIMIT_STORAGE_URI: "redis://slowbooks-redis:6379/0"
+
+  # Client-IP trust for X-Forwarded-For. MUST cover your ingress
+  # controller's pod CIDR, or every request is attributed to the ingress
+  # and the login limiter collapses into one shared bucket. Find it with:
+  #   kubectl get pods -n ingress-nginx -o wide
+  # Never 0.0.0.0/0 — that lets any client forge its own source IP.
+  FORWARDED_ALLOW_IPS: "10.0.0.0/8"
+
+  # The migrate Job owns schema changes; app pods must not race it.
+  RUN_MIGRATIONS: "0"
+  # k8s restarts pods that can't reach Postgres; the shell wait loop adds nothing.
+  WAIT_FOR_POSTGRES: "0"
+
+  # Browser origin allowlist for the SPA. Comma-separated, no wildcards.
+  # Public information — your own domain — so it lives here, not in the Secret.
+  CORS_ALLOW_ORIGINS: "https://books.example.com"
+
+  EMPLOYER_STATE: "WA"
+  SUTA_RATE: "0.012"

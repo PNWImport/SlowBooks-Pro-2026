@@ -1,0 +1,52 @@
+# Shared rate-limit counters. Without this, each app pod counts on its own
+# and every configured limit is multiplied by the replica count.
+#
+# Counters are ephemeral by design — no persistence, and losing them just
+# resets the windows. Do not put anything else in here expecting durability.
+apiVersion: v1
+kind: Service
+metadata:
+  name: slowbooks-redis
+  namespace: slowbooks
+spec:
+  selector:
+    app: slowbooks-redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slowbooks-redis
+  namespace: slowbooks
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: slowbooks-redis
+  template:
+    metadata:
+      labels:
+        app: slowbooks-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["--save", "", "--appendonly", "no", "--maxmemory", "128mb",
+                 "--maxmemory-policy", "allkeys-lru"]
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { memory: "192Mi" }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }

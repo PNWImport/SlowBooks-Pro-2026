@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slowbooks
+  namespace: slowbooks
+spec:
+  # Pinned at 1 because uploads/backups use ReadWriteOnce volumes, which a
+  # second pod cannot mount. Raise this ONLY after switching pvc.yaml to
+  # ReadWriteMany — otherwise the new pods sit Pending on volume attach.
+  replicas: 1
+  strategy:
+    # RollingUpdate would try to start a second pod holding the same RWO
+    # volume; it blocks until the old one dies, which reads as a stuck
+    # rollout. Recreate is honest about the single-replica constraint.
+    # Switch to RollingUpdate together with RWX + replicas > 1.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: slowbooks
+  template:
+    metadata:
+      labels:
+        app: slowbooks
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: slowbooks
+          image: slowbooks:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: slowbooks-config
+            - secretRef:
+                name: slowbooks-secrets
+          # /health is on the auth-exempt list in app/main.py, so probes do
+          # not need credentials.
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+            failureThreshold: 30   # up to 150s for a cold start
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests: { cpu: "200m", memory: "512Mi" }
+            limits: { memory: "2Gi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+            # Not read-only: WeasyPrint writes temp files during PDF render.
+            readOnlyRootFilesystem: false
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/app/static/uploads
+            - name: backups
+              mountPath: /app/backups
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: slowbooks-uploads
+        - name: backups
+          persistentVolumeClaim:
+            claimName: slowbooks-backups

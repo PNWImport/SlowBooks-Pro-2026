@@ -116,6 +116,7 @@ For backups, restore, key rotation, and monitoring see **[docs/operations.md](do
 | [docs/operations.md](docs/operations.md) | Backups, restore, key rotation, monitoring runbook |
 | [docs/payroll-hr-module.md](docs/payroll-hr-module.md) | Payroll / HR — models, routes, UI pages, pending items |
 | [docs/release-checklist.md](docs/release-checklist.md) | Production deployment checklist — secrets, TLS, backups, monitoring, pre-flight |
+| [k8s/README.md](k8s/README.md) | Kubernetes manifests — deploy runbook, scaling constraints, what's not covered |
 | [docs/tls-proxy-setup.md](docs/tls-proxy-setup.md) | How to put a real cert in front of Slowbooks (Caddy, nginx, Traefik) |
 | [docs/security-hardening.md](docs/security-hardening.md) | Production-readiness security pass — what changed, why, and how it's tested |
 | [docs/hipaa-compliance.md](docs/hipaa-compliance.md) | HIPAA Security Rule mapping — what aligns, what doesn't, honest gap list |
