@@ -7,6 +7,42 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Merged `main` into the payroll/compliance branch
+
+345 commits of parallel development, reconciled rather than replayed.
+Main won for structure — the `app/routes/payroll/` package, the benefits
+engine, the state-tax engine, request schemas, audit actor attribution.
+This branch won for the security work — the document-audit hash chain,
+signed checkpoints, encryption at rest, blind indexes.
+
+Both benefits systems now ship side by side, sharing no tables: main's
+engine (`BenefitCode`/`BenefitRate`/`EmployeeBenefit`, `/api/benefits`)
+handles deductions and contributions, while coverage
+(`BenefitPlan`/`BenefitEnrollment`/`BenefitDependent`, moved to
+`app/models/benefit_coverage.py` and `/api/benefit-coverage`) handles
+plans, ACA 1095 and COBRA. The coverage SPA page moved to
+`#/hr/benefit-coverage`; main took `#/hr/benefits`.
+
+The merge left a number of behaviours accepted-but-ignored, which is the
+failure mode worth naming: the request still succeeded, it just stopped
+doing the thing. Restored — tipped wages and the minimum-wage top-up,
+mid-period raise proration (a full period was being paid at the new rate
+instead of day-weighted), garnishment remittance rows, per-state SUTA
+rates, the work-location tax fallback that local withholding depends on,
+and `tax_id` encryption on customers and vendors.
+
+Three things were outright broken and are fixed: CORS and the security
+headers were registered inside the session gate, so every preflight was
+answered 401 with no `Access-Control-Allow-Origin` and every 401 carried
+no CSP; `POST /employees/{id}/terminate` and `GET /employees/{id}/ytd`
+both 500'd; and the Alembic chain could not reach head on SQLite, so no
+desktop install could be built from migrations.
+
+Also: the orphaned per-state JSON tax tables are gone — 47 files nothing
+read, holding SUTA rates the engine could not see. Those rates now live
+in `tables.py` with everything else.
+
+
 ### Kubernetes manifests
 
 `k8s/` deploys the app with `kubectl apply -k`: namespace, ConfigMap,

@@ -222,7 +222,7 @@ and their follow-ups (all of which also appear in the open section above).
   `GET /api/tax-forms/1095?year=` (JSON; any-day-of-month rule,
   self-insured covered-individual listing), COBRA election-notice PDF
   (audit-hashed, 102% premium), and the Benefits SPA page
-  (`#/hr/benefits`) — plans, enrollment, dependents, the ACA month grid
+  (`#/hr/benefit-coverage`) — plans, enrollment, dependents, the ACA month grid
   with 1094 counts, and COBRA. The COBRA button appears only for an ENDED
   MEDICAL enrollment, mirroring the server rule rather than letting the
   operator discover it through a 400. Follow-ups: 1095-C PDF + AIR e-file,

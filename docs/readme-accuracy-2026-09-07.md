@@ -1,5 +1,10 @@
 # README accuracy check — 2026-09-07
 
+> **Superseded — this branch has since merged `origin/main` (345 commits).**
+> Findings below describe the branch *before* that merge and are kept as a
+> point-in-time record, not as a current description of the tree. What the
+> merge changed is summarised at the end of this file.
+
 Every claim below was checked against the code on
 `claude/main-branch-protection-2tqh90` @ `e2146ff`. Findings are ordered by
 how much they'd mislead a reader, not by how easy they are to fix.
@@ -100,3 +105,12 @@ Smallest set that makes the README true:
 3. Leave the Python 3.13 claim, but run CI once on 3.13 so it's backed.
 4. Optional: refresh the dashboard screenshots, and consider mentioning
    the audit *chain* rather than just per-document hashes.
+
+---
+
+## Post-merge status (appended after merging `origin/main`)
+
+Findings 1 and 2 are **resolved by the merge**, not by an edit here: the
+README now says "eight providers" (which matches `ai_service.PROVIDERS`)
+and no longer claims a bullet count. Finding 3 (Python 3.13 asserted but
+only ever exercised on 3.11) still stands — one CI run settles it.

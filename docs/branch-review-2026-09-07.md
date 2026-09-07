@@ -1,5 +1,10 @@
 # Branch review — `claude/main-branch-protection-2tqh90`
 
+> **Superseded — this branch has since merged `origin/main` (345 commits).**
+> Findings below describe the branch *before* that merge and are kept as a
+> point-in-time record, not as a current description of the tree. What the
+> merge changed is summarised at the end of this file.
+
 **Date:** 2026-09-07 · **Head:** `9a5b39a` · **Base:** `ece80e7`
 **State:** 1365 tests pass, 2 skip, `black` + `ruff` clean at the pinned versions.
 
@@ -181,3 +186,32 @@ checks (`compliance.js`, plus `cobra_notice.html` / `state_sui.html` missing
 - Verify the 47 state withholding tables and 32 locality files; all ship
   `"verified": false`, and the e-file layouts have never been run through
   AccuWage.
+
+---
+
+## Post-merge status (appended after merging `origin/main`)
+
+The merge landed and the tree is green: **3065 pass, 12 skip, 0 fail**.
+
+Two corrections to the record above:
+
+- **The five security suites are named differently.** `test_encryption.py`,
+  `test_portal_security.py` and `test_security_headers.py` do not exist and
+  never did. The equivalent coverage lives in `test_encryption_coverage.py`,
+  `test_settings_encryption.py`, `test_benefits_encryption.py`,
+  `test_portal_link.py`, and — since the merge — `test_cors.py`, which now
+  also asserts that security headers are present on a 401.
+  `test_document_audit_integrity.py` and `test_audit_checkpoint_signing.py`
+  are real and unchanged.
+
+- **"Every route is gated" held, but the gate was in the wrong place.**
+  `require_session` was registered *outside* CORS and the security-header
+  middleware, so preflights were answered 401 with no
+  `Access-Control-Allow-Origin` and every 401 shipped with no CSP. Routes
+  were gated; the responses the gate produced were not protected. Fixed by
+  reordering the middleware stack, with regression tests in `test_cors.py`.
+
+The merge also silently dropped a number of this branch's behaviours —
+tips, mid-period proration, garnishment remittance rows, per-state SUTA
+rates, the work-location tax fallback and `tax_id` encryption among them.
+All are restored; see the commits between the merge and here.
