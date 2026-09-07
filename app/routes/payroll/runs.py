@@ -18,7 +18,7 @@ from app.models.payroll import (
     periods_per_year,
 )
 from app.models.time_entries import TimeEntry, TimeEntryStatus
-from app.models.deductions import GarnishmentOrder
+from app.models.deductions import GarnishmentOrder, GarnishmentRemittance
 from app.models.accounts import Account
 from app.schemas.payroll import PayRunCreate, PayRunResponse
 from app.schemas.deductions import GrossUpRequest, GrossUpResponse
@@ -635,6 +635,37 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
     if jc is not None:
         run.burden_job_cost_id = jc.id
+
+    # Garnishment remittance rows: every withheld garnishment dollar now owes
+    # somebody a payment. Stub detail_json carries the per-order amounts under
+    # "garnishment:{type}:{order_id}" keys, written when the stub was built.
+    for s in run.stubs:
+        if not s.detail_json:
+            continue
+        try:
+            detail = json.loads(s.detail_json)
+        except ValueError:
+            continue
+        for key, value in detail.items():
+            if not key.startswith("garnishment:"):
+                continue
+            parts = key.split(":")
+            try:
+                order_id = int(parts[2])
+                amount = Decimal(str(value))
+            except (IndexError, ValueError, ArithmeticError):
+                continue
+            if amount <= 0:
+                continue
+            db.add(
+                GarnishmentRemittance(
+                    order_id=order_id,
+                    pay_run_id=run.id,
+                    employee_id=s.employee_id,
+                    amount=amount,
+                    withheld_date=run.pay_date,
+                )
+            )
 
     run.status = PayRunStatus.PROCESSED
     db.commit()
