@@ -31,7 +31,11 @@ services:
       timeout: 3s
       retries: 10
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      # Bound to loopback on the HOST. "5433:5432" would publish on
+      # 0.0.0.0, putting the payroll database on every network this machine
+      # is attached to. Override BIND_ADDR only when you actually intend
+      # that (e.g. BIND_ADDR=0.0.0.0 for a deliberate LAN test box).
+      - "${BIND_ADDR:-127.0.0.1}:${POSTGRES_PORT:-5433}:5432"
 
   slowbooks:
     build: .
@@ -52,7 +56,11 @@ services:
       # Python 3.13 experimental JIT - uncomment for ~5-10% extra on hot loops
       # PYTHON_JIT: "1"
     ports:
-      - "${APP_PORT:-3001}:3001"
+      # Same reasoning as postgres above: loopback by default, so
+      # `docker compose up` does not hand the app to the LAN. The container
+      # still binds 0.0.0.0 INTERNALLY — that is required for Docker's port
+      # forwarding to reach it at all.
+      - "${BIND_ADDR:-127.0.0.1}:${APP_PORT:-3001}:3001"
     volumes:
       - slowbooks_uploads:/app/app/static/uploads
       - slowbooks_backups:/app/backups

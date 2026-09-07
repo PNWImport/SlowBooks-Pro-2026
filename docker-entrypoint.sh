@@ -64,8 +64,14 @@ echo "Starting Slowbooks Pro 2026 on port ${APP_PORT:-3001}..."
 # Multi-worker production mode.
 # uvloop + httptools come from uvicorn[standard], explicit for clarity.
 # APP_WORKERS defaults to 2 (tunable via docker-compose env or .env).
+# APP_HOST is honored rather than hardcoded. It defaults to 0.0.0.0 because
+# that is CORRECT inside a container: binding 127.0.0.1 here would make the
+# app unreachable even through Docker's own port forwarding. The exposure
+# decision belongs on the HOST side of the port mapping in compose, which
+# now defaults to 127.0.0.1. Previously this line ignored APP_HOST entirely,
+# so setting it in .env or compose did nothing and said nothing.
 exec uvicorn app.main:app \
-    --host 0.0.0.0 \
+    --host "${APP_HOST:-0.0.0.0}" \
     --port "${APP_PORT:-3001}" \
     --workers "${APP_WORKERS:-2}" \
     --loop uvloop \
