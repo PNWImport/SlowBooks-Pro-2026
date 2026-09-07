@@ -31,7 +31,12 @@ jobs:
         run: |
           # --strict makes the step fail when vulnerabilities are found, which
           # is what triggers the issue-filing step below via continue-on-error.
-          pip-audit -r requirements.txt --strict
+          # See .github/workflows/ci.yml for why this ID is ignored:
+          # weasyprint PYSEC-2026-3412 has no fixed release, and the
+          # advisory's precondition (presentational hints) is not met by
+          # any call site. Anything else still files an issue.
+          pip-audit -r requirements.txt --strict \
+            --ignore-vuln PYSEC-2026-3412
         continue-on-error: true
 
       - name: File an issue if vulnerabilities found

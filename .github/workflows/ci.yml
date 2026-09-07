@@ -99,11 +99,46 @@ jobs:
           pip install pip-audit
       # PR gate. The weekly cron in pip-audit.yml is for catching CVEs
       # disclosed AFTER a release shipped; this step prevents introducing
-      # a known-vulnerable dep via PR. Strict mode (no --ignore-vuln) —
-      # if a CVE pops up that has no fix yet, add an ignore here with a
-      # comment explaining why + tracking ticket.
+      # a known-vulnerable dep via PR. Strict mode, so anything NEW fails
+      # the build. Ignores are per-ID and must carry a reason.
+      #
+      # PYSEC-2026-3412 — weasyprint 68.1, CSS injection via unescaped
+      # attribute values. Ignored on two grounds, not one:
+      #   1. NO FIXED RELEASE EXISTS. There is no version to upgrade to,
+      #      so failing here blocks every PR indefinitely without making
+      #      anything safer.
+      #   2. NOT APPLICABLE. The advisory requires HTML presentational
+      #      hints to be enabled; every call site in app/services/ uses
+      #      write_pdf() with the default False. That is a call-site
+      #      property one edit could undo, so it is pinned by
+      #      tests/test_pdf_security.py rather than left to chance.
+      # Re-check when weasyprint ships a fix — the step below fails on
+      # purpose the moment one is available.
       - name: Audit requirements.txt
-        run: pip-audit --requirement requirements.txt --strict
+        run: |
+          pip-audit --requirement requirements.txt --strict \
+            --ignore-vuln PYSEC-2026-3412
+
+      # The ignore above is only justified while weasyprint has no fix.
+      # This fails as soon as that stops being true, so the exception gets
+      # removed deliberately instead of outliving its reason.
+      - name: Fail if the ignored advisory becomes fixable
+        run: |
+          pip-audit --requirement requirements.txt --format json \
+            --progress-spinner off > audit.json || true
+          python - <<'EOF'
+          import json, sys
+          data = json.load(open("audit.json"))
+          for dep in data.get("dependencies", []):
+              for vuln in dep.get("vulns", []):
+                  if vuln.get("id") == "PYSEC-2026-3412" and vuln.get("fix_versions"):
+                      sys.exit(
+                          "PYSEC-2026-3412 now has a fix "
+                          f"({', '.join(vuln['fix_versions'])}). Upgrade weasyprint "
+                          "and delete the --ignore-vuln from .github/workflows/."
+                      )
+          print("PYSEC-2026-3412 still has no fixed release; ignore remains valid.")
+          EOF
 
   docker-build:
     name: Docker build
