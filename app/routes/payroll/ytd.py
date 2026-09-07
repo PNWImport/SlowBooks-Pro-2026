@@ -38,6 +38,10 @@ def employee_ytd(db: Session, employee_id: int, year: int, before: date = None) 
         "federal": Decimal("0"),
         "state": Decimal("0"),
         "state_other": Decimal("0"),
+        # Employee-side local withholding (W-2 box 19). The stub column
+        # exists and is populated by the local-tax layer, but was not
+        # aggregated here, so the YTD endpoint 500'd on a missing key.
+        "local": Decimal("0"),
         "ss": Decimal("0"),
         "medicare": Decimal("0"),
         "pretax_deductions": Decimal("0"),
@@ -48,6 +52,7 @@ def employee_ytd(db: Session, employee_id: int, year: int, before: date = None) 
         totals["federal"] += s.federal_tax or 0
         totals["state"] += s.state_tax or 0
         totals["state_other"] += s.state_other_employee or 0
+        totals["local"] += s.local_tax or 0
         totals["ss"] += s.ss_tax or 0
         totals["medicare"] += s.medicare_tax or 0
         totals["pretax_deductions"] += s.pretax_deductions or 0

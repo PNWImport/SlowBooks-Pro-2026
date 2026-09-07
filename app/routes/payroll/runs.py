@@ -31,6 +31,9 @@ from app.services.garnishment import (
     total_garnished,
 )
 from app.services.gross_up import gross_up
+from app.services.retro_pay import prorated_salary_gross
+from app.services.tips import tip_credit_topup
+from app import config
 from app.services.state_tax.reciprocity import withholding_state
 from app.services import benefits_engine
 
@@ -171,9 +174,20 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
         if stub_input.gross_override is not None:
             gross = Decimal(str(stub_input.gross_override))
         elif emp.pay_type.value == "salary":
-            # Bug 3 fix: divide by the employee's actual pay frequency, not a
-            # hardcoded 26.
-            gross = rate / periods_per_year(emp.pay_frequency)
+            if stub_input.rate_change_date and stub_input.old_rate is not None:
+                # Mid-period raise: day-weight the period across both rates.
+                gross = prorated_salary_gross(
+                    Decimal(str(stub_input.old_rate)),
+                    rate,
+                    emp.pay_frequency,
+                    data.period_start,
+                    data.period_end,
+                    stub_input.rate_change_date,
+                )
+            else:
+                # Bug 3 fix: divide by the employee's actual pay frequency, not
+                # a hardcoded 26.
+                gross = rate / periods_per_year(emp.pay_frequency)
         else:
             if stub_input.use_time_entries:
                 entries = (
@@ -208,6 +222,23 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             gross = Decimal("0")
 
         total_hours = reg + ot + dt
+
+        # Tips. Both kinds are taxable wages, but only paycheck_tips are
+        # payable on this check — reported_tips are already in the
+        # employee's pocket, so they are taxed here and then subtracted
+        # back out of net below. For a tipped hourly employee, top up to
+        # the minimum wage when cash wages plus tips fall short of it.
+        reported_tips = _q(Decimal(str(stub_input.reported_tips or 0)))
+        paycheck_tips = _q(Decimal(str(stub_input.paycheck_tips or 0)))
+        tips_total = reported_tips + paycheck_tips
+        topup = Decimal("0")
+        if tips_total > 0 and emp.pay_type.value == "hourly":
+            topup = tip_credit_topup(
+                gross, tips_total, total_hours, Decimal(str(config.MINIMUM_WAGE))
+            )
+            gross = _q(gross + topup)
+        if tips_total > 0:
+            gross = _q(gross + tips_total)
 
         reimbursements = _q(Decimal(str(stub_input.reimbursements or 0)))
 
@@ -318,6 +349,8 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             - posttax
             - garnish_total
             + reimbursements
+            # Taxed as wages above, but the employee already holds the cash.
+            - reported_tips
         )
 
         detail = {k: str(v) for k, v in result["detail"].items()}
@@ -358,6 +391,9 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             overtime_hours=ot,
             doubletime_hours=dt,
             gross_pay=gross,
+            reported_tips=reported_tips,
+            paycheck_tips=paycheck_tips,
+            tip_credit_topup=topup,
             federal_tax=result["federal"],
             state_tax=result["state_income"],
             state_other_employee=result["state_other_employee"],
@@ -461,7 +497,11 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
     def _s(field):
         return sum((getattr(s, field) or Decimal("0")) for s in run.stubs)
 
-    total_gross = _s("gross_pay")
+    # Reported tips sit inside gross_pay for TAX purposes, but the customer
+    # paid them directly — they are not a wage expense and no cash leaves the
+    # bank for them (net already backs them out). Excluding them here is what
+    # keeps the entry balanced.
+    total_gross = _s("gross_pay") - _s("reported_tips")
     total_fed = _s("federal_tax")
     total_state = _s("state_tax")
     total_ss = _s("ss_tax") + _s("employer_ss_tax")
