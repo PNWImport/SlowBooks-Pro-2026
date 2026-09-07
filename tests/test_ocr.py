@@ -327,6 +327,11 @@ def test_scan_pdf_multi_page(client, monkeypatch, tmp_path):
 def test_scan_pdf_without_poppler_400(client, monkeypatch, tmp_path):
     monkeypatch.setattr(ocr_service, "INTAKE_DIR", tmp_path)
     monkeypatch.setattr(ocr_service, "tesseract_available", lambda: True)
+    # The engine reports unavailable on missing language data too, and the
+    # route answers that with a 200 + ocr_available=False before a PDF ever
+    # reaches the rasterizer. Both have to be stubbed to actually exercise
+    # the poppler branch this test is about.
+    monkeypatch.setattr(ocr_service, "ocr_language", lambda: "eng")
     monkeypatch.setattr(ocr_service, "poppler_available", lambda: False)
     r = client.post(
         "/api/ocr/receipt",

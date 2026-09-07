@@ -102,9 +102,9 @@ All 50 states + DC: dedicated engines for WA / CA / NY / OR, a table-driven engi
 
 | File | Class | Purpose |
 |------|-------|---------|
-| `app/models/benefits.py` | `BenefitCode`, `BenefitRate` | The rule + its effective-dated rates/limits (replaces `DeductionType`) |
+| `app/models/benefits.py` | `BenefitCode`, `BenefitRate` | The rule + its effective-dated rates/limits (absorbed the old `DeductionType`) |
 | | `EmployeeGroup`, `EmployeeGroupBenefit` | Templates: a set of codes applied to everyone in the group |
-| | `EmployeeBenefit` | Per-employee assignment with overrides, caps, loan balance (replaces `EmployeeDeduction`) |
+| | `EmployeeBenefit` | Per-employee assignment with overrides, caps, loan balance (absorbed the old `EmployeeDeduction`) |
 | | `BenefitYTD`, `PayStubBenefit` | YTD accumulators; posted-run snapshots |
 | | `Garnishment` | Court-ordered wage garnishment with priority |
 
@@ -223,7 +223,7 @@ All return `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 | `#/hr/benefits` | Benefit codes, groups, enrollments, remittance | `benefits.js` |
 | `#/hr/deductions` | Garnishments | `deductions.js` |
 | `#/hr/tax-forms` | W-2/W-3/940/941 generation | `tax_forms.js` |
-| `#/hr/benefits` | Plans, enrollment, dependents, COBRA, ACA 1095 | `benefits.js` |
+| `#/hr/benefit-coverage` | Plans, enrollment, dependents, COBRA, ACA 1095 | `benefit_coverage.js` |
 | `#/hr/team` | Org chart, team PTO calendar, performance reviews | `hr_views.js` |
 | `#/payroll/schedules` | Pay cadences, upcoming-date preview, assignment | `pay_schedules.js` |
 | `#/payroll/locations` | Work locations, jurisdictions, employee roster | `locations.js` |
@@ -275,6 +275,7 @@ app/
 │   ├── time_entries.py        # daily hours tracking
 │   ├── deductions.py          # garnishments
 │   ├── benefits.py            # benefits engine (codes, groups, enrollments)
+│   ├── benefit_coverage.py    # coverage plans, enrollments, dependents (ePHI)
 │   ├── bank_accounts.py       # encrypted direct-deposit
 │   └── payroll.py             # Employee, PayRun, PayStub
 ├── routes/
@@ -283,8 +284,10 @@ app/
 │   ├── pto.py                 # Tier 1
 │   ├── deductions.py          # Tier 2 (garnishments)
 │   ├── benefits.py            # Tier 2 (benefits engine)
+│   ├── benefit_coverage.py    # coverage plans, ACA 1095, COBRA
 │   ├── tax_forms.py           # Tier 3 (UI placeholder routes)
-│   ├── payroll.py             # Tier 3 — forms endpoints + core payroll
+│   ├── payroll/               # package: runs, exports, states, tax_forms,
+│   │                          #   ytd, retro, state_filings
 │   ├── portal.py              # Tier 3 — self-service portal
 │   └── employees.py           # Cross-cutting: portal-token mint, documents
 ├── services/

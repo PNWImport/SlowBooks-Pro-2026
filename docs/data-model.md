@@ -1,6 +1,6 @@
 # Data Model
 
-Schema reference for the Slowbooks PostgreSQL database. 68 tables on
+Schema reference for the Slowbooks PostgreSQL database. 94 tables on
 a double-entry accounting foundation. For migration history, see the
 files under `migrations/versions/`; for model code, see `app/models/`.
 
@@ -67,8 +67,13 @@ files under `migrations/versions/`; for model code, see `app/models/`.
 | `pto_policies` | Accrual policies — rate, method, carryover cap, max balance |
 | `pto_accruals` | Per-employee balance, accrued YTD, and used YTD against a policy |
 | `pto_requests` | Time-off requests with approve/reject lifecycle |
-| `deduction_types` | Deduction catalog (401k, HSA, health) with pre/post-tax treatment |
-| `employee_deductions` | Per-employee recurring deduction enrollments |
+| `benefit_codes` | Deduction/contribution catalog (401k, HSA, health) with pre/post-tax treatment and GL routing |
+| `benefit_rates` | Dated rate rows per benefit code — the rate in force on a period end date |
+| `employee_groups` | Named groups used to attach a common set of benefit codes |
+| `employee_group_benefits` | Which benefit codes a group confers |
+| `employee_benefits` | Per-employee enrollments in a benefit code, with rate/cap overrides |
+| `benefit_ytd` | Year-to-date accumulators per employee and benefit code |
+| `pay_stub_benefits` | Per-stub benefit amounts, employee and employer side |
 | `garnishment_orders` | Court-ordered garnishments — type, calc method, priority, agency |
 | `garnishment_remittances` | Money withheld and owed to an agency, with mark-remitted trail |
 | `pay_schedules` | Named pay cadences — frequency, anchor date, lead days, weekend shift |
@@ -81,4 +86,45 @@ files under `migrations/versions/`; for model code, see `app/models/`.
 | `benefit_enrollments` | Per-employee elections (ePHI — encrypted, blind-indexed) |
 | `benefit_dependents` | Dependents covered under an enrollment (ePHI — encrypted) |
 | `wc_class_rates` | Workers' comp carrier class rates per $100 of payroll |
+| `users` | Server Edition user principals — login, role, password hash |
+| `api_tokens` | Bearer tokens for machine access, with role and last-used stamp |
 | `performance_reviews` | Review lifecycle — draft, submitted, acknowledged |
+
+## Job Costing
+
+| Table | Purpose |
+|-------|---------|
+| `jobs` | Jobs/projects an invoice, bill or time entry can be attributed to |
+| `cost_codes` | Cost-code catalog for breaking a job into billable buckets |
+| `cost_types` | Labor/material/equipment/subcontract classification for a cost line |
+| `job_budgets` | Budgeted amounts per job and cost code |
+| `job_costs` | Posted cost documents against a job |
+| `job_cost_lines` | Line detail for a job cost document |
+| `equipment` | Equipment units whose hours are charged to jobs |
+
+## Classes & Preferences
+
+| Table | Purpose |
+|-------|---------|
+| `classes` | Class dimension for departmental/segment reporting (Program in nonprofit mode) |
+| `user_preferences` | Per-user UI preferences |
+| `ocr_templates` | Saved OCR field regions per vendor document layout |
+
+## Fixed Assets
+
+| Table | Purpose |
+|-------|---------|
+| `fixed_asset_types` | Asset categories with default useful life and depreciation method |
+| `fixed_assets` | Capitalized assets with cost, in-service date and accumulated depreciation |
+
+## Nonprofit
+
+| Table | Purpose |
+|-------|---------|
+| `in_kind_gifts` | Donated goods and services received |
+| `in_kind_gift_lines` | Line detail and fair-value basis for an in-kind gift |
+| `allocation_rules` | Rules that spread shared costs across functional categories |
+| `allocation_rule_targets` | Per-rule destination weights |
+| `functional_allocations` | Posted functional-expense allocation runs |
+| `functional_allocation_lines` | Line detail for an allocation run |
+| `restriction_releases` | Movement of funds from donor-restricted to unrestricted |
