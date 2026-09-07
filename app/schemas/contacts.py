@@ -133,6 +133,8 @@ class VendorCreate(StrictModel):
     account_number: Optional[str] = Field(None, max_length=50)
     default_expense_account_id: Optional[int] = None
     is_1099_vendor: bool = False
+    is_1099_eligible: bool = False
+    w9_on_file: bool = False
     vendor_1099_type: Optional[str] = Field(None, max_length=10)
     notes: Optional[str] = None
 
@@ -155,6 +157,8 @@ class VendorUpdate(StrictModel):
     account_number: Optional[str] = Field(None, max_length=50)
     default_expense_account_id: Optional[int] = None
     is_1099_vendor: Optional[bool] = None
+    is_1099_eligible: Optional[bool] = None
+    w9_on_file: Optional[bool] = None
     vendor_1099_type: Optional[str] = Field(None, max_length=10)
     notes: Optional[str] = None
     is_active: Optional[bool] = None
@@ -179,6 +183,8 @@ class VendorResponse(BaseModel):
     account_number: Optional[str]
     default_expense_account_id: Optional[int] = None
     is_1099_vendor: bool = False
+    is_1099_eligible: bool = False
+    w9_on_file: bool = False
     vendor_1099_type: Optional[str] = None
     notes: Optional[str]
     is_active: bool
