@@ -104,6 +104,18 @@ class CheckpointArtifactRequest(StrictModel):
     signature_algorithm: Optional[str] = None
     checkpoint_id: Optional[int] = None
 
+    # The rest of the envelope export_checkpoint() writes. Declared so that
+    # POSTing an exported artifact straight back is accepted: the documented
+    # workflow is "keep this file, hand the whole thing back later", and with
+    # these undeclared a strict body rejected the app's own export with a 422.
+    # None is load-bearing — everything signed lives inside `payload`, and
+    # these are provenance notes for a human.
+    artifact: Optional[str] = None
+    artifact_version: Optional[int] = None
+    signature_status_at_export: Optional[str] = None
+    exported_at: Optional[str] = None
+    how_to_verify: Optional[str] = None
+
 
 def _checkpoint_dict(checkpoint) -> dict:
     from app.services.document_audit import verify_checkpoint_signature

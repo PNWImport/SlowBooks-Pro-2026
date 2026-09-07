@@ -197,6 +197,12 @@ def test_setup_accounts_is_idempotent_and_yields_taken_numbers(client, seed_acco
 # words on the import screens, IRS words on the tax screens, workers-comp
 # "class code" on employees.
 LEAVE_ALONE = {
+    # Workers' comp "class" is an NCCI class code — a statutory payroll
+    # term that has nothing to do with the accounting Class dimension the
+    # nonprofit switch renames to Program. Renaming it would be wrong, so
+    # these join the payroll/HR files above that keep their own vocabulary.
+    "workers_comp.js",
+    "locations.js",
     "iif.js",
     "qbo.js",
     "ocr.js",
@@ -320,6 +326,12 @@ def test_invoice_and_receipt_pdfs_are_named_in_the_company_words(
 
 _SWEEP_EXEMPT = {
     # interop, tax, HR and shell files keep their own vocabulary by design
+    # Workers' comp "class" is an NCCI class code — a statutory payroll
+    # term that has nothing to do with the accounting Class dimension the
+    # nonprofit switch renames to Program. Renaming it would be wrong, so
+    # these join the payroll/HR files above that keep their own vocabulary.
+    "workers_comp.js",
+    "locations.js",
     "iif.js",
     "qbo.js",
     "ocr.js",

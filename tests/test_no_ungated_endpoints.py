@@ -33,6 +33,11 @@ EXPECTED_PUBLIC = {
     "/analytics": "redirect to the SPA hash route",
     # Authenticated by something other than a session cookie.
     "/api/stripe/webhook": "Stripe request-signature auth (see test_stripe_webhook_signature.py)",
+    # Same shape as the Stripe hook above, generalised to every provider:
+    # the caller is a payment processor, not a browser, and it authenticates
+    # with a request signature the handler checks. Exempted from the session
+    # middleware by _AUTH_EXEMPT_RE in app/main.py.
+    "/api/payments/{provider_name}/webhook": "payment-provider request-signature auth",
     # Serves the employer logo (204 when unset) as the portal favicon. The
     # same logo already appears on the unauthenticated portal login and the
     # public pay page, so this discloses nothing new.
