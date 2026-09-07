@@ -1,7 +1,7 @@
 # ============================================================================
 # The Benefits page's contract with its backend.
 # ----------------------------------------------------------------------------
-# app/static/js/benefits.js renders plans, enrollments, dependents and the ACA
+# app/static/js/benefit_coverage.js renders plans, enrollments, dependents and the ACA
 # 1095/1094 derivation. tests/test_wiring.py proves the paths resolve; these
 # tests pin the RESPONSE SHAPES and the two server rules the page mirrors in
 # its UI, which wiring cannot see.
@@ -23,7 +23,13 @@ from pathlib import Path
 
 import pytest
 
-JS = Path(__file__).resolve().parents[1] / "app" / "static" / "js" / "benefits.js"
+JS = (
+    Path(__file__).resolve().parents[1]
+    / "app"
+    / "static"
+    / "js"
+    / "benefit_coverage.js"
+)
 
 
 def _employee(client, first="Bea"):
@@ -75,9 +81,9 @@ def test_the_page_is_wired_into_the_router_and_nav():
     index = (root / "index.html").read_text()
 
     assert "'/hr/benefits'" in app_js
-    assert "BenefitsPage.render()" in app_js
+    assert "BenefitCoveragePage.render()" in app_js
     assert 'href="#/hr/benefits"' in index
-    assert "/static/js/benefits.js" in index
+    assert "/static/js/benefit_coverage.js" in index
 
 
 def test_the_page_navigates_to_a_route_that_exists():
@@ -88,7 +94,7 @@ def test_the_page_navigates_to_a_route_that_exists():
     app_js = (JS.parents[3] / "app" / "static" / "js" / "app.js").read_text()
     routes = set(re.findall(r"^\s*'(/[^']*)':\s*\{", app_js, re.M))
     for target in re.findall(r"App\.navigate\('#(/[^']*)'\)", JS.read_text()):
-        assert target in routes, f"benefits.js navigates to unregistered {target!r}"
+        assert target in routes, f"benefit_coverage.js navigates to unregistered {target!r}"
 
 
 # --- response shapes the page renders ---------------------------------------

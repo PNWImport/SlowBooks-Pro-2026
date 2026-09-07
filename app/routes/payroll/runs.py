@@ -19,6 +19,7 @@ from app.models.payroll import (
 )
 from app.models.time_entries import TimeEntry, TimeEntryStatus
 from app.models.deductions import GarnishmentOrder, GarnishmentRemittance
+from app.models.locations import WorkLocation
 from app.models.accounts import Account
 from app.schemas.payroll import PayRunCreate, PayRunResponse
 from app.schemas.deductions import GrossUpRequest, GrossUpResponse
@@ -242,10 +243,29 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
 
         reimbursements = _q(Decimal(str(stub_input.reimbursements or 0)))
 
-        # Multi-state: per-stub work location, with reciprocity deciding which
-        # state's income tax is actually withheld.
-        work_state = (stub_input.work_state or emp.work_state or "WA").upper()
+        # Jurisdiction resolution, most specific first: per-stub override,
+        # explicit employee columns, the employee's assigned work location,
+        # then the default. Reciprocity then decides which state's income tax
+        # is actually withheld.
+        location = None
+        if emp.location_id:
+            location = (
+                db.query(WorkLocation)
+                .filter(WorkLocation.id == emp.location_id)
+                .first()
+            )
+        work_state = (
+            stub_input.work_state
+            or emp.work_state
+            or (location.state if location else None)
+            or "WA"
+        ).upper()
         wh_state = withholding_state(work_state, emp.residence_state)
+        work_locality = (
+            stub_input.work_locality
+            or emp.work_locality
+            or (location.locality if location else None)
+        )
 
         regular_wages = Decimal("0")
         if stub_input.supplemental and stub_input.supplemental_method == "aggregate":
@@ -293,6 +313,7 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             state_allowances=emp.state_allowances or 0,
             state_extra_withholding=emp.state_extra_withholding or 0,
             state_rate_override=emp.state_rate_override,
+            work_locality=work_locality,
             local_tax_rate=emp.local_tax_rate,
             hours=total_hours,
             pretax_deductions=ben.pretax_federal + adhoc_pretax,
@@ -404,6 +425,9 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             garnishments=garnish_total,
             reimbursements=reimbursements,
             work_state=work_state,
+            work_locality=work_locality,
+            local_tax=result["local_tax"],
+            local_tax_employer=result["local_tax_employer"],
             net_pay=net,
             employer_ss_tax=result["employer_ss"],
             employer_medicare_tax=result["employer_medicare"],
