@@ -8,6 +8,7 @@ const PayrollPage = {
         let html = `
             <div class="page-header">
                 <h2>Payroll</h2>
+                <button class="btn btn-secondary" onclick="PayrollPage.showRetroPayForm()">Retro Pay</button>
                 <button class="btn btn-primary" onclick="PayrollPage.showRunForm()">+ New Pay Run</button>
             </div>
             <div style="background:#fef3c7;border:1px solid #fbbf24;padding:6px 10px;margin-bottom:12px;font-size:10px;color:#92400e;">
@@ -190,5 +191,78 @@ const PayrollPage = {
             toast('Payroll processed');
             App.navigate('#/payroll');
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // Retro pay — preview the shortfall from a raise, then apply it
+    // (raises the rate and stages a draft off-cycle supplemental run).
+    async showRetroPayForm() {
+        const emps = await API.get('/employees?active_only=true');
+        const opts = emps.map(e =>
+            `<option value="${e.id}">${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)} — ${formatCurrency(e.pay_rate)}${e.pay_type === 'hourly' ? '/hr' : '/yr'}</option>`
+        ).join('');
+        openModal('Retro Pay', `
+            <div class="form-group"><label>Employee</label>
+                <select id="retro-emp">${opts}</select></div>
+            <div class="form-group"><label>New rate</label>
+                <input type="number" id="retro-rate" step="0.01" min="0"></div>
+            <div class="form-group"><label>Raise effective date</label>
+                <input type="date" id="retro-effective"></div>
+            <div class="form-group"><label>Payout date (apply only)</label>
+                <input type="date" id="retro-paydate" value="${todayISO()}"></div>
+            <div id="retro-preview" style="margin-top:8px;"></div>
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-secondary" onclick="PayrollPage.retroPreview()">Preview</button>
+                <button class="btn btn-primary" onclick="PayrollPage.retroApply()">Apply</button>
+            </div>`);
+    },
+
+    _retroPayload() {
+        const empId = parseInt($('#retro-emp')?.value, 10);
+        const rate = parseFloat($('#retro-rate')?.value);
+        const effective = $('#retro-effective')?.value;
+        if (!empId || isNaN(rate) || !effective) {
+            toast('Employee, new rate, and effective date are required', 'error');
+            return null;
+        }
+        return { employee_id: empId, new_rate: rate, effective_date: effective };
+    },
+
+    async retroPreview() {
+        const payload = PayrollPage._retroPayload();
+        if (!payload) return;
+        const box = $('#retro-preview');
+        try {
+            const data = await API.post('/payroll/retro-pay/preview', payload);
+            if (!data.periods.length) {
+                box.innerHTML = `<p style="font-size:11px; color:var(--text-muted);">
+                    No regular pay periods since ${formatDate(data.effective_date)}.</p>`;
+                return;
+            }
+            let rows = data.periods.map(p => `<tr>
+                <td>${formatDate(p.pay_date)}</td>
+                <td class="amount">${formatCurrency(p.paid_gross)}</td>
+                <td class="amount">${formatCurrency(p.gross_at_new_rate)}</td>
+                <td class="amount">${formatCurrency(p.difference)}</td>
+            </tr>`).join('');
+            box.innerHTML = `<div class="table-container"><table>
+                <thead><tr><th scope="col">Pay Date</th><th scope="col" class="amount">Paid</th>
+                <th scope="col" class="amount">At New Rate</th><th scope="col" class="amount">Diff</th></tr></thead>
+                <tbody>${rows}</tbody></table></div>
+                <div style="font-size:12px; font-weight:700; margin-top:6px;">
+                    Retro pay due: ${formatCurrency(data.retro_pay_due)}</div>`;
+        } catch (e) { toast(e.message, 'error'); }
+    },
+
+    async retroApply() {
+        const payload = PayrollPage._retroPayload();
+        if (!payload) return;
+        payload.pay_date = $('#retro-paydate')?.value || null;
+        try {
+            const run = await API.post('/payroll/retro-pay/apply', payload);
+            closeModal();
+            toast(`Rate raised; retro run #${run.pay_run_id} staged as draft`);
+            App.navigate('#/payroll');
+        } catch (e) { toast(e.message, 'error'); }
     },
 };

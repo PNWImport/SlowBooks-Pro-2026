@@ -66,7 +66,7 @@ const App = {
         // artifact verification (docs/hipaa-compliance.md § 164.312(c)(1)).
         '/compliance':    { page: 'compliance',      label: 'Compliance',         render: () => CompliancePage.render() },
         // Benefits: plans, enrollment, dependents, COBRA, ACA 1095/1094.
-        '/hr/benefit-coverage':   { page: 'hr-benefits',     label: 'Benefits',           render: () => BenefitsPage.render() },
+        '/hr/benefit-coverage':   { page: 'hr-benefit-coverage', label: 'Benefit Coverage', render: () => BenefitCoveragePage.render() },
         // Contractor pay runs: batch contractor payments, JE, NACHA export.
         '/payroll/contractors': { page: 'payroll-contractors', label: 'Contractor Runs', render: () => ContractorRunsPage.render() },
         // Garnishment remittance register: withheld money owed to agencies.

@@ -13,21 +13,21 @@
  * responses carry it — which is why the app refuses to serve over plain HTTP
  * in production. See docs/hipaa-compliance.md.
  */
-const BenefitsPage = {
+const BenefitCoveragePage = {
     _enrollEmpId: '',
     _acaYear: new Date().getFullYear(),
 
     async render() {
         const [plans, employees] = await Promise.all([
-            API.get('/benefits/plans'),
+            API.get('/benefit-coverage/plans'),
             API.get('/employees?active_only=false'),
         ]);
-        BenefitsPage._plans = plans;
-        BenefitsPage._employees = employees;
+        BenefitCoveragePage._plans = plans;
+        BenefitCoveragePage._employees = employees;
 
         setTimeout(() => {
-            BenefitsPage.loadEnrollments();
-            BenefitsPage.loadAca();
+            BenefitCoveragePage.loadEnrollments();
+            BenefitCoveragePage.loadAca();
         }, 0);
 
         return `
@@ -40,17 +40,17 @@ const BenefitsPage = {
 
             <h3>Plans</h3>
             <div class="toolbar">
-                <button class="btn btn-primary" onclick="BenefitsPage.newPlanModal()">New Plan</button>
+                <button class="btn btn-primary" onclick="BenefitCoveragePage.newPlanModal()">New Plan</button>
             </div>
-            ${BenefitsPage.plansTable(plans)}
+            ${BenefitCoveragePage.plansTable(plans)}
 
             <h3 style="margin-top:18px;">Enrollments</h3>
             <div class="toolbar">
-                <select id="enroll-emp" onchange="BenefitsPage.loadEnrollments()">
+                <select id="enroll-emp" onchange="BenefitCoveragePage.loadEnrollments()">
                     <option value="">All employees</option>
-                    ${BenefitsPage.employeeOptions()}
+                    ${BenefitCoveragePage.employeeOptions()}
                 </select>
-                <button class="btn btn-primary" onclick="BenefitsPage.enrollModal()"
+                <button class="btn btn-primary" onclick="BenefitCoveragePage.enrollModal()"
                         ${plans.length ? '' : 'disabled title="Create a plan first"'}>
                     Enroll Employee
                 </button>
@@ -60,14 +60,14 @@ const BenefitsPage = {
             <h3 style="margin-top:18px;">ACA Coverage (1095 / 1094)</h3>
             <div class="toolbar">
                 <label style="font-size:10px;font-weight:700;color:var(--text-secondary);">Year:</label>
-                <input type="number" id="aca-year" value="${BenefitsPage._acaYear}"
-                       style="width:90px;" onchange="BenefitsPage.loadAca()">
+                <input type="number" id="aca-year" value="${BenefitCoveragePage._acaYear}"
+                       style="width:90px;" onchange="BenefitCoveragePage.loadAca()">
             </div>
             <div id="aca-results"></div>`;
     },
 
     employeeOptions(selected) {
-        return (BenefitsPage._employees || []).map(e =>
+        return (BenefitCoveragePage._employees || []).map(e =>
             `<option value="${e.id}" ${String(e.id) === String(selected) ? 'selected' : ''}>${
                 escapeHtml(e.first_name)} ${escapeHtml(e.last_name)}</option>`
         ).join('');
@@ -139,7 +139,7 @@ const BenefitsPage = {
             </div>
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="BenefitsPage.createPlan()">Create</button>
+                <button class="btn btn-primary" onclick="BenefitCoveragePage.createPlan()">Create</button>
             </div>`);
     },
 
@@ -147,7 +147,7 @@ const BenefitsPage = {
         const name = $('#p-name').value.trim();
         if (!name) return toast('Plan name is required', 'error');
         try {
-            await API.post('/benefits/plans', {
+            await API.post('/benefit-coverage/plans', {
                 name,
                 kind: $('#p-kind').value,
                 carrier_name: $('#p-carrier').value.trim() || null,
@@ -176,11 +176,11 @@ const BenefitsPage = {
         const box = $('#enrollment-results');
         if (!box) return;
         const empId = $('#enroll-emp')?.value || '';
-        BenefitsPage._enrollEmpId = empId;
+        BenefitCoveragePage._enrollEmpId = empId;
         // Built in two steps rather than a nested template literal:
         // tests/test_wiring.py parses these paths with a single-pass regex and
         // documents that the codebase does not nest `${ `${}` }`.
-        let url = '/benefits/enrollments';
+        let url = '/benefit-coverage/enrollments';
         if (empId) url += `?employee_id=${empId}`;
         const rows = await API.get(url);
 
@@ -206,7 +206,7 @@ const BenefitsPage = {
             // here is the coverage end date. Offering the button before then
             // would just produce a 400 the operator has to read to understand.
             const cobra = (!open && e.plan_kind === 'medical')
-                ? `<button class="btn" onclick="BenefitsPage.cobraNotice(${e.id})">COBRA Notice</button>`
+                ? `<button class="btn" onclick="BenefitCoveragePage.cobraNotice(${e.id})">COBRA Notice</button>`
                 : '';
 
             html += `<tr>
@@ -216,11 +216,11 @@ const BenefitsPage = {
                 <td>${formatDate(e.coverage_start)} &rarr; ${
                     e.coverage_end ? formatDate(e.coverage_end)
                                    : '<span style="color:var(--text-muted);">ongoing</span>'}</td>
-                <td>${BenefitsPage.statusBadge(e.status)}</td>
+                <td>${BenefitCoveragePage.statusBadge(e.status)}</td>
                 <td style="font-size:11px;">${deps}</td>
                 <td>
-                    <button class="btn" onclick="BenefitsPage.dependentModal(${e.id})">Add Dependent</button>
-                    ${open ? `<button class="btn" onclick="BenefitsPage.endModal(${e.id}, '${e.coverage_start}')">End</button>` : ''}
+                    <button class="btn" onclick="BenefitCoveragePage.dependentModal(${e.id})">Add Dependent</button>
+                    ${open ? `<button class="btn" onclick="BenefitCoveragePage.endModal(${e.id}, '${e.coverage_start}')">End</button>` : ''}
                     ${cobra}
                 </td>
             </tr>`;
@@ -229,14 +229,14 @@ const BenefitsPage = {
     },
 
     enrollModal() {
-        const planOpts = (BenefitsPage._plans || [])
+        const planOpts = (BenefitCoveragePage._plans || [])
             .filter(p => p.is_active)
             .map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${escapeHtml(p.kind || '')})</option>`)
             .join('');
         openModal('Enroll Employee', `
             <div class="form-group">
                 <label>Employee</label>
-                <select id="e-emp">${BenefitsPage.employeeOptions(BenefitsPage._enrollEmpId)}</select>
+                <select id="e-emp">${BenefitCoveragePage.employeeOptions(BenefitCoveragePage._enrollEmpId)}</select>
             </div>
             <div class="form-group">
                 <label>Plan</label>
@@ -248,21 +248,21 @@ const BenefitsPage = {
             </div>
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="BenefitsPage.enroll()">Enroll</button>
+                <button class="btn btn-primary" onclick="BenefitCoveragePage.enroll()">Enroll</button>
             </div>`);
     },
 
     async enroll() {
         try {
-            await API.post('/benefits/enrollments', {
+            await API.post('/benefit-coverage/enrollments', {
                 employee_id: parseInt($('#e-emp').value, 10),
                 plan_id: parseInt($('#e-plan').value, 10),
                 coverage_start: $('#e-start').value,
             });
             closeModal();
             toast('Enrolled');
-            BenefitsPage.loadEnrollments();
-            BenefitsPage.loadAca();
+            BenefitCoveragePage.loadEnrollments();
+            BenefitCoveragePage.loadAca();
         } catch (e) {
             // 400 covers "already has an open enrollment" — the duplicate
             // guard the encrypted coverage_end column still supports.
@@ -293,7 +293,7 @@ const BenefitsPage = {
                 <input type="date" id="d-dob"></div>
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="BenefitsPage.addDependent(${enrollmentId})">Add</button>
+                <button class="btn btn-primary" onclick="BenefitCoveragePage.addDependent(${enrollmentId})">Add</button>
             </div>`);
     },
 
@@ -301,7 +301,7 @@ const BenefitsPage = {
         const name = $('#d-name').value.trim();
         if (!name) return toast('Dependent name is required', 'error');
         try {
-            await API.post(`/benefits/enrollments/${enrollmentId}/dependents`, {
+            await API.post(`/benefit-coverage/enrollments/${enrollmentId}/dependents`, {
                 name,
                 relationship_kind: $('#d-rel').value || null,
                 ssn_last_four: $('#d-ssn').value.trim() || null,
@@ -309,8 +309,8 @@ const BenefitsPage = {
             });
             closeModal();
             toast('Dependent added');
-            BenefitsPage.loadEnrollments();
-            BenefitsPage.loadAca();
+            BenefitCoveragePage.loadEnrollments();
+            BenefitCoveragePage.loadAca();
         } catch (e) {
             toast(e.message, 'error');
         }
@@ -328,19 +328,19 @@ const BenefitsPage = {
             </div>
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="BenefitsPage.endCoverage(${enrollmentId})">End Coverage</button>
+                <button class="btn btn-primary" onclick="BenefitCoveragePage.endCoverage(${enrollmentId})">End Coverage</button>
             </div>`);
     },
 
     async endCoverage(enrollmentId) {
         try {
-            await API.post(`/benefits/enrollments/${enrollmentId}/end`, {
+            await API.post(`/benefit-coverage/enrollments/${enrollmentId}/end`, {
                 coverage_end: $('#x-end').value,
             });
             closeModal();
             toast('Coverage ended');
-            BenefitsPage.loadEnrollments();
-            BenefitsPage.loadAca();
+            BenefitCoveragePage.loadEnrollments();
+            BenefitCoveragePage.loadAca();
         } catch (e) {
             toast(e.message, 'error');
         }
@@ -350,7 +350,7 @@ const BenefitsPage = {
         // Page-scoped rather than the shared _openPDF() global, which
         // tax_forms.js already owns — two definitions of the same name across
         // script tags is a collision waiting to happen.
-        const res = await fetch(`/api/benefits/enrollments/${enrollmentId}/cobra-notice`,
+        const res = await fetch(`/api/benefit-coverage/enrollments/${enrollmentId}/cobra-notice`,
                                 { method: 'POST', credentials: 'same-origin' });
         if (!res.ok) {
             let msg = 'COBRA notice generation failed';
@@ -367,8 +367,8 @@ const BenefitsPage = {
     async loadAca() {
         const box = $('#aca-results');
         if (!box) return;
-        const year = parseInt($('#aca-year')?.value, 10) || BenefitsPage._acaYear;
-        BenefitsPage._acaYear = year;
+        const year = parseInt($('#aca-year')?.value, 10) || BenefitCoveragePage._acaYear;
+        BenefitCoveragePage._acaYear = year;
         const data = await API.get(`/tax-forms/1095?year=${year}`);
 
         const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun',
