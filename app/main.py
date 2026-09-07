@@ -18,6 +18,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -386,18 +387,6 @@ async def _method_not_allowed_handler(request: Request, exc: StarletteHTTPExcept
 
 app.add_exception_handler(StarletteHTTPException, _method_not_allowed_handler)
 
-# ---- CORS (Phase 9.7: locked down) ----
-# Wildcard origins with credentials is a CSRF amplifier. Default to just
-# localhost; override with ALLOWED_ORIGINS env var (comma-separated) for
-# a custom LAN hostname like http://slowbooks.local:3001.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ALLOW_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # gzip responses larger than 1 KB. Analytics JSON payloads compress ~70%,
 # which is a big win over LAN for /api/analytics/dashboard and friends.
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
@@ -449,7 +438,6 @@ def _set_if_unset(headers, name: str, value: str) -> None:
         headers[name] = value
 
 
-@app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
     # The desktop shell fetches documents from page JS and saves them
@@ -493,12 +481,6 @@ async def security_headers(request: Request, call_next):
     return response
 
 
-# Promote any plain-HTTP request to HTTPS before it touches the app. Added
-# BEFORE other middleware so it runs LAST in the response chain — i.e. the
-# OUTERMOST request gate. Behind a TLS-terminating proxy this is a no-op
-# because the proxy already speaks HTTPS to the app.
-if FORCE_HTTPS:
-    app.add_middleware(HTTPSRedirectMiddleware)
 
 
 # ---- Auth gate (Phase 9.7) ----
@@ -689,6 +671,40 @@ app.add_middleware(
     # if the app insists on HTTPS, the session cookie must too.
     https_only=FORCE_HTTPS,
 )
+
+# ---- Outer layers: everything below wraps the auth gate ----
+#
+# Starlette builds the stack so the LAST add_middleware call is the
+# OUTERMOST layer. The three below are registered after the session gate
+# on purpose, because each of them has to act on responses the gate
+# itself generates:
+#
+#   security headers  a 401 is the pre-login state of every browser, so
+#                     it needs CSP and friends at least as much as a 200.
+#                     Registered inside CORS so the ACAO header it sets
+#                     is not clobbered.
+#   CORS              browsers send preflights WITHOUT credentials, so an
+#                     OPTIONS that reaches the gate is answered 401 with
+#                     no Access-Control-Allow-Origin — which fails the
+#                     preflight and makes every cross-origin call fail,
+#                     however correct CORS_ALLOW_ORIGINS is. It must sit
+#                     outside the gate to answer preflight itself.
+#   HTTPS redirect    outermost, so a plain-HTTP request is promoted
+#                     before any cookie is parsed or any gate runs.
+app.add_middleware(BaseHTTPMiddleware, dispatch=security_headers)
+
+# Wildcard origins with credentials is a CSRF amplifier, so the allowlist
+# stays explicit: loopback by default, CORS_ALLOW_ORIGINS to override.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+if FORCE_HTTPS:
+    app.add_middleware(HTTPSRedirectMiddleware)
 
 # Phase 9.7: Auth routes MUST be included (they're exempt from the session gate)
 app.include_router(auth_routes.router)

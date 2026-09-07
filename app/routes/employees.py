@@ -499,7 +499,7 @@ def terminate_employee(
     """
     from decimal import Decimal
 
-    from app.models.deductions import EmployeeDeduction
+    from app.models.benefits import EmployeeBenefit
     from app.services.termination import (
         compute_pto_payout,
         final_paycheck_deadline,
@@ -549,10 +549,10 @@ def terminate_employee(
     emp.portal_token_last_used = None
 
     deactivated = (
-        db.query(EmployeeDeduction)
+        db.query(EmployeeBenefit)
         .filter(
-            EmployeeDeduction.employee_id == emp_id,
-            EmployeeDeduction.is_active.is_(True),
+            EmployeeBenefit.employee_id == emp_id,
+            EmployeeBenefit.is_active.is_(True),
         )
         .update({"is_active": False})
     )
