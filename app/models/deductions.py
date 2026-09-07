@@ -21,6 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+from app.services.encryption import EncryptedString
 
 
 class DeductionCategory(str, enum.Enum):
@@ -112,7 +113,9 @@ class GarnishmentOrder(Base):
     # garnishment without an agency can still be withheld, but its
     # remittance rows will nag until the payee is filled in.
     agency_name = Column(String(200), nullable=True)
-    agency_address = Column(String(300), nullable=True)
+    # Where a garnishment is remitted. Identifies the order's nature (child
+    # support, tax levy) by recipient, so it travels with the employee's PII.
+    agency_address = Column(EncryptedString(500), nullable=True)
     remit_reference = Column(String(80), nullable=True)  # payee's case/remit id
     # Child-support CCPA modifiers.
     supports_secondary_family = Column(Boolean, default=False)

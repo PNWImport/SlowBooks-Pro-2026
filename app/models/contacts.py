@@ -23,6 +23,7 @@ from sqlalchemy import (
 )
 
 from app.database import Base
+from app.services.encryption import EncryptedString
 
 
 class Customer(Base):
@@ -55,7 +56,9 @@ class Customer(Base):
 
     terms = Column(String(50), default="Net 30")
     credit_limit = Column(Numeric(12, 2), nullable=True)
-    tax_id = Column(String(50), nullable=True)
+    # Taxpayer identification number (EIN/SSN) — encrypted at rest. Read on
+    # the 1099 path via the ORM; never filtered or indexed.
+    tax_id = Column(EncryptedString(255), nullable=True)
     is_taxable = Column(Boolean, default=True)
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
@@ -86,7 +89,9 @@ class Vendor(Base):
     country = Column(String(100), default="US")
 
     terms = Column(String(50), default="Net 30")
-    tax_id = Column(String(50), nullable=True)
+    # Taxpayer identification number (EIN/SSN) — encrypted at rest. Read on
+    # the 1099 path via the ORM; never filtered or indexed.
+    tax_id = Column(EncryptedString(255), nullable=True)
     account_number = Column(String(50), nullable=True)
     default_expense_account_id = Column(
         Integer, ForeignKey("accounts.id"), nullable=True

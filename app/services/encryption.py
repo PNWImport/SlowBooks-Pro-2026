@@ -250,7 +250,10 @@ def rewrap_all(db, dry_run: bool = False) -> dict:
 
     from app.models.bank_accounts import EmployeeBankAccount
     from app.models.benefits import BenefitDependent, BenefitEnrollment, BenefitPlan
+    from app.models.contacts import Customer, Vendor
     from app.models.contractor_payments import VendorBankAccount
+    from app.models.deductions import GarnishmentOrder
+    from app.models.payroll import Employee
 
     summary = {"checked": 0, "rewrapped": 0, "already_current": 0, "failed": 0}
 
@@ -264,10 +267,19 @@ def rewrap_all(db, dry_run: bool = False) -> dict:
     # decrypts these on read, so rewrapping means reading the plaintext and
     # writing it straight back: the bind processor re-encrypts under the
     # current key.
+    # EVERY EncryptedString/EncryptedDate/EncryptedEnum column must appear
+    # here. A column that is encrypted but missing from this list survives
+    # normal operation and then becomes unreadable the first time the key is
+    # rotated, because nothing re-wraps it under the new key.
+    # tests/test_encryption_coverage.py fails if the two ever diverge.
     TYPED_TARGETS = [
         (BenefitPlan, ("carrier_name", "kind")),
         (BenefitEnrollment, ("coverage_start", "coverage_end")),
         (BenefitDependent, ("name", "ssn_last_four", "dob")),
+        (Employee, ("ssn_last_four", "address1", "address2")),
+        (Customer, ("tax_id",)),
+        (Vendor, ("tax_id",)),
+        (GarnishmentOrder, ("agency_address",)),
     ]
 
     for model, fields in RAW_TARGETS:

@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+from app.services.encryption import EncryptedString
 
 
 class PayType(str, enum.Enum):
@@ -87,7 +88,10 @@ class Employee(Base):
     id = Column(Integer, primary_key=True, index=True)
     first_name = Column(String(100), nullable=False)
     last_name = Column(String(100), nullable=False)
-    ssn_last_four = Column(String(4), nullable=True)
+    # HIPAA identifiers. Encrypted at rest: on their own these are PII, and
+    # next to a benefit enrollment they are ePHI. No filter, index or unique
+    # constraint reads them, so randomized ciphertext costs nothing.
+    ssn_last_four = Column(EncryptedString(255), nullable=True)
     pay_type = Column(Enum(PayType), default=PayType.HOURLY)
     pay_rate = Column(Numeric(12, 2), default=0)  # hourly rate or annual salary
     pay_frequency = Column(Enum(PayFrequency), default=PayFrequency.BIWEEKLY)
@@ -105,8 +109,8 @@ class Employee(Base):
     deductions_annual = Column(Numeric(12, 2), default=0)  # Step 4(b)
     extra_withholding = Column(Numeric(12, 2), default=0)  # Step 4(c) per pay period
 
-    address1 = Column(String(200), nullable=True)
-    address2 = Column(String(200), nullable=True)
+    address1 = Column(EncryptedString(500), nullable=True)
+    address2 = Column(EncryptedString(500), nullable=True)
     city = Column(String(100), nullable=True)
     state = Column(String(50), nullable=True)
     zip = Column(String(20), nullable=True)
