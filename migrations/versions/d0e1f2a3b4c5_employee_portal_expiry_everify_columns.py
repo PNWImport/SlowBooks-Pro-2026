@@ -26,33 +26,34 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# The same six columns are added by f1a2b3c4d5e8 on the other line of
+# development this branch merged with. Both revisions are now in the chain,
+# so whichever runs second must be a no-op rather than a duplicate-column
+# error — hence the existence check on every add and drop.
+_COLUMNS = (
+    ("portal_token_last_used", sa.DateTime(timezone=True)),
+    ("portal_token_expires_at", sa.DateTime(timezone=True)),
+    ("everify_status", sa.String(30)),
+    ("everify_submitted_at", sa.DateTime(timezone=True)),
+    ("everify_closed_at", sa.DateTime(timezone=True)),
+    ("everify_notes", sa.Text()),
+)
+
+
+def _has_column(table: str, column: str) -> bool:
+    insp = sa.inspect(op.get_bind())
+    if table not in insp.get_table_names():
+        return False
+    return column in {c["name"] for c in insp.get_columns(table)}
+
+
 def upgrade() -> None:
-    op.add_column(
-        "employees",
-        sa.Column("portal_token_last_used", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column(
-        "employees",
-        sa.Column("portal_token_expires_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column(
-        "employees", sa.Column("everify_status", sa.String(30), nullable=True)
-    )
-    op.add_column(
-        "employees",
-        sa.Column("everify_submitted_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column(
-        "employees",
-        sa.Column("everify_closed_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column("employees", sa.Column("everify_notes", sa.Text(), nullable=True))
+    for column, coltype in _COLUMNS:
+        if not _has_column("employees", column):
+            op.add_column("employees", sa.Column(column, coltype, nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("employees", "everify_notes")
-    op.drop_column("employees", "everify_closed_at")
-    op.drop_column("employees", "everify_submitted_at")
-    op.drop_column("employees", "everify_status")
-    op.drop_column("employees", "portal_token_expires_at")
-    op.drop_column("employees", "portal_token_last_used")
+    for column, _ in reversed(_COLUMNS):
+        if _has_column("employees", column):
+            op.drop_column("employees", column)

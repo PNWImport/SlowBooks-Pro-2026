@@ -29,6 +29,7 @@ from app.models.contractor_payments import (
 )
 from app.services.accounting import create_journal_entry
 from app.services.encryption import encrypt
+from app.schemas.common import StrictModel
 
 router = APIRouter(prefix="/api/contractor-runs", tags=["contractor-runs"])
 
@@ -38,7 +39,7 @@ CENT = Decimal("0.01")
 # --- schemas ----------------------------------------------------------------
 
 
-class ContractorPaymentInput(BaseModel):
+class ContractorPaymentInput(StrictModel):
     vendor_id: int
     amount: float
     description: Optional[str] = None
@@ -50,20 +51,20 @@ class ContractorPaymentInput(BaseModel):
         return self
 
 
-class ContractorRunCreate(BaseModel):
+class ContractorRunCreate(StrictModel):
     pay_date: date
     memo: Optional[str] = None
     payments: list[ContractorPaymentInput] = []
 
 
-class VendorBankCreate(BaseModel):
+class VendorBankCreate(StrictModel):
     routing_number: str
     account_number: str
     account_kind: str = "checking"
     nickname: Optional[str] = None
 
 
-class NachaOriginating(BaseModel):
+class NachaOriginating(StrictModel):
     immediate_destination: str
     immediate_origin: str
     destination_name: str = "BANK"

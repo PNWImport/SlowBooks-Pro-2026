@@ -13,13 +13,14 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models.payroll import PayRun, PayRunStatus, PayStub
 from app.models.workers_comp import WCClassRate
+from app.schemas.common import StrictModel
 
 router = APIRouter(prefix="/api/workers-comp", tags=["workers-comp"])
 
 CENT = Decimal("0.01")
 
 
-class RateCreate(BaseModel):
+class RateCreate(StrictModel):
     class_code: str
     state: str
     rate_per_100: float

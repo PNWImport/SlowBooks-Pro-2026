@@ -16,6 +16,7 @@ from app.models.deductions import (
     GarnishmentType,
     GarnishmentMethod,
 )
+from app.schemas.common import StrictModel
 from app.schemas.deductions import (
     GarnishmentOrderCreate,
     GarnishmentOrderResponse,
@@ -128,7 +129,7 @@ def list_remittances(
     }
 
 
-class MarkRemittedRequest(BaseModel):
+class MarkRemittedRequest(StrictModel):
     payment_reference: str
 
 

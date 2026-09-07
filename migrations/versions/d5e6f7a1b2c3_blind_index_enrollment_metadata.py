@@ -118,14 +118,10 @@ def upgrade() -> None:
             existing_nullable=True,
             postgresql_using="kind::text",
         )
-    else:
-        op.alter_column(
-            "benefit_plans",
-            "kind",
-            existing_type=sa.String(20),
-            type_=sa.String(255),
-            existing_nullable=True,
-        )
+    # No SQLite branch: ALTER COLUMN ... TYPE is not SQLite syntax and raised
+    # "near ALTER: syntax error", stopping the chain on the desktop backend.
+    # Nothing needs doing there — SQLite does not enforce a declared VARCHAR
+    # width, so the column already accepts the wider ciphertext as-is.
 
     # --- coverage window: DATE -> VARCHAR ------------------------------------
     enrollment_columns = {c["name"] for c in insp.get_columns("benefit_enrollments")}
@@ -141,12 +137,17 @@ def upgrade() -> None:
             "WHERE coverage_start IS NULL"
         )
     )
-    op.alter_column(
-        "benefit_enrollments",
-        "coverage_start",
-        existing_type=sa.String(255),
-        nullable=False,
-    )
+    # PostgreSQL only: SET NOT NULL is an ALTER of a constraint, which SQLite
+    # cannot express on an existing column. The backfill above means the column
+    # holds no NULLs either way, and the model declares it non-nullable, so the
+    # application-level contract is the same on both backends.
+    if is_pg:
+        op.alter_column(
+            "benefit_enrollments",
+            "coverage_start",
+            existing_type=sa.String(255),
+            nullable=False,
+        )
 
     # --- encrypt existing plaintext, and derive the index --------------------
     # Imports the app's own encrypt()/blind_index() on purpose: the values must

@@ -19,6 +19,8 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse
 from pydantic import BaseModel as _BaseModel
+
+from app.schemas.common import StrictModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -472,7 +474,7 @@ def delete_employee_document(emp_id: int, doc_id: int, db: Session = Depends(get
 # --- Termination / offboarding ----------------------------------------------
 
 
-class TerminateRequest(_BaseModel):
+class TerminateRequest(StrictModel):
     termination_date: date
     reason: str = "voluntary"  # "voluntary" | "involuntary"
     include_sick_payout: bool = False

@@ -23,6 +23,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
     op.create_table(
         "work_locations",
         sa.Column("id", sa.Integer(), primary_key=True, index=True),
@@ -39,17 +40,23 @@ def upgrade() -> None:
             "created_at", sa.DateTime(timezone=True), server_default=sa.func.now()
         ),
     )
-    op.add_column(
-        "employees",
-        sa.Column(
-            "location_id",
-            sa.Integer(),
-            sa.ForeignKey("work_locations.id"),
-            nullable=True,
-        ),
-    )
+    # The FOREIGN KEY is declared only on PostgreSQL. Attaching one to an
+    # existing table is an ALTER of a constraint, which SQLite has no syntax
+    # for — alembic raises NotImplementedError and the chain stops dead on the
+    # desktop backend. Batch mode would mean copying the whole employees table
+    # to add a nullable column, so this follows the dialect split the rest of
+    # these migrations already use. SQLite does not enforce foreign keys
+    # unless the pragma is on; the relationship is declared on the ORM model
+    # either way, so nothing downstream depends on the constraint existing.
+    op.add_column("employees", sa.Column("location_id", sa.Integer(), nullable=True))
+    if bind.dialect.name == "postgresql":
+        op.create_foreign_key(
+            "fk_employees_location_id", "employees", "work_locations", ["location_id"], ["id"]
+        )
 
 
 def downgrade() -> None:
+    if op.get_bind().dialect.name == "postgresql":
+        op.drop_constraint("fk_employees_location_id", "employees", type_="foreignkey")
     op.drop_column("employees", "location_id")
     op.drop_table("work_locations")

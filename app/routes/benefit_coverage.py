@@ -18,11 +18,12 @@ from app.models.benefit_coverage import (
     EnrollmentStatus,
 )
 from app.models.payroll import Employee
+from app.schemas.common import StrictModel
 
 router = APIRouter(prefix="/api/benefit-coverage", tags=["benefit-coverage"])
 
 
-class PlanCreate(BaseModel):
+class PlanCreate(StrictModel):
     name: str
     kind: str = "medical"
     carrier_name: Optional[str] = None
@@ -32,17 +33,17 @@ class PlanCreate(BaseModel):
     monthly_premium_employer: float = 0
 
 
-class EnrollRequest(BaseModel):
+class EnrollRequest(StrictModel):
     employee_id: int
     plan_id: int
     coverage_start: date
 
 
-class EndEnrollmentRequest(BaseModel):
+class EndEnrollmentRequest(StrictModel):
     coverage_end: date
 
 
-class DependentCreate(BaseModel):
+class DependentCreate(StrictModel):
     name: str
     relationship_kind: Optional[str] = None
     ssn_last_four: Optional[str] = None

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models.esign import EnvelopeKind, EnvelopeStatus, SignatureEnvelope
 from app.models.payroll import Employee
+from app.schemas.common import StrictModel
 
 router = APIRouter(prefix="/api/esign", tags=["esign"])
 
@@ -26,7 +27,7 @@ def signature_hash(content_hash: str, signer_name: str, timestamp_iso: str) -> s
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
-class EnvelopeCreate(BaseModel):
+class EnvelopeCreate(StrictModel):
     employee_id: int
     title: str
     body: str

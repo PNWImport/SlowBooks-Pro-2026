@@ -13,11 +13,12 @@ from app.models.locations import WorkLocation
 from app.models.payroll import Employee
 from app.services.local_tax import get_locality
 from app.services.state_tax import is_supported, list_states
+from app.schemas.common import StrictModel
 
 router = APIRouter(prefix="/api/locations", tags=["locations"])
 
 
-class LocationCreate(BaseModel):
+class LocationCreate(StrictModel):
     name: str
     state: str
     address1: Optional[str] = None
@@ -28,7 +29,7 @@ class LocationCreate(BaseModel):
     default_wc_class_code: Optional[str] = None
 
 
-class LocationUpdate(BaseModel):
+class LocationUpdate(StrictModel):
     name: Optional[str] = None
     state: Optional[str] = None
     address1: Optional[str] = None

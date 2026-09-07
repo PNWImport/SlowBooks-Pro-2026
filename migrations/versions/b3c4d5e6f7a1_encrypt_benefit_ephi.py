@@ -61,15 +61,21 @@ def upgrade() -> None:
     is_pg = bind.dialect.name == "postgresql"
 
     # --- widen the string columns so ciphertext fits ---
-    for table, column, width in _WIDEN:
-        nullable = not (table == "benefit_dependents" and column == "name")
-        op.alter_column(
-            table,
-            column,
-            existing_type=sa.String(200 if column == "name" else 120),
-            type_=sa.String(width),
-            existing_nullable=nullable,
-        )
+    # PostgreSQL only. ALTER COLUMN ... TYPE is not SQLite syntax, so this
+    # raised "near ALTER: syntax error" and stopped the chain on the desktop
+    # backend. Nothing is lost by skipping it: SQLite has no VARCHAR(n)
+    # enforcement — a declared width is advisory and the value is stored as
+    # TEXT whatever it says — so the ciphertext already fits there.
+    if is_pg:
+        for table, column, width in _WIDEN:
+            nullable = not (table == "benefit_dependents" and column == "name")
+            op.alter_column(
+                table,
+                column,
+                existing_type=sa.String(200 if column == "name" else 120),
+                type_=sa.String(width),
+                existing_nullable=nullable,
+            )
 
     # --- dob: DATE -> VARCHAR, carrying the ISO text across ---
     op.add_column(
@@ -120,6 +126,8 @@ def downgrade() -> None:
     column comes back as DATE and drops anything unparseable.
     """
     bind = op.get_bind()
+    is_pg = bind.dialect.name == "postgresql"
+
     from app.services.encryption import decrypt
 
     for table, column in [
@@ -155,12 +163,14 @@ def downgrade() -> None:
     op.drop_column("benefit_dependents", "dob")
     op.alter_column("benefit_dependents", "dob_date", new_column_name="dob")
 
-    for table, column, width in _WIDEN:
-        nullable = not (table == "benefit_dependents" and column == "name")
-        op.alter_column(
-            table,
-            column,
-            existing_type=sa.String(width),
-            type_=sa.String(200 if column == "name" else 120),
-            existing_nullable=nullable,
-        )
+    # PostgreSQL only, mirroring the widening in upgrade().
+    if is_pg:
+        for table, column, width in _WIDEN:
+            nullable = not (table == "benefit_dependents" and column == "name")
+            op.alter_column(
+                table,
+                column,
+                existing_type=sa.String(width),
+                type_=sa.String(200 if column == "name" else 120),
+                existing_nullable=nullable,
+            )

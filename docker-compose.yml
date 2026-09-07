@@ -52,6 +52,17 @@ services:
       APP_HOST: "0.0.0.0"
       APP_PORT: "3001"
       APP_DEBUG: "${APP_DEBUG:-false}"
+      # ---- Single-host transport (the documented `docker compose up`) ----
+      # Postgres is on the compose-internal bridge and the app answers on
+      # http://localhost:3001, so the production guards for a TLS database
+      # connection and an HTTPS redirect would refuse to start. This flag
+      # says "nothing leaves the host" and relaxes exactly those two checks;
+      # the encryption-secret guards stay. Exposing the stack beyond the
+      # host? Put a TLS proxy in front (docs/tls-proxy-setup.md), set
+      # FORCE_HTTPS=true, add ?sslmode=require to DATABASE_URL, and remove
+      # the flag.
+      SLOWBOOKS_PRIVATE_NETWORK: "${SLOWBOOKS_PRIVATE_NETWORK:-1}"
+      FORCE_HTTPS: "${FORCE_HTTPS:-false}"
       APP_WORKERS: "${APP_WORKERS:-2}"
       # Python 3.13 experimental JIT - uncomment for ~5-10% extra on hot loops
       # PYTHON_JIT: "1"

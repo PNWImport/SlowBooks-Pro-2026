@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models.payroll import Employee
 from app.models.pto import PTORequest, PTORequestStatus
 from app.models.reviews import PerformanceReview, ReviewStatus
+from app.schemas.common import StrictModel
 
 router = APIRouter(prefix="/api/hr", tags=["hr-views"])
 
@@ -113,7 +114,7 @@ def pto_calendar(
 # --- Performance reviews -----------------------------------------------------
 
 
-class ReviewCreate(BaseModel):
+class ReviewCreate(StrictModel):
     employee_id: int
     reviewer_id: Optional[int] = None
     period_start: date
@@ -123,13 +124,13 @@ class ReviewCreate(BaseModel):
     feedback: Optional[str] = None
 
 
-class ReviewUpdate(BaseModel):
+class ReviewUpdate(StrictModel):
     rating: Optional[int] = None
     goals: Optional[str] = None
     feedback: Optional[str] = None
 
 
-class AcknowledgeRequest(BaseModel):
+class AcknowledgeRequest(StrictModel):
     employee_comment: Optional[str] = None
 
 

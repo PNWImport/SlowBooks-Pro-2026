@@ -19,9 +19,10 @@ from app.models.payroll import (
 )
 from app.services.payroll_service import calculate_withholdings
 from app.services.state_tax.reciprocity import withholding_state
+from app.schemas.common import StrictModel
 
 
-class RetroPayRequest(BaseModel):
+class RetroPayRequest(StrictModel):
     employee_id: int
     new_rate: float
     effective_date: date

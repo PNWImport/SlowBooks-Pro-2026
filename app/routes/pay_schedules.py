@@ -13,11 +13,12 @@ from app.database import get_db
 from app.models.pay_schedules import PaySchedule, WeekendShift
 from app.models.payroll import Employee, PayFrequency
 from app.services.pay_schedule_service import upcoming_pay_dates
+from app.schemas.common import StrictModel
 
 router = APIRouter(prefix="/api/pay-schedules", tags=["pay-schedules"])
 
 
-class PayScheduleCreate(BaseModel):
+class PayScheduleCreate(StrictModel):
     name: str
     frequency: str
     anchor_pay_date: date
@@ -25,7 +26,7 @@ class PayScheduleCreate(BaseModel):
     weekend_shift: str = "previous_business_day"
 
 
-class PayScheduleUpdate(BaseModel):
+class PayScheduleUpdate(StrictModel):
     name: Optional[str] = None
     frequency: Optional[str] = None
     anchor_pay_date: Optional[date] = None

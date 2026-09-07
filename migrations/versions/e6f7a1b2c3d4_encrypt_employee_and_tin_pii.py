@@ -62,14 +62,21 @@ def upgrade() -> None:
 
     # Widen first — ciphertext is far longer than the plaintext it replaces,
     # and ssn_last_four at String(4) cannot hold a token at all.
-    for table, column, old, new in _TARGETS:
-        op.alter_column(
-            table,
-            column,
-            existing_type=sa.String(old),
-            type_=sa.String(new),
-            existing_nullable=True,
-        )
+    #
+    # PostgreSQL only: ALTER COLUMN ... TYPE is not SQLite syntax, and issuing
+    # it unconditionally raised "near ALTER: syntax error", stopping the whole
+    # migration chain on the desktop backend. SQLite does not enforce a
+    # declared VARCHAR width — the value is stored as TEXT regardless — so the
+    # columns there already hold the ciphertext without being widened.
+    if bind.dialect.name == "postgresql":
+        for table, column, old, new in _TARGETS:
+            op.alter_column(
+                table,
+                column,
+                existing_type=sa.String(old),
+                type_=sa.String(new),
+                existing_nullable=True,
+            )
 
     # Encrypt in place using the application's own encrypt(), so the
     # ciphertext is readable by the running app. A migration that hand-rolled
@@ -127,10 +134,12 @@ def downgrade() -> None:
         ).scalar()
         if too_long:
             continue
-        op.alter_column(
-            table,
-            column,
-            existing_type=sa.String(new),
-            type_=sa.String(old),
-            existing_nullable=True,
-        )
+        # PostgreSQL only, mirroring the widening in upgrade().
+        if bind.dialect.name == "postgresql":
+            op.alter_column(
+                table,
+                column,
+                existing_type=sa.String(new),
+                type_=sa.String(old),
+                existing_nullable=True,
+            )

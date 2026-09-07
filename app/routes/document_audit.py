@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.document_audit import AuditCheckpoint, DocumentAudit
+from app.schemas.common import StrictModel
 
 router = APIRouter(prefix="/api/document-audits", tags=["document-audit"])
 
@@ -84,11 +85,11 @@ def verify_hash(content_hash: str, db: Session = Depends(get_db)):
 # "has anything been removed from or reordered inside the audit trail?"
 
 
-class CheckpointRequest(BaseModel):
+class CheckpointRequest(StrictModel):
     note: Optional[str] = None
 
 
-class CheckpointArtifactRequest(BaseModel):
+class CheckpointArtifactRequest(StrictModel):
     """An exported checkpoint artifact, coming back from off-box storage.
 
     `payload` is an untyped dict on purpose. The signature covers the exact
