@@ -7,41 +7,57 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
-### Merged `main` into the payroll/compliance branch
+### Added
 
-345 commits of parallel development, reconciled rather than replayed.
-Main won for structure — the `app/routes/payroll/` package, the benefits
-engine, the state-tax engine, request schemas, audit actor attribution.
-This branch won for the security work — the document-audit hash chain,
-signed checkpoints, encryption at rest, blind indexes.
+- Merged `main`. Both benefits systems now ship side by side with no shared
+  tables: the engine (`BenefitCode`/`BenefitRate`/`EmployeeBenefit`,
+  `/api/benefits`, `#/hr/benefits`) and coverage
+  (`BenefitPlan`/`BenefitEnrollment`/`BenefitDependent`,
+  `/api/benefit-coverage`, `#/hr/benefit-coverage`).
+- Published new-employer SUTA rates for 47 states in
+  `app/services/state_tax/tables.py`.
+- `Vendor.is_1099_eligible` and `Vendor.w9_on_file` exposed through the API —
+  the columns existed but no schema declared them.
+- Retro-pay form in the payroll page, calling
+  `/api/payroll/retro-pay/{preview,apply}`.
+- `SLOWBOOKS_PRIVATE_NETWORK` and `FORCE_HTTPS` in `docker-compose.yml`.
 
-Both benefits systems now ship side by side, sharing no tables: main's
-engine (`BenefitCode`/`BenefitRate`/`EmployeeBenefit`, `/api/benefits`)
-handles deductions and contributions, while coverage
-(`BenefitPlan`/`BenefitEnrollment`/`BenefitDependent`, moved to
-`app/models/benefit_coverage.py` and `/api/benefit-coverage`) handles
-plans, ACA 1095 and COBRA. The coverage SPA page moved to
-`#/hr/benefit-coverage`; main took `#/hr/benefits`.
+### Fixed
 
-The merge left a number of behaviours accepted-but-ignored, which is the
-failure mode worth naming: the request still succeeded, it just stopped
-doing the thing. Restored — tipped wages and the minimum-wage top-up,
-mid-period raise proration (a full period was being paid at the new rate
-instead of day-weighted), garnishment remittance rows, per-state SUTA
-rates, the work-location tax fallback that local withholding depends on,
-and `tax_id` encryption on customers and vendors.
+- CORS preflight answered 401 with no `Access-Control-Allow-Origin`, and every
+  401/403 shipped with no CSP or other security headers — both middlewares
+  were registered inside the session gate instead of around it.
+- `POST /api/employees/{id}/terminate` returned 500 (imported the removed
+  `EmployeeDeduction`).
+- `GET /api/employees/{id}/ytd` returned 500 (`KeyError: 'local'`).
+- Alembic could not reach head on SQLite: PostgreSQL-only `ALTER COLUMN`
+  in three migrations, inline foreign keys in two, and a duplicate
+  `portal_token_last_used` column added by two.
+- `docker compose up` refused to start without `SLOWBOOKS_PRIVATE_NETWORK`.
+- Reported and paycheck tips were accepted and ignored — no minimum-wage
+  top-up, not taxed, and not excluded from the journal entry.
+- Mid-period raises were accepted and ignored, paying a full period at the
+  new rate instead of day-weighting across the change date.
+- Garnishment remittance rows stopped being written when a pay run was
+  processed, leaving withheld money with no payable trail.
+- Per-state SUTA rates fell back to one global rate for every state.
+- Work-location jurisdiction fallback was dropped, so no local tax was
+  withheld for any employee.
+- `Customer.tax_id` and `Vendor.tax_id` reverted to plaintext.
+- The benefit-coverage page called `/api/benefits/*`, silently reading and
+  writing the benefits engine's tables; it was also unreachable (no script
+  tag, and a `const BenefitsPage` collision with `benefits.js`, which was
+  itself included twice).
+- `index.html` carried an orphaned nav fragment and a duplicate
+  `#/hr/benefits` entry.
+- 22 request models accepted unknown fields instead of rejecting them.
+- `POST /api/document-audits/chain/checkpoints/verify-artifact` rejected the
+  application's own exported artifact.
 
-Three things were outright broken and are fixed: CORS and the security
-headers were registered inside the session gate, so every preflight was
-answered 401 with no `Access-Control-Allow-Origin` and every 401 carried
-no CSP; `POST /employees/{id}/terminate` and `GET /employees/{id}/ytd`
-both 500'd; and the Alembic chain could not reach head on SQLite, so no
-desktop install could be built from migrations.
+### Removed
 
-Also: the orphaned per-state JSON tax tables are gone — 47 files nothing
-read, holding SUTA rates the engine could not see. Those rates now live
-in `tables.py` with everything else.
-
+- `app/services/state_tax/tables/*.json` — 47 files no loader read, holding
+  the SUTA rates the engine could not see.
 
 ### Kubernetes manifests
 
