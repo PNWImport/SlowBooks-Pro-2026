@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
 from typing import Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import model_validator
 from sqlalchemy.orm import Session, joinedload
 
 from app import config

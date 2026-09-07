@@ -18,7 +18,6 @@ from fastapi import (
     Form,
 )
 from fastapi.responses import FileResponse
-from pydantic import BaseModel as _BaseModel
 
 from app.schemas.common import StrictModel
 from sqlalchemy.orm import Session

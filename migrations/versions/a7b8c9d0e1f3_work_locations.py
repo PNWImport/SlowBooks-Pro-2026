@@ -51,7 +51,11 @@ def upgrade() -> None:
     op.add_column("employees", sa.Column("location_id", sa.Integer(), nullable=True))
     if bind.dialect.name == "postgresql":
         op.create_foreign_key(
-            "fk_employees_location_id", "employees", "work_locations", ["location_id"], ["id"]
+            "fk_employees_location_id",
+            "employees",
+            "work_locations",
+            ["location_id"],
+            ["id"],
         )
 
 

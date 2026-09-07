@@ -112,7 +112,9 @@ def test_dependents(client):
         json={"name": "Kid Worker", "relationship_kind": "child"},
     )
     assert r.status_code == 201
-    listed = client.get(f"/api/benefit-coverage/enrollments?employee_id={emp['id']}").json()
+    listed = client.get(
+        f"/api/benefit-coverage/enrollments?employee_id={emp['id']}"
+    ).json()
     assert listed[0]["dependents"][0]["name"] == "Kid Worker"
 
 
@@ -175,7 +177,9 @@ def test_cobra_notice_requires_ended_medical(client):
     enr = _enroll(client, emp["id"], plan["id"])
     # Active enrollment: 400.
     assert (
-        client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice").status_code
+        client.post(
+            f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice"
+        ).status_code
         == 400
     )
 
@@ -200,6 +204,8 @@ def test_cobra_notice_rejects_dental(client):
         json={"coverage_end": "2026-06-30"},
     )
     assert (
-        client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice").status_code
+        client.post(
+            f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice"
+        ).status_code
         == 400
     )

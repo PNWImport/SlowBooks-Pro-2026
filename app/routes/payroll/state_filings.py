@@ -6,7 +6,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.routes.payroll._router import router
-from app.routes.payroll.tax_forms import _company_for_pdf, _hash_and_audit, _pdf_response
+from app.routes.payroll.tax_forms import (
+    _company_for_pdf,
+    _hash_and_audit,
+    _pdf_response,
+)
 from app.services.tax_forms.state_sui import compute_sui, generate_sui_pdf
 from app.services.tax_forms.efw2 import generate_efw2
 

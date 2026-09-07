@@ -6,7 +6,6 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -229,7 +228,11 @@ def cobra_notice(enrollment_id: int, db: Session = Depends(get_db)):
     admin-fee cap). Audit-hashed like the tax forms. A generic template —
     review against DOL model notices before sending.
     """
-    from app.routes.payroll.tax_forms import _company_for_pdf, _hash_and_audit, _pdf_response
+    from app.routes.payroll.tax_forms import (
+        _company_for_pdf,
+        _hash_and_audit,
+        _pdf_response,
+    )
     from app.services.pdf_service import _jinja_env, _safe_url_fetcher
     from weasyprint import HTML
 

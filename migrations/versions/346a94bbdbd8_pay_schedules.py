@@ -79,10 +79,16 @@ def upgrade() -> None:
     # these migrations already use. SQLite does not enforce foreign keys
     # unless the pragma is on; the relationship is declared on the ORM model
     # either way, so nothing downstream depends on the constraint existing.
-    op.add_column("employees", sa.Column("pay_schedule_id", sa.Integer(), nullable=True))
+    op.add_column(
+        "employees", sa.Column("pay_schedule_id", sa.Integer(), nullable=True)
+    )
     if bind.dialect.name == "postgresql":
         op.create_foreign_key(
-            "fk_employees_pay_schedule_id", "employees", "pay_schedules", ["pay_schedule_id"], ["id"]
+            "fk_employees_pay_schedule_id",
+            "employees",
+            "pay_schedules",
+            ["pay_schedule_id"],
+            ["id"],
         )
 
 
@@ -90,7 +96,9 @@ def downgrade() -> None:
     bind = op.get_bind()
     is_pg = bind.dialect.name == "postgresql"
     if op.get_bind().dialect.name == "postgresql":
-        op.drop_constraint("fk_employees_pay_schedule_id", "employees", type_="foreignkey")
+        op.drop_constraint(
+            "fk_employees_pay_schedule_id", "employees", type_="foreignkey"
+        )
     op.drop_column("employees", "pay_schedule_id")
     op.drop_table("pay_schedules")
     # Only the types this migration introduced are dropped; shared

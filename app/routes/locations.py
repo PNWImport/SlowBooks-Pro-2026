@@ -5,14 +5,13 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.locations import WorkLocation
 from app.models.payroll import Employee
 from app.services.local_tax import get_locality
-from app.services.state_tax import is_supported, list_states
+from app.services.state_tax import is_supported
 from app.schemas.common import StrictModel
 
 router = APIRouter(prefix="/api/locations", tags=["locations"])

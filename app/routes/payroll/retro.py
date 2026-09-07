@@ -4,7 +4,6 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db

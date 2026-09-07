@@ -481,8 +481,6 @@ async def security_headers(request: Request, call_next):
     return response
 
 
-
-
 # ---- Auth gate (Phase 9.7) ----
 # Single middleware that lets through static assets, the SPA shell, the
 # auth routes themselves, /health, and the public customer pay page.

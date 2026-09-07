@@ -94,7 +94,9 @@ def test_the_page_navigates_to_a_route_that_exists():
     app_js = (JS.parents[3] / "app" / "static" / "js" / "app.js").read_text()
     routes = set(re.findall(r"^\s*'(/[^']*)':\s*\{", app_js, re.M))
     for target in re.findall(r"App\.navigate\('#(/[^']*)'\)", JS.read_text()):
-        assert target in routes, f"benefit_coverage.js navigates to unregistered {target!r}"
+        assert (
+            target in routes
+        ), f"benefit_coverage.js navigates to unregistered {target!r}"
 
 
 # --- response shapes the page renders ---------------------------------------
@@ -199,7 +201,9 @@ def test_cobra_needs_an_ended_medical_enrollment(client, seed_accounts):
         json={"coverage_end": "2026-07-15"},
     )
     assert (
-        client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice").status_code
+        client.post(
+            f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice"
+        ).status_code
         == 200
     )
 

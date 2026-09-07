@@ -249,7 +249,11 @@ def rewrap_all(db, dry_run: bool = False) -> dict:
     from sqlalchemy import inspect as sa_inspect
 
     from app.models.bank_accounts import EmployeeBankAccount
-    from app.models.benefit_coverage import BenefitDependent, BenefitEnrollment, BenefitPlan
+    from app.models.benefit_coverage import (
+        BenefitDependent,
+        BenefitEnrollment,
+        BenefitPlan,
+    )
     from app.models.contacts import Customer, Vendor
     from app.models.contractor_payments import VendorBankAccount
     from app.models.deductions import GarnishmentOrder

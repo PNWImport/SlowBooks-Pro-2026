@@ -419,7 +419,9 @@ def test_cobra_and_esign_use_the_same_ledger(client, db_session, seed_accounts):
         json={"coverage_end": "2026-06-30"},
     )
     assert (
-        client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice").status_code
+        client.post(
+            f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice"
+        ).status_code
         == 200
     )
 
