@@ -2,7 +2,13 @@
 # Pull in with:  pip install -r requirements.txt -r requirements-dev.txt
 pytest>=8.3.0
 pytest-cov>=5.0.0
-# Pinned to the minor series the tree was swept against — a floating
-# range silently changes what the lint gate enforces. See ci.yml.
-black>=24.8,<25
+# Pinned to a series, not floating: a floating range silently changes what
+# the lint gate enforces (ruff 0.16 reports 2526 findings on this tree where
+# 0.6 reports none). See ci.yml.
+#
+# black moved 24.x -> 26.x for PYSEC-2026-2120 / PYSEC-2026-2121, both fixed
+# in 26.3.x. The earlier <25 cap was blocking them. Dev-only — black is not
+# installed into the production image — but the bump is free: 26.5.1 formats
+# this tree byte-identically to 24.10, so the gate did not move.
+black>=26.3.1,<27
 ruff>=0.6,<0.7

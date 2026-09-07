@@ -19,11 +19,26 @@ python-dotenv==1.2.2  # CVE-2026-28684 — set_key()/unset_key() symlink followi
 
 # Templating + PDF
 jinja2==3.1.6
+# PYSEC-2026-3412 (CSS injection via unescaped attribute values) is open
+# against 68.1 with NO fixed release yet. Not applicable here: the advisory
+# requires HTML presentational hints to be enabled, and every call site in
+# app/services/ invokes write_pdf() without presentational_hints, which
+# defaults to False. Re-check when a fix ships; tests/test_pdf_security.py
+# guards the call-site assumption.
 weasyprint==68.1
 pydyf==0.12.1
 
 # Form upload parsing
-python-multipart==0.0.27  # GHSA — DoS via unbounded multipart part headers (< 0.0.27)
+# Parses every multipart upload and urlencoded form the app accepts, so
+# these are reachable on real endpoints rather than theoretical:
+#   PYSEC-2026-3040  negative Content-Length turns a bounded read into
+#                    read-until-EOF (memory DoS) - 0.0.31
+#   PYSEC-2026-3037  ';' wrongly treated as a urlencoded field separator,
+#                    against the WHATWG standard - 0.0.30
+#   PYSEC-2026-3036  quadratic separator scan on large bodies (DoS) - 0.0.30
+# Earlier fix this pin already carried: GHSA - DoS via unbounded multipart
+# part headers (< 0.0.27).
+python-multipart>=0.0.31
 
 # Bank-statement parsing + dates
 ofxparse>=0.21,<1.0
@@ -38,11 +53,21 @@ intuit-oauth>=1.2.0,<2.0
 pyjwt>=2.10.0,<3.0
 
 # Crypto / HTTP / JSON
-# Cap raised from <44.0 to <47.0 to pull cryptography>=46.0.5, which fixes:
-#   CVE-2023-50782, CVE-2024-0727, CVE-2024-12797,
-#   PYSEC-2024-225, PYSEC-2026-35, CVE-2026-26007,
-#   GHSA-h4gh-qq45-vh27
-cryptography>=46.0.5,<47.0
+# Floor raised to 50.0.0. The <47.0 cap was itself blocking the fixes for
+# five advisories open against 46.x, so the cap is gone rather than moved:
+#   GHSA-537c-gmf6-5ccf  vulnerable OpenSSL statically linked into the wheel
+#                        (affects us regardless of which APIs we call) - 48.0.1
+#   PYSEC-2026-3554      wildcard SAN escapes a name-constrained CA - 49.0.0
+#   PYSEC-2026-3553      exponential blowup verifying chains with duplicate
+#                        self-signed certs (DoS) - 49.0.0
+#   PYSEC-2026-3552      PKCS7 decrypt leaks recovered key length - 50.0.0
+# Plus the earlier set this pin already covered: CVE-2023-50782,
+# CVE-2024-0727, CVE-2024-12797, PYSEC-2024-225, PYSEC-2026-35,
+# CVE-2026-26007, GHSA-h4gh-qq45-vh27.
+# This is the library Fernet runs on, so it protects the employee bank
+# columns and the benefits ePHI. Fernet's format is stable across these
+# releases - existing ciphertext still decrypts (full suite green on 50.0.1).
+cryptography>=50.0.0
 httpx>=0.27.0,<1.0
 # (orjson dropped — FastAPI 0.121+ serializes via Pydantic natively and
 #  deprecated ORJSONResponse in 0.136; we no longer pin a custom encoder.)
