@@ -427,7 +427,41 @@ def _build_csp(desktop: bool) -> str:
     )
 
 
-_CSP = _build_csp(desktop=os.environ.get("SLOWBOOKS_DESKTOP") == "1")
+_CSP_STRICT = _build_csp(desktop=False)
+_CSP_DESKTOP = _build_csp(desktop=True)
+# The launcher sets this for every server it starts — the windowed app AND
+# Server Edition's headless --serve-lan (system.py reads it for the update
+# check), so the flag alone over-reaches: it served 'unsafe-eval' to LAN
+# browsers (Keith, #98). The relaxation is for the native web view, which
+# only ever connects from loopback, so require both.
+_DESKTOP_FLAG = os.environ.get("SLOWBOOKS_DESKTOP") == "1"
+
+
+def _is_loopback(host: str | None) -> bool:
+    if not host:
+        return False
+    if host in ("localhost", "::1"):
+        return True
+    try:
+        import ipaddress
+
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _csp_for(request: Request) -> str:
+    """The desktop policy only for the desktop shell: launcher flag set AND
+    the request came over loopback. A LAN browser talking to --serve-lan
+    gets the strict policy exactly like a Docker install."""
+    client = request.client.host if request.client else None
+    if _DESKTOP_FLAG and _is_loopback(client):
+        return _CSP_DESKTOP
+    return _CSP_STRICT
+
+
+# Backwards-compatible name: the policy this process serves to its own shell.
+_CSP = _CSP_DESKTOP if _DESKTOP_FLAG else _CSP_STRICT
 
 
 def _set_if_unset(headers, name: str, value: str) -> None:
@@ -468,7 +502,7 @@ async def security_headers(request: Request, call_next):
     # no-cache still allows ETag/304 revalidation (free on localhost) but
     # forbids serving from cache without asking.
     _set_if_unset(response.headers, "Cache-Control", "no-cache")
-    _set_if_unset(response.headers, "Content-Security-Policy", _CSP)
+    _set_if_unset(response.headers, "Content-Security-Policy", _csp_for(request))
     # HSTS instructs browsers to refuse plain HTTP for HSTS_MAX_AGE seconds.
     # Only emit when HTTPS is actually enforced; sending it under plain HTTP
     # would lock users out if they later visit via http://.
@@ -539,13 +573,44 @@ _ADMIN_WRITE_PREFIXES = (
     "/api/backups",
     "/api/companies",
     "/api/migration",
+    # Staff records carry SSN, pay rate and W-4 elections: creating or
+    # editing one is HR, not daily books (GHSA-rh75-6834-f66j).
+    "/api/employees",
+)
+# HR and payroll are admin functions, reads included: pay stubs, W-2s and
+# 941s, NACHA files, benefit elections, garnishments and onboarding
+# paperwork are the payroll clerk's, not the read-only reviewer's
+# (docs/server-edition.md; GHSA-pwj7-6qq3-h4fj). Every method.
+_ADMIN_ONLY_PREFIXES = (
+    "/api/payroll",
+    "/api/tax-forms",
+    "/api/benefits",
+    "/api/deductions",
+    "/api/onboarding",
+)
+# The parts of an employee record that are a credential or a bank account:
+# the self-service portal token (a full login as that employee —
+# GHSA-rh68-48w8-pj8r), direct-deposit accounts, I-9 and other documents,
+# E-Verify, year-to-date pay. The record itself stays listable by every
+# role (time entries and job costing need the names) but is redacted for
+# non-admins in the employees router.
+_ADMIN_ONLY_EMPLOYEE_RE = _re.compile(
+    r"^/api/employees/[^/]+/(portal-token|portal-access|everify|bank-accounts|documents|ytd)(/|$)"
 )
 _READ_METHODS = ("GET", "HEAD", "OPTIONS")
+
+
+def _is_hr_sensitive(path: str) -> bool:
+    return path.startswith(_ADMIN_ONLY_PREFIXES) or bool(
+        _ADMIN_ONLY_EMPLOYEE_RE.match(path)
+    )
 
 
 def _role_allows(role: str, method: str, path: str) -> bool:
     if role == "admin":
         return True
+    if _is_hr_sensitive(path):
+        return False
     is_read = method in _READ_METHODS
     if role == "readonly":
         # Field finding: audit payloads snapshot full record contents

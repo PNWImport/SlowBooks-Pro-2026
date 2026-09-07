@@ -7,557 +7,1058 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
-### Added
-
-- Merged `main`. Both benefits systems now ship side by side with no shared
-  tables: the engine (`BenefitCode`/`BenefitRate`/`EmployeeBenefit`,
-  `/api/benefits`, `#/hr/benefits`) and coverage
-  (`BenefitPlan`/`BenefitEnrollment`/`BenefitDependent`,
-  `/api/benefit-coverage`, `#/hr/benefit-coverage`).
-- Published new-employer SUTA rates for 47 states in
-  `app/services/state_tax/tables.py`.
-- `Vendor.is_1099_eligible` and `Vendor.w9_on_file` exposed through the API —
-  the columns existed but no schema declared them.
-- Retro-pay form in the payroll page, calling
-  `/api/payroll/retro-pay/{preview,apply}`.
-- `SLOWBOOKS_PRIVATE_NETWORK` and `FORCE_HTTPS` in `docker-compose.yml`.
-
-### Fixed
-
-- CORS preflight answered 401 with no `Access-Control-Allow-Origin`, and every
-  401/403 shipped with no CSP or other security headers — both middlewares
-  were registered inside the session gate instead of around it.
-- `POST /api/employees/{id}/terminate` returned 500 (imported the removed
-  `EmployeeDeduction`).
-- `GET /api/employees/{id}/ytd` returned 500 (`KeyError: 'local'`).
-- Alembic could not reach head on SQLite: PostgreSQL-only `ALTER COLUMN`
-  in three migrations, inline foreign keys in two, and a duplicate
-  `portal_token_last_used` column added by two.
-- `docker compose up` refused to start without `SLOWBOOKS_PRIVATE_NETWORK`.
-- Reported and paycheck tips were accepted and ignored — no minimum-wage
-  top-up, not taxed, and not excluded from the journal entry.
-- Mid-period raises were accepted and ignored, paying a full period at the
-  new rate instead of day-weighting across the change date.
-- Garnishment remittance rows stopped being written when a pay run was
-  processed, leaving withheld money with no payable trail.
-- Per-state SUTA rates fell back to one global rate for every state.
-- Work-location jurisdiction fallback was dropped, so no local tax was
-  withheld for any employee.
-- `Customer.tax_id` and `Vendor.tax_id` reverted to plaintext.
-- The benefit-coverage page called `/api/benefits/*`, silently reading and
-  writing the benefits engine's tables; it was also unreachable (no script
-  tag, and a `const BenefitsPage` collision with `benefits.js`, which was
-  itself included twice).
-- `index.html` carried an orphaned nav fragment and a duplicate
-  `#/hr/benefits` entry.
-- 22 request models accepted unknown fields instead of rejecting them.
-- `POST /api/document-audits/chain/checkpoints/verify-artifact` rejected the
-  application's own exported artifact.
-
-### Removed
-
-- `app/services/state_tax/tables/*.json` — 47 files no loader read, holding
-  the SUTA rates the engine could not see.
-
-### Kubernetes manifests
-
-`k8s/` deploys the app with `kubectl apply -k`: namespace, ConfigMap,
-Secret template, PVCs, Postgres StatefulSet, Redis, migrate Job,
-Deployment, Service, Ingress. Plain kustomize rather than Helm — there is
-one deployment shape here, and a chart would add indirection without
-adding choice.
-
-Two things needed changing in the image to make this correct. The
-entrypoint ran migrations unconditionally, which is fine for one compose
-container and wrong for N replicas: they would all run
-`alembic upgrade head` on rollout and contend for the version row, so the
-losers can exit non-zero mid-deploy. `RUN_MIGRATIONS=0` now hands that to
-a Job that runs once. `WAIT_FOR_POSTGRES=0` likewise drops the pg_isready
-loop, which only delays the first CrashLoopBackOff on a platform that
-already supervises restarts.
-
-`replicas: 1` and the `Recreate` strategy are deliberate: uploads and
-backups sit on ReadWriteOnce volumes, which a second pod cannot mount.
-Scaling out means switching those to ReadWriteMany and raising replicas
-together — `tests/test_k8s_manifests.py` asserts the pairing so a
-half-done change fails in CI rather than as pods stuck Pending. That file
-carries 17 checks in total: probe paths must be on the auth-exempt list
-(a probe on an authenticated path 401s and the pod never goes ready), the
-app and migrate Job must share an image, the rate limiter must point at
-shared storage, proxy trust must be set and must not be 0.0.0.0/0, and
-the Secret template must contain no real values and stay out of
-kustomization. Writing them caught one design smell:
-`CORS_ALLOW_ORIGINS` was in the Secret, though it is your own public
-origin rather than a credential — moved to the ConfigMap.
-
-The README documents what is deliberately not covered: NetworkPolicies,
-PDB/HPA, off-cluster backups, and real secret management (these are plain
-Kubernetes Secrets, which are base64 in etcd, not encrypted).
-
-### CI lint gate was red, and floating pins were why
-
-`ci.yml` installed `black>=24.8.0` and `ruff>=0.6.0` with no upper bound,
-so every run linted against whatever had shipped most recently. Ruff has
-since widened its default rule set considerably: on an unchanged tree,
-ruff 0.16 reports 2526 findings where 0.6 reports none of them — 426 are
-B008, which flags FastAPI's own `Depends()` default-argument idiom, so
-they were never going to be actionable. With `test` gated behind
-`needs: lint`, the whole pipeline was blocked. Both tools are now pinned
-to the minor series the tree was actually swept against, in `ci.yml` and
-`requirements-dev.txt`, so the gate is reproducible and upgrades happen
-deliberately alongside a formatting sweep.
-
-Pinning surfaced 16 genuine findings that had accumulated under the
-broken gate — unused imports across `app/models/reviews.py`,
-`app/routes/benefits.py`, `app/routes/esign.py` and eight test modules,
-plus a mid-file `pydantic` import in `app/routes/employees.py` (E402)
-now hoisted to the top block. Tree is clean under both black 24.10 and
-ruff 0.6.9, verified at the exact versions CI installs. 901 tests.
-
-### Admin UI for the whole payroll/HR surface
-
-Every payroll and HR feature built over the preceding tiers had a
-backend and tests but no page; `_INTENTIONAL_BACKEND_ONLY` in
-`tests/test_wiring.py` had grown into a 30-route parking lot. This wave
-cleared it. Ten new SPA pages — contractor pay runs
-(`#/payroll/contractors`, create/process/NACHA export), garnishment
-remittances (`#/payroll/remittances`, pending filter + mark-remitted),
-pay schedules (`#/payroll/schedules`, CRUD + upcoming-date preview +
-assignment), work locations (`#/payroll/locations`, CRUD + roster +
-assignment), HR team (`#/hr/team`, org chart / PTO calendar / reviews in
-three tabs), tax deposit calendar (`#/payroll/deposit-calendar`,
-classification + liability table), workers' comp
-(`#/payroll/workers-comp`, rates + premium audit), payroll reports
-(`#/payroll/reports`, journal / deduction register / contractor
-payments), plus benefits and compliance from the preceding entries. Two
-workflows landed as affordances on existing pages rather than pages of
-their own: Retro Pay on `#/payroll` (preview table, then apply) and
-Terminate on active `#/employees` rows (deadline, PTO payout, staged
-run). The wiring test now runs with 15 fewer allowlist entries; what
-remains is genuinely backend-only (webhooks, admin scripting). A
-deny-by-default regression test asserts all 16 new endpoint groups 401
-without a session. 676 -> 898 tests.
-
-### Docs — schema reference caught up, and pinned
-
-`docs/data-model.md` had drifted 22 tables behind the models (it claimed
-55; there are 68) and still described `document_audits` as "independent
-rows, not a linked chain" three commits after it became one.
-Regenerated with every payroll/HR table, and `tests/test_data_model_doc.py`
-now asserts the doc lists exactly `Base.metadata.tables` and states the
-right count — so a new model without a doc row fails CI instead of
-rotting quietly. Also corrected: the payroll module's status snapshot
-(11 rows claimed "Admin UI: n/a" for pages that now exist), its stale
-695-test figure, and a "pending" list carrying two items that had
-already shipped. The CSP note was wrong about its own blocker — the
-inline bootstrap script is long gone, but ~446 inline event handlers
-across the SPA modules need `'unsafe-inline'` just as much, so nonce
-mode is a real refactor rather than a header flip. 899 tests.
-
-### Tamper-evident audit chain + ePHI encryption at rest
-
-The compliance wave, in the order the gaps were found and closed.
-
-**Migration/model parity.** Five migrations declared native PostgreSQL
-enums the models never matched, which meant `alembic upgrade head`
-produced a schema the app couldn't write to on Postgres (SQLite dev
-never noticed). Fixed, and `tests/test_migration_schema_parity.py` now
-guards enum DDL, table coverage, and column drift so the pair can't
-separate again. The same pass rewrote the HIPAA doc's claim about the
-audit ledger to state its actual limitation rather than its intent.
-
-**A real linked hash chain.** `document_audits` was independent SHA-256
-rows — it detected alteration of a document's *content* and nothing
-else, so deleting an audit row left every survivor verifying perfectly.
-Each row now commits to its predecessor
-(`chain_hash(N) = SHA256(prev_hash | content_hash | doc_type | doc_key
-| created_at)`, genesis = 64 zeros), with `doc_type`, `doc_key`, and
-`created_at` inside the hash so a row can't be relabelled or back-dated
-either. Content alteration, audit-row alteration, mid-chain deletion,
-reordering, insertion, and back-dating are each detected and reported
-distinctly. Appends take a row lock (`SELECT FOR UPDATE` on Postgres) so
-concurrent writers can't fork the chain.
-
-**Checkpoints, signed and exportable.** Tail truncation is the one thing
-linkage can't catch — a shortened chain is internally valid — so
-`audit_checkpoints` pins (tip id, tip chain hash, row count) at a moment
-in time. Checkpoints are signed and exportable off-box, because an
-attacker with full DB write access can delete checkpoint rows too; the
-verify path reports containment and signature *separately*, so an
-unsigned checkpoint over a clean chain reads as a setup gap rather than
-as tampering.
-
-**Benefits ePHI encrypted, then actually encrypted.** The benefits
-tables were treated as ePHI and encrypted at rest — but the first pass
-left plan kind, coverage window, and the employee foreign key in
-plaintext, so table access still revealed *which employees held medical
-coverage over which months*. Encrypting those breaks equality queries
-(Fernet output is randomized), so each got a blind index: a
-deterministic `HMAC-SHA256(key, "b1|<table>.<column>|<value>")` sidecar
-column that keeps lookups working, with the column name inside the hash
-so the same value can't be correlated across tables. Indexes stay in
-sync via mapper events rather than call sites, so no write path can
-silently drop a row out of every filtered query.
-
-**The Compliance tab.** `#/compliance` answers the four questions an
-auditor actually asks — does this document match its data (hash
-lookup), has anything been removed (chain verify), was the tail
-truncated (checkpoints), and were the checkpoints themselves deleted
-(paste an exported artifact back in). Create / verify / export are one
-click each. Driven end-to-end in Chromium including the
-delete-the-tail-and-every-checkpoint case.
-
-676 -> 813 tests across the wave.
-
-### Payroll report library
-
-The reporting surface over what the payroll features write.
-`GET /api/reports/payroll-journal?start=&end=` — every processed run
-itemized per employee (gross, each employee-side tax, deductions,
-garnishments, net, employer-side taxes) with window totals that foot
-and each run's GL transaction id for reconciliation.
-`/deduction-register?year=` — per-employee pre/post-tax + garnishment
-totals, the view for reconciling benefit invoices and 401(k)
-remittances. `/contractor-payments?year=` — per-vendor totals split by
-payment path (AP vs contractor runs), the same split the 1099 sums.
-Sibling reports (workers'-comp premium, liability calendar, SUI,
-garnishment remittance register) live at their own endpoints and are
-not duplicated. Department/job-cost allocation needs a department
-dimension the app doesn't have — tracked in docs/todo.md. 3 new tests
-(673 -> 676).
-
-### Org chart, team PTO calendar, performance reviews
-
-Three HR views on data that mostly already existed. `GET
-/api/hr/org-chart` builds the manager tree from `Employee.manager_id` —
-cycles (possible, the column is unconstrained) are broken at second
-visit and reported in `cycle_employee_ids` instead of recursing into a
-500; inactive employees are excluded by default. `GET
-/api/hr/pto-calendar?start=&end=` returns approved (and
-pending-flagged) PTO overlapping the window. `/api/hr/reviews` is a
-draft → submitted → acknowledged lifecycle with reviewer, 1-5 rating,
-goals/feedback, and an employee comment captured at acknowledgment;
-drafts are the only editable state. Migration e1f2a3b4c5d7. 6 new tests
-(667 -> 673).
-
-### E-signature on the document-audit hash chain
-
-`SignatureEnvelope` freezes a document body (offer letter, handbook,
-policy, I-9 acknowledgment) with its SHA-256 at creation. The employee
-signs in the self-service portal — new Documents page — by typing their
-name with an explicit e-signature consent checkbox; the signature event
-hashes (document hash, signer, UTC timestamp) into the same
-`document_audits` chain the tax forms use. Integrity is checked BEFORE
-signing (a body altered after issuance is a 409, nobody signs a changed
-document) and verifiable after via `GET /api/esign/{id}/verify`
-(body_intact / signature_intact — tests tamper with the stored body and
-watch verification fail). Signing is employee-scoped and pending-only;
-signed envelopes cannot be voided. ESIGN/UETA elements (intent, consent,
-association, retention) are captured; run I-9 use past counsel.
-Migration d0e1f2a3b4c6. 7 new tests (660 -> 667).
-
-### Workers' comp class rates + premium-audit report
-
-Most states price workers' comp per $100 of payroll by risk class, with
-the actual rate coming from the employer's carrier quote — so there is
-no table to ship, and `wc_class_rates` holds the operator's own quotes
-(re-quoting a (state, class) supersedes the old rate).
-`GET /api/workers-comp/premium-report?year=` groups the year's
-processed wages by (work state, employee WC class) and prices them —
-the view a carrier premium audit asks for. A class with no rate on file
-reports premium None and lands in `classes_missing_rates`, never a
-silent zero; unclassified employees group under UNCLASSIFIED. WA's
-per-hour L&I stays in the WA engine, where it already was. Migration
-c9d0e1f2a3b5. 4 new tests (656 -> 660).
-
-### Benefits records + ACA 1095 + COBRA notices
-
-The record-keeping half of benefits administration — no carrier feeds
-by design. `BenefitPlan` (kind, carrier, self_insured, provides_mec,
-premiums), `BenefitEnrollment` (coverage windows, open-enrollment
-dedupe, end validation), `BenefitDependent`. `/api/benefits`: plans,
-enroll/end, dependents.
-
-ACA: `GET /api/tax-forms/1095?year=` derives months-of-coverage from
-enrollments in MEC medical plans (any day of a month counts, per the
-IRS rule), lists covered individuals for self-insured plans, and
-returns 1094 form + monthly covered-employee counts. Offer codes and
-affordability safe harbors are NOT derived — offers aren't modelled,
-only actual enrollment — and the response says so.
-
-COBRA: `POST /api/benefits/enrollments/{id}/cobra-notice` renders an
-election-notice PDF for an ended medical enrollment — qualifying event
-date, 60-day window, premium at 102% — audit-hashed like the tax forms,
-labelled generic-review-against-DOL-model. Migration b8c9d0e1f2a4.
-8 new tests (648 -> 656).
-
-### Work locations — first-class tax jurisdictions
-
-Tax situs previously lived in two free-typed per-employee columns;
-opening a second office meant editing every employee. `WorkLocation`
-pins address + state + locality + default workers'-comp class once,
-validated against the state-engine registry and the locality files at
-create/update time (a typo'd jurisdiction is a 400, not a silent $0).
-Employees attach via `location_id`; payroll resolves jurisdiction most
-specific first — per-stub override, explicit employee columns, then the
-location. `/api/locations`: CRUD, assign, roster. Migration
-a7b8c9d0e1f3. 6 new tests (642 -> 648).
-
-### Tipped wages — tip credit, top-up guarantee, Form 8846
-
-`PayStubInput.reported_tips` (received directly — taxed through the
-check but not paid on it) and `paycheck_tips` (paid through payroll).
-Both join taxable and FICA wages; hourly tipped stubs get the FLSA
-top-up automatically when cash wages + tips miss the MINIMUM_WAGE floor
-(config, federal $7.25 default alongside TIPPED_MINIMUM_WAGE $2.13).
-Net pay backs reported tips out — the check funds the tax on them, which
-is why a low-cash-wage server's check can be nearly zero. The payroll JE
-excludes reported tips from wage expense (customers paid them, no cash
-leaves the bank) so the entry balances. Form 8846 FICA tip credit at
-`GET /api/tax-forms/fica-tip-credit?year=` — employer 7.65% on tips
-above the statutory $5.15/h pin, per employee. Form 8027 (allocated
-tips) needs gross-receipts tracking and stays a follow-up. Migration
-f6a7b8c9d0e2. 10 new tests (632 -> 642).
-
-### Garnishment remittance — the withheld money now owes someone a payment
-
-Garnishments were calculated and withheld, then the money vanished into
-"Other payroll deductions payable" with no record of who it was owed to
-— the classic small-employer garnishment failure. Now: orders carry the
-agency payee (agency_name/address, remit_reference); every processed
-pay run writes a `garnishment_remittances` row per order (parsed from
-the stub's per-order detail, so the amount is exactly what was
-withheld, CCPA-limited percent orders included); the register at
-`GET /api/deductions/garnishments/remittances` shows pending totals and
-nags rows whose order has no agency on file; mark-remitted records the
-outgoing payment reference and is double-remit-proof. Draft runs create
-nothing. e-IWO / NACHA CCD+ child-support addenda remain follow-ups.
-Migration e5f6a7b8c9d1. 8 new tests (624 -> 632).
-
-### Termination workflow — final-paycheck deadlines + PTO payout
-
-`POST /api/employees/{id}/terminate` answers the two questions every
-offboarding asks. (1) When is the final check due? Per-state rules keyed
-by voluntary/involuntary (CA: immediately when fired, 72 hours on a
-quit; ~16 states with specific shapes; everything else defaults to next
-regular payday, resolved to a real date when the employee has a pay
-schedule attached). (2) Must accrued vacation be paid out? States that
-treat it as earned wages force the payout; elsewhere it defaults on and
-the operator can decline. The payout prices accrued balances at the
-hourly-equivalent rate (salary / 2080), sick time only on opt-in, and
-stages as a DRAFT off-cycle supplemental run like retro pay. Side
-effects: is_active off, recurring deductions deactivated, portal token
-revoked. The final *regular* paycheck is deliberately not automated —
-its hours depend on the timecard; the endpoint reports the statutory
-deadline instead. Rules are approximate and say so (final-paycheck
-statutes carry penalties — verify with the state labor department).
-Migration d4e5f6a7b8c0. 10 new tests (614 -> 624).
-
-### Retro pay + mid-period rate proration
-
-Two halves of "the rate changed":
-
-- Mid-period raise: `PayStubInput.rate_change_date` + `old_rate`
-  day-weight a salaried period across both rates ($52k→$78k biweekly
-  with the raise at day 8 of 14 pays $2,500).
-- Retro pay: `POST /api/payroll/retro-pay/preview` compares every
-  non-void regular stub since the effective date against the new rate —
-  hourly stubs re-price their recorded regular/1.5x/2x hour split,
-  salary stubs use the per-period difference, bonus/off-cycle runs are
-  excluded (a bonus isn't underpaid by a raise). `/apply` raises the
-  employee's rate and stages the shortfall as a DRAFT off-cycle run
-  with supplemental (flat 22%) withholding, ready for review and
-  processing. Negative retro (a rate cut) is rejected — clawing back
-  paid wages is a legal question, not a payroll calculation.
-
-10 new tests (604 -> 614).
-
-### Pay schedules — named pay calendars
-
-A bare PayFrequency enum says "biweekly" but not which Fridays, when the
-submission cutoff falls, or what happens on a weekend pay date. New
-`PaySchedule` (frequency + anchor pay date + submission_lead_days +
-weekend_shift) pins all three. `/api/pay-schedules`: CRUD, an
-`/upcoming` preview (derived dates, shifted flags, per-date cutoffs),
-and `/assign/{emp_id}` which attaches the employee and keeps
-pay_frequency synced so withholding annualization follows the schedule.
-Date math: weekly/biweekly step from the anchor; semi-monthly pays the
-anchor day + that day ±15 capped to month end (Feb 30th → 28th);
-monthly caps the 31st; shifting applies last so it never changes which
-period a date belongs to. Migration c3d4e5f6a7b8. Holiday calendars and
-blackout dates are follow-ups (weekend-only shifting today). 9 new
-tests (595 -> 604).
-
-### Contractor pay runs — 1099 payees get the payroll shape
-
-Contractors previously lived only in AP (create bill, pay bill). Paying a
-roster every period wants the payroll shape — one dated run, many payees,
-one JE, one NACHA file — with no withholding: 1099 payees get gross.
-
-- `POST /api/contractor-runs` (batch create) → `/{id}/process` (DR 6130
-  contractor expense falling back to 6000, CR 1000 bank; closing-date
-  guard; idempotent) → `/{id}/nacha` (ACH credits per contractor from the
-  shared NACHA record builders; unbanked vendors skipped — paid by check)
-- `VendorBankAccount` — Fernet-encrypted routing/account, clear last-4,
-  one active account per vendor (adding supersedes), 9-digit routing
-  validation. `POST/GET /api/contractor-runs/vendors/{id}/bank`
-- 1099-NEC totals now sum BOTH payment paths: AP bill payments plus
-  processed contractor-run payments (draft runs excluded), so a vendor
-  paid $400 through AP and $300 through a run reports $700
-- Migration b2c3d4e5f6a7; models registered for create_all/migrations
-
-12 new tests (583 -> 595). API-first: SPA page tracked in docs/todo.md.
-
-### Deposit-schedule determination + payroll tax liability calendar
-
-The honest, local-only version of "we handle your taxes": say exactly
-what is due, to whom, and when — without claiming to pay it.
-
-- `GET /api/tax-forms/deposit-schedule?year=` — IRS Pub 15 lookback
-  (Jul 1 Y-2 .. Jun 30 Y-1, per-quarter detail): <=$50k → monthly
-  depositor, over → semiweekly; new employers default monthly.
-- `GET /api/tax-forms/liability-calendar?year=` — date-sorted merge of:
-  941 deposits under the determined schedule (monthly due-the-15th
-  rolled off weekends; semiweekly Wed-Fri→Wednesday / Sat-Tue→Friday),
-  the $100k next-day rule (event + becomes-semiweekly warning),
-  de-minimis quarters under $2,500 flagged as payable-with-return, FUTA
-  quarterly deposits with the $500 floor and carryover (Q4 remainder
-  rides Form 940), quarterly 941 / annual 940 filing dates, and state
-  quarterly amounts (state deposit *frequencies* vary too much to model
-  — the rows say to check).
-
-Federal holidays are not modelled — weekend-only roll, so a holiday due
-date is at most a day early, never late. 20 new tests (563 -> 583).
-
-### Electronic filing exports — EFW2 (SSA) + Pub 1220 (IRS 1099)
-
-Year-end forms existed as PDFs only; the electronic upload formats now
-generate in-repo (no transport — the operator uploads the files
-themselves):
-
-- `POST /api/payroll/forms/efw2/{year}` — SSA Pub 42-007 EFW2 file,
-  fixed-width 512-char RA/RE/RW/RT/RF records, unsigned zero-filled
-  cents, CRLF. Because the app deliberately stores only SSN last-4,
-  every RW ships a zero-filled SSN and a per-employee warning naming who
-  needs it filled before upload. Missing EIN is a clean 400.
-- `GET /api/tax-forms/1099/fire?year=` — IRS Pub 1220 1099-NEC file,
-  750-char T/A/B/C/F records with Payment Amount 1 (NEC) and control
-  totals. Vendors over the threshold without a 9-digit TIN are skipped
-  *and named* in warnings; a missing Transmitter Control Code is warned.
-- Both wired into the Tax Forms page (blob download; warnings surfaced
-  as a toast + console detail).
-- Fixed a pre-existing wiring bug found on the way: `compute_1099_data`
-  filtered on `Vendor.is_1099_eligible`, a column no schema or route
-  ever exposed — API-created vendors could never appear on the 1099
-  report. It now honors `is_1099_vendor` (the field the API/UI actually
-  sets) as well, and `w9_on_file` is settable through the vendor API.
-
-Layouts are best-effort transcriptions of the specs — run EFW2 output
-through SSA AccuWage and verify both against the current-year pubs
-before uploading. 12 new tests (551 -> 563).
-
-### Quarterly SUI wage report — endpoints for the existing aggregation
-
-`compute_sui` shipped as scaffolding with the tier-3 tax forms but had no
-endpoint. Now: `POST /api/payroll/forms/sui/{year}/{quarter}` (JSON, the
-machine-readable contract) and `.../pdf` (WeasyPrint, audit-hashed via
-`document_audits` like every other tax form), both taking an optional
-`?state=XX` filter for multi-state employers. The PDF is the generic
-per-employee wage-detail layout every state's quarterly UI return is built
-from (employee, SSN last-4, total wages, SUI-taxable wages, SUI tax) — a
-transcription source for the state's own form or upload portal, not a
-pixel replica, and it says so on the page. 15 new tests (536 -> 551).
-
-### Local / municipal payroll tax layer
-
-The tax layer below the states: PA EIT + LST, OH municipal + school
-district, NYC/Yonkers, MD and IN county taxes, KY occupational license
-fees, MI city income taxes. Same table-driven design as the state work —
-one engine (`app/services/local_tax/engine.py`), reviewable JSON under
-`localities/` with per-file provenance and a `verified` flag (all shipping
-unverified), validation at load.
-
-Rules declare a `basis` — `work` (OH municipal, KY, Philadelphia),
-`residence` (MD/IN counties, OH school districts, NYC), `higher_of`
-(PA Act 32), `work_or_residence` (MI cities with the residence-city
-credit) — and an amount kind: `percent`, `brackets` (NYC progressive),
-or `percent_of_state_tax` (Yonkers resident surcharge; its nonresident
-wage tax rides the same rule). PA LST flat annual amounts prorate into
-level per-period installments. Residency is never assumed: an unset
-residence_locality withholds at the nonresident rate, and unknown codes
-are surfaced in `unknown_localities` rather than silently taxing $0.
-
-Plumbing: `Employee.work_locality` / `residence_locality` (+ per-stub
-override), `PayStub.local_tax` / `local_tax_employer` / `work_locality`
-(migration a1b2c3d4e5f6), W-2 boxes 18-20, payroll JE "Local tax payable"
-line, disposable-earnings interaction with garnishments, YTD `local`
-total, gross-up awareness. 36 new tests (500 -> 536). Simplifications
-(MI credit, Act 32 pairing, no LST exemption) documented in
-docs/local-taxes.md.
-
-### 50-state payroll withholding — table-driven state engines
-
-Payroll worked in four states. WA, CA, NY and OR had hand-written engines;
-every other state resolved to `GenericStateEngine(flat_rate=0)` and withheld
-**no state income tax at all**. An employee in Illinois got a paycheck with a
-blank state line. That was a deliberate, honest fallback — a wrong guess is
-worse than nothing — but it capped the product at four states.
-
-**What was added:**
-
-- `app/services/state_tax/table_engine.py` — `TableDrivenStateEngine`, one
-  implementation of the shape almost every state shares: annualize the
-  period's taxable wages, subtract a standard deduction and exemption
-  allowance, apply a flat rate or walk a progressive bracket schedule, divide
-  back down to the period. State-specific disability / paid-leave premiums
-  are applied against their own wage bases. Tables are validated at load —
-  a malformed one raises `StateTaxTableError` at startup or in tests, never
-  partway through a pay run.
-
-- `app/services/state_tax/tables/*.json` — 47 tables covering every state
-  without a dedicated engine, plus DC. Rates, bracket edges, deductions,
-  exemptions, SUTA wage bases and premium definitions all live here as
-  reviewable data rather than constants buried in Python. Each table carries
-  its own provenance: `tax_year`, a `source` URL pointing at the state's
-  published withholding guide, and a `verified` flag.
-
-- Dedicated engines still win. WA (per-hour L&I by risk class) and OR
-  (transit taxes) have rules the generic shape cannot express, so the
-  registry checks `_DEDICATED` before the tables.
-
-**Verification status — every table ships `"verified": false`.** The figures
-approximate the published 2026 schedules and are in the right neighbourhood,
-but nobody has checked them against the source. Bracket edges, deductions and
-wage bases change annually. `python -m app.services.state_tax.table_engine`
-prints coverage and verification status so the unchecked states stay visible.
-`PAYROLL_STRICT_TAX_TABLES=1` makes an unverified table withhold nothing and
-label the omission on the stub, for operators who would rather fail loud than
-withhold an unreviewed amount.
-
-**Per-state SUTA.** A single global `SUTA_RATE` was applied in every state,
-which is wrong the moment you hire outside your home state — wage bases alone
-range from $7,000 (FL, AR) to $72,800 (WA). Rate resolution is now, most
-specific first: an explicit per-run rate → `SUTA_RATE_BY_STATE`
-(`"WA:0.0121,OR:0.024"`) → `SUTA_RATE` when the stub is in `EMPLOYER_STATE` →
-the state's published new-employer rate → `SUTA_RATE`. Step three matters: an
-operator who set `SUTA_RATE` meant it for their home state, and a published
-new-employer rate must not silently override the real experience rate they
-entered. The wage base always follows the work state; reciprocity moves
-income tax to the residence state but never unemployment tax.
-
-**Known simplification:** `exemption_allowance` is a per-status annual amount
-assuming one allowance. States computing exemptions from allowances claimed
-on a state W-4 need an `Employee.state_allowances` column, which does not
-exist yet — so those employees are over-withheld slightly. Tracked in
-`docs/todo.md`.
-
-- `tests/test_state_tax_tables.py` — 48 tests. Structural coverage (every
-  jurisdiction resolves to a real engine, tables validate, malformed input
-  rejected) plus hand-derived arithmetic for a flat state (IL), a bracket
-  state (VA) and a premium state (NJ), and the full SUTA resolution order.
-- `docs/state-tax-tables.md` — schema reference and the verification workflow.
-
-452 → 500 tests.
+### Branch additions
+
+- Expanded payroll, HR, benefits coverage, and filing helpers.
+- Signed audit checkpoints and additional PII protection.
+- Preserved both benefits systems and reconciled upgrade paths.
+
+### v2.9.3 — SimpleFIN request pinned to the address the guard approved
+
+**One security fix, right behind 2.9.2.** The SimpleFIN SSRF guard resolved
+the bridge hostname and refused private addresses, then the HTTP client
+resolved the name again to connect — a second DNS answer could steer the
+socket at a private service (DNS rebinding; CodeQL py/full-ssrf, #104,
+raised on the 2.9.2 pull request and wrongly dismissed as guarded). The
+request now connects to the address the guard checked, with the hostname
+kept for the Host header and TLS (the certificate is still verified against
+the hostname), and a response from a non-global peer is discarded.
+
+### v2.9.2 — Security: HR and payroll are admin-only; payment row locks; Server Edition CSP; SimpleFIN on PostgreSQL
+
+**Security (Server Edition).** Four private reports arrived on the same
+morning, three from @hongshengy and one from @furkan-arslan-sec, and all four
+were right. The role gate treated everything outside six admin prefixes as
+"daily books", so a bookkeeper could mint any employee's self-service portal
+token (a full login as that employee: W-4, bank accounts, pay stubs), rewrite
+any employee's direct-deposit account and export the NACHA file, and a
+read-only user could download pay stubs, W-2s and I-9 paperwork. The docs
+said HR and payroll were admin functions; the code now agrees: payroll,
+tax forms, benefits, garnishments, onboarding, and the credential-bearing
+parts of an employee record (portal token, bank accounts, documents,
+E-Verify, year-to-date) are refused to bookkeeper and read-only roles for
+every method; creating or editing an employee is an admin write; the
+employee list stays readable as a directory with pay, tax and address fields
+blanked for non-admins. The SPA hides those pages for non-admins. Separately,
+batch payments and bill payments now take the same row lock on the invoice
+or bill that single payments already did, so two concurrent requests on
+PostgreSQL cannot both pass the balance check and over-apply; an
+over-application that slips past the check is refused with 409 instead of a
+negative balance. Advisories GHSA-rh68-48w8-pj8r, GHSA-rh75-6834-f66j,
+GHSA-pwj7-6qq3-h4fj, GHSA-rm5h-555g-vpjj; fixed in 2.9.2.
+
+**Server Edition no longer serves the desktop's relaxed script policy to
+LAN browsers.** The launcher marks every server it starts as "desktop",
+including headless `--serve-lan`, so the `'unsafe-eval'` allowance the
+native web view needs went to the whole office (found by Keith in the
+post-release macOS review). The policy is now decided per request: relaxed
+only when the launcher flag is set *and* the request arrived over
+loopback, which is the only way the web view ever connects. **SimpleFIN
+settings on PostgreSQL** — the settings table was created with a 500-
+character value column that SQLite ignores and PostgreSQL enforces, and a
+bank feed's access URL is longer than that; the column is now text
+(contributed by @kycrna). **Bank feeds can target a liability account**,
+so a credit card feed lands where the card lives (also @kycrna).
+
+### v2.9.1 — Post-release tidy from the 2.9.0 gate
+
+**A stored AI provider key can be removed.** `PUT /api/analytics/ai-config`
+with `"api_key": ""` clears it (omit the field to keep it; a value replaces
+it), the spec says so, and the Settings page has a Remove button beside the
+saved-key mark — it no longer round-trips a blank field. **Windows releases
+publish `SHA256SUMS.windows`** beside the installer and zip, the same
+format as the macOS file, so a download can be checked without trusting
+the transport. **The migrations now create every table** (`api_tokens` was
+the last one only app startup made), so `alembic upgrade head` alone yields
+the complete schema. Two nonprofit vocabulary leaks closed: the
+Contributions by Donor card described "sales totals", and the analytics
+receivables aging header said "Customer". The macOS maintainer runbook
+describes the staple-before-DMG order that has shipped since 2.9.0, and the
+install guide's table and account counts are current.
+
+### v2.9.0 — Nonprofit mode
+
+**A nonprofit sees its own words in the first minute.** Settings → Company
+Type → Nonprofit swaps the vocabulary everywhere it shows: Customer → Donor,
+Invoice → Pledge, Sales Receipt → Donation, Class → Fund, Job → Grant, Profit
+& Loss → Statement of Activities, Balance Sheet → Statement of Financial
+Position, Equity → Net Assets. One dictionary, applied at render, on screens,
+in report titles, in PDF filenames and on the dashboard; nothing in the API
+or the database changes name, and a business file renders exactly what it
+did before. Printed documents are literal, not vocabulary: a donation prints
+as DONATION RECEIPT, a pledge as PLEDGE, a program fee still as INVOICE.
+
+**Net assets by restriction, without a closing entry.** A class is a fund
+with a restriction (without / with donor restrictions, purpose or permanent)
+and a default function. When a restricted fund spends for its purpose, a
+**Release from Restriction** moves that much to net assets without donor
+restrictions — one document, DR 3400 / CR 3300 tagged to the fund, with the
+amount suggested from the fund's unreleased spending. The **Statement of
+Financial Position** splits the change in net assets by restriction at
+report time, the way the balance sheet already synthesizes net income, so
+the two net-asset lines always add up to the balance sheet's equity; the
+**Statement of Activities** shows revenue and expenses in two columns with
+releases between them and its change in net assets is the P&L net income;
+**Fund Balances** shows each restricted fund's beginning, contributions,
+spending, releases, ending and unreleased. P&L by Class now groups on the
+line's class first (a bill with three line classes and a blank header used
+to land whole in Uncategorized), and every void reverses with job, class,
+cost code and function carried.
+
+**Every expense knows its function.** Posted lines carry program /
+management / fundraising, defaulted from the fund. Shared costs — rent, the
+office manager's wages — are posted unassigned and divided by a saved
+**allocation rule** (percent, square feet, or hours on grants), either with
+**Split** on the entry line or as a month-end **Functional Allocation** that
+reclasses whatever is still unassigned on the rule's source account without
+moving the P&L by a cent; running a month twice finds nothing to move. The
+**Statement of Functional Expenses** puts every expense account in Form 990
+Part IX columns, with the program-by-program breakout, as PDF and CSV.
+
+**Donor documents.** A donation receipt prints the IRS Publication 1771
+acknowledgment — the date, the amount, and either "no goods or services were
+provided" or the fair value of the gala dinner with the deductible portion.
+Every gift gets an **acknowledgment letter** (PDF and email) worded by the
+editable `donation_acknowledgment` template with `{{ irs.text }}` supplied.
+**In-kind gifts** are their own two-sided document (the piano to Musical
+Instruments, the credit to In-Kind Contributions) acknowledged without a
+stated value. **Year-end giving statements** list every cash gift with the
+deductible portion and non-cash gifts without amounts — one donor, every
+donor in one PDF with a page break each, or emailed to everyone who has not
+opted out. The **pledge report** reads promised, invoiced, received, written
+off and outstanding off recurring pledges and their installments (generated
+invoices now remember their template and carry its grant), and a pledge that
+will never be paid is **written off** through a credit memo to Bad Debt
+Expense — credit memos gained the void they never had, which is also the
+undo.
+
+**Reports you can find and compare.** In the desktop app, Save PDF now
+writes the report to Documents → SlowBooks Pro → Reports (period-stamped, never
+overwritten), opens it, and says where it went with a Show-in-folder button —
+it used to land in a temp folder. Saved report definitions are a collapsible
+list at the top of the Report Center instead of a growing wall of cards. The
+Statement of Activities and the Statement of Functional Expenses gained
+"Compare to prior year": the same dates a year earlier as two more columns,
+on screen, in the PDF and in the CSV.
+
+**Riverbend Community Arts.** The stage's acceptance test is a seeded
+nonprofit year — a grant, an endowment, a gala, pledgers, a piano, rent
+split 70/20/10, a June release — driven entirely through the API with scoped
+tokens the way a bring-your-own-AI agent would, checking that every
+statement reconciles to the cent and that a readonly agent cannot write.
+Design notes: [docs/design/nonprofit.md](docs/design/nonprofit.md); user
+guide: [docs/nonprofit-module.md](docs/nonprofit-module.md).
+
+**A custom AI provider** (contributed by @jarvis4openclaw): an eighth AI
+Insights provider that points at any OpenAI-compatible chat endpoint on the
+public internet, HTTPS-only and behind the same address guard as the Worker
+gateway, with the model ID yours to type. Along the way it fixed the
+self-hosted Cloudflare Worker gateway, whose replies had been parsed to an
+empty string.
+
+**From the release gate (SlowBooks-Pro-Testing, 2.9.0).** The macOS app is
+now notarized and stapled *before* the disk image is built, so the copy a
+user drags to Applications carries its own ticket and launches offline;
+the bundle declares why it writes to Documents and Downloads, and a refused
+folder is explained (the file goes to the app's data folder and the notice
+says so) instead of failing like a crash. For agents driving the API: an
+unknown request field is a 422 naming the field, never silently dropped;
+`tax_rate` is documented as a fraction and a percent-looking value is
+rejected with the unit in the message; `pto_type` and `accrual_method` are
+enums in the spec; an empty pay run is refused with the roster named;
+`DELETE` on a posted document names the `/void` route; a fresh company has
+6810 Depreciation Expense and a default Equipment asset type so depreciation
+runs first time; a missing `companies.json` is logged with the data
+directory that was searched.
+
+**Round 3 of the gate found the macOS desktop bridge dead — since v2.1.0.**
+Save PDF, print preview, Save backup, Show in folder and the company picker
+all rely on pywebview's `window.pywebview.api`, which pywebview builds with
+`new Function`; the app's Content-Security-Policy had no `'unsafe-eval'`,
+WebKit enforces that inside the page, and the bridge stayed empty on every
+Mac while Chromium on Windows let it through. The policy now allows eval
+only under the desktop launcher (a browser install keeps the strict one).
+The shell also stops failing in silence: a missing bridge is reported on the
+first click and checked at startup, Save CSV goes through the bridge to the
+same Reports folder as Save PDF, and every export a desktop fetch receives
+is served inline so neither webview swallows it as a download. Two more
+from the same round: first-run setup on a file that already holds books now
+says whose books they are and prefills the name, and the company name in
+Settings keeps the manifest (the picker's name) in step so the two can no
+longer diverge; the Windows installer clears `_internal` before an upgrade
+so stale package metadata from earlier builds no longer ships.
+Round 4 closed the loop on the name reconciliation itself: two company files
+can never end up with one name — renaming a company (in Settings or in
+first-run setup) to a name another file already carries is refused with the
+file named, the same rule creating a company has always applied.
+The Linux gate then found that `docker compose up` had been broken since
+v2.8.0: no migration ever created the `users` table (the app made it at
+startup), and the v2.8.0 preferences migration referenced it, which SQLite
+tolerates and PostgreSQL refuses. A migration now creates `users` ahead of
+that reference, a test walks the migrated schema for any foreign key whose
+target no migration creates, and under PostgreSQL the company list flags
+the database the server is connected to as current so an agent can tell
+which books it reached.
+Behind that lay an older one: the production guards that demand a TLS
+database connection and an HTTPS redirect refused the compose stack's own
+plaintext bridge-network URL, so the documented one-command install had not
+started since those guards landed in v2.1. The compose file now declares
+`SLOWBOOKS_PRIVATE_NETWORK=1`, which relaxes exactly those two transport
+checks with a logged warning and nothing else; the encryption-key guards are
+never relaxed, and the install guide says what to change before exposing
+the stack beyond the host.
+And a third, once the stack ran: with two uvicorn workers, both raced to
+create the tables the migrations do not cover, one lost on a Postgres enum
+type, and the container crashed and restarted on every first boot. Table
+creation now takes a Postgres advisory lock so the second worker waits.
+
+### v2.8.0 — Benefits, all-state payroll, and an overview you can arrange
+
+### Export parity with import (#70)
+
+**What comes in from QuickBooks can go back out.** IIF export now writes
+everything the importer reads: the `!CLASS` list (names verbatim, archived
+as HIDDEN=Y), a `CLASS` column on every transaction block so a tag never
+falls off on the way out, jobs as `Customer:Job` rows, and three block
+types that were import-only since they were added — **bills**, **deposits**
+and **sales receipts** (`CASH SALE`). A full export re-imports into the same
+books with no errors and no duplicates. CSV export gained bills, deposits,
+sales receipts, classes and jobs, with class, job and cost code on every
+line. The IIF and Import/Export pages carry buttons for all of it.
+
+### Accessibility
+
+**Striving toward WCAG 2.1 AA.** The audit's six app findings are fixed:
+every table header declares its scope, icon-only remove and close buttons
+carry labels, toast notifications announce through a live region, modals
+are real dialogs (focus moves in, Tab stays inside, Escape closes, focus
+returns to what opened them), the reconciliation difference says
+"Balanced" or "Out of balance" in words rather than colour alone, and the
+muted text colour now clears the AA contrast ratio in both themes. The
+bigger gap was PDFs: every PDF the app produces — invoices, statements,
+pay stubs, W-2s, 1099s, 940/941, reports — is now **tagged (PDF/UA-1)** with
+a declared language and title, so a screen reader gets headings, tables
+and reading order instead of a picture of text. See
+[docs/accessibility.md](docs/accessibility.md) for the statement and the
+contact path; this is a commitment, not a compliance claim.
+
+### Sales tax per line
+
+**A labor line and a taxed part can share one invoice.** The invoice's tax
+rate used to apply to the whole subtotal, even though items already carried
+a taxable flag. Now every line on an invoice, estimate, sales receipt and
+recurring invoice has a **Tax** checkbox: it starts from the item's flag
+(and turns off for every line when the customer is marked non-taxable), you
+can flip it per line, the totals only tax the checked lines, the flag rides
+from an estimate into the invoice it becomes and from a recurring template
+onto every invoice it generates, the Sales Tax report's taxable base counts
+only taxed lines, and the PDF marks non-taxable lines when the document
+carries tax. Field report from an IT shop that repairs customer-owned
+devices (untaxed labor) and sells the part with install (taxed) on the
+same invoice.
+
+### Customizable overview
+
+**The Company Snapshot is yours to arrange.** A **Customize** button on the
+overview lets you hide any card, move cards up or down, and add cards from
+a catalog; **Save layout** remembers it for your login (each user on a
+Server Edition company gets their own; the single-password operator gets
+one shared layout), and **Reset** brings back the standard overview. The
+classic cards are all there — receivables, overdue invoices, active
+customers, payables, bank balances, A/R aging, monthly revenue, recent
+invoices and payments — and five new ones join the catalog:
+
+- **P&L: This Month vs Last** — income, expenses and net side by side.
+- **Cash Position** — cash on hand plus a 30-day forecast from receivables
+  and payables coming due (assumes customers pay on the due date).
+- **Open Purchase Orders** — committed but not yet billed, with the job.
+- **Receipts to Review** — scanned receipts waiting to become a bill or
+  expense, and how long before they expire.
+- **Jobs: Budget vs Actual** — active jobs ranked by projected variance,
+  each a click from its job page.
+
+Every card loads independently, so one card with a problem shows its
+error in place instead of taking the page down. The overdue-invoices card
+now names who owes what and by how many days.
+
+### Benefits engine
+
+**A benefit is a code with a rule.** Payroll evaluates whatever codes are
+attached to an employee: kind (deduction, benefit, both), calculation
+method, which wage bases the pre-tax side reduces, an explicit sequence
+(pre-tax codes apply in order and each changes the taxable base for the
+next), and three separate limits — per period, annual, and a wage-base
+ceiling. Rates are effective-dated and resolve against the pay-period end
+date; processed runs snapshot the rules they used so a later change never
+rewrites history. The employer side has its own rate and method including
+tiered 401(k) matching, an expense and liability account per code, and a
+remittance vendor — the Remittance tab totals what is owed and creates the
+vendor bill. Employee groups are templates; an enrollment overrides them.
+Loan-style codes carry a balance and stop at zero. PTO banks now carry
+dollars and can post the accrued liability. The Deductions page became
+Benefits; garnishments have their own page. Existing deduction types and
+elections migrate onto codes and enrollments.
+
+### Actual labor burden on jobs
+
+Set the Labor cost type's burden method to **payroll** and the pay run
+distributes real employer taxes plus job-routed benefit codes across the
+jobs each employee's time entries hit, by hours, P&L-neutral. Time entries
+then post base labor only. Replaces the flat percent from v2.7.0.
+
+### State withholding for all 50 states and DC
+
+Every state resolves to a payroll engine (Washington, California, New York
+and Oregon keep their dedicated ones). The figures are the 2026 published
+values with the source named per state in `docs/state-withholding.md`.
+Employees gain the state W-4 inputs: allowances, extra state withholding,
+an elected rate (Arizona), and a flat local rate for county and city taxes.
+Verify against your state before filing; the table is re-checked every
+January.
+
+### Employee portal link
+
+On the desktop the link now opens in the employee's browser instead of
+inside SlowBooks, and Copy Link / Email to Employee give a full address.
+The Details view says where that address is reachable from.
+
+### Small things
+
+- `GET /api/sales-receipts` lists receipts for API clients.
+- The Company Snapshot is titled with your company name, which also sits
+  in the toolbar and the window title.
+- The splash shows what's new in the version you're running.
+
+### Benefits engine — from the first macOS lap
+
+- A post-tax deduction larger than the check used to leave a negative net
+  pay on the stub and an unbalanced payroll entry on processing. Post-tax
+  codes now take what is left after taxes and garnishments, in sequence,
+  with the shortfall noted on the stub; net pay never goes below zero.
+- The remittance report and bill follow a code's current vendor when the
+  run was processed before the vendor was assigned.
+
+### v2.7.0 — Jobs, job costing, and receipt intake
+
+The two most-requested features since Server Edition, each field-tested on
+Windows (SkyTech / VonHolten308) and macOS (Keith's laps on #73 and #86).
+#### Jobs — QuickBooks-style Customer:Job / Projects (milestone 1)
+
+**Every posted line can now carry a job (and a class).** A job is a
+customer's project — "Smith: Kitchen Remodel" — and the unit of job
+costing. Invoices, bills, expenses, card charges, journal entries, sales
+receipts and estimates take a Job on the header; invoice, bill and journal
+lines can set their own job and class, and a line without one inherits the
+header's. The ledger line is the source of truth, so the new **Jobs** page
+(Customers & Sales) and the **Job Profitability** report show income,
+costs, net and margin per job straight from posted activity — the "No job"
+row holds everything untagged, so the report's totals equal the Profit &
+Loss for the same period, the same reconciliation promise P&L by Class
+makes. Job detail lists every posted line attributed to it (the job cost
+detail). The Customer Center lists a customer's jobs and can create one.
+
+Jobs carry what a contractor tracks: status (pending, awarded, in progress,
+closed, not awarded), job number, type, dates, site address and contract
+amount, so the detail can show billed-vs-contract. A job with posted
+activity is never deleted — mark it inactive and it leaves the pickers.
+
+**The cost model: drill-down, every kind of cost, burden, budgets and
+variance (milestone 3).** Feedback from the first lap was that jobs
+existed but there was no way to drill down or to get the extra and
+edge-case costs onto them. Now:
+
+- **Cost codes nest** (division › code › sub-code, any depth) with roll-ups
+  at every level, your own numbering, and a CSV import
+  (`code,name,cost_type,parent_code`). **Cost types are yours to edit** —
+  add permits, bonding, warranty, split labor — each with a burden % and
+  the accounts it posts through.
+- **Job Cost Entry**, a new document for costs that aren't a bill:
+  internal labor at an employee's loaded rate, owned-equipment hours from
+  an Equipment list, mileage, small tools, burden, corrections. It debits
+  job cost (tagged to job, code and type) and credits an offset account
+  (applied labor, applied equipment, applied overhead — all contra-expense
+  accounts on the P&L) — the applied-cost pattern, so the company P&L is
+  unchanged while every job carries its share. Settings → Cost Types →
+  **Create default offset accounts** sets all of that up in one click,
+  pointing each cost type at the chart's own COGS account (Materials,
+  Labor, Subcontractor) so the P&L keeps its cost categories. **Allocate a Cost** spreads one amount
+  across jobs by labor hours, revenue, costs, equally, or by weights.
+- **Time entries post to jobs.** Employees get a job cost rate and a burden
+  %; approved time tagged to a job posts as labor cost at that rate
+  (overtime at 1.5×, double-time at 2×) with the burden as its own line,
+  one click from the time list or the job's Time tab.
+- **Budgets and variance.** Each job carries a budget per cost code (or
+  per type, or whole-job), seeded from an estimate — estimate lines gained
+  a cost code and a unit cost, so cost = qty × unit cost and revenue = the
+  line amount — or typed in. The job page shows, at every level, the
+  columns contractors read weekly: Original, Changes, Budget, Committed,
+  Actual, Projected (actual + committed), Variance (budget − projected),
+  % Used, and estimated vs actual revenue.
+- **The job page** replaces the modal: Overview (headline figures and a
+  by-type table), Cost Detail (the expandable tree — type › division ›
+  code › sub-code › posted lines, each line opening its bill, invoice,
+  expense, journal entry or job cost), Budget, Transactions and Time tabs,
+  with a period filter and a job-to-date default. A **Job Budget vs
+  Actual** report lists every job's headline figures.
+- Also fixed on the way: the Time Entry form was sending hours under the
+  wrong field names, so every entry saved with zero hours.
+- From the first macOS lap: the labor offset was a balance-sheet account,
+  so labor landed on the P&L twice once payroll ran — it is a P&L contra
+  now, like the other offsets. Rejecting a time entry that was already
+  posted to a job voids that job cost. Re-seeding a budget from an
+  estimate leaves hand-edited rows alone, and an estimate line with no
+  unit cost budgets zero cost (unknown) rather than the sale price.
+
+**Cost codes, billable costs and committed cost (milestone 2).** Settings
+gained a **Cost Codes** chart — which part of a job a cost belongs to ("03
+Concrete", "26 Electrical"), each with a cost type (labor, material,
+subcontract, equipment, other) and an optional default account — with a
+one-click load of the CSI MasterFormat divisions. Bill lines, journal
+lines, purchase-order lines and expenses take a cost code, and bill lines
+and expenses can be marked **billable** to the job's customer (the
+unbilled-costs-to-invoice step arrives with progress billing). The job
+detail rolls costs up by code and type, and shows **committed cost**: the
+value of sent, partially received and received purchase orders tagged to
+the job that has not yet become a bill. Purchase orders take a Job on the
+header (and per line); converting one to a bill carries job and cost code
+onto every bill line.
+
+**QuickBooks migration keeps the hierarchy.** IIF imports split
+`Customer:Job` names into the customer and a job under it (customer list
+rows and every invoice, sales receipt and estimate); QBO imports turn
+sub-customers ("Projects") into jobs under their parent. A flat customer
+that already carries the colon from an earlier import keeps matching, so
+re-imports are stable.
+
+The estimate form also gained the Class field that was computed but never
+rendered. Design and the rest of the plan (cost codes, committed cost,
+change orders, progress billing, time and burden, WIP):
+[docs/design/projects.md](docs/design/projects.md).
+
+#### Receipt intake — scan a receipt into the Sales Receipt / Bill form
+
+A new **Scan Receipt** button on both the Enter Sales Receipt and Enter
+Bill forms uploads a receipt image or PDF, runs it through local OCR
+(Tesseract), and pre-fills the form: date, merchant/vendor hint, and the
+grand total as a single line (Qty 1 × Rate = total), with detected tax
+split out on the Sales Receipt form (tax rate field) and noted in Bill
+Notes (bills have no tax field). The operator always reviews before
+saving, and the source image/PDF attaches to the saved document so every
+scanned entry keeps its evidence.
+
+Per the design notes, this is **zero new Python dependencies** —
+tesseract and poppler-utils are called directly via subprocess and stay
+the user's install (never bundled into the signed installers); the
+Docker image installs both system packages. When the binary is absent,
+the feature degrades gracefully: the button is disabled and the Settings
+page shows "install Tesseract to enable scanning." Parsing is
+deterministic (regex/anchor extraction for date, total, tax, merchant) —
+no AI, no bundled models. Design + API contract:
+[docs/design/receipt-intake-spec.md](docs/design/receipt-intake-spec.md).
+
+**Expenses — the form most receipts actually belong on.** A receipt for
+something already paid (card, cash, check) is neither a bill (money
+still owed) nor a sales receipt (money taken in); entering one used to
+mean a bill plus a payment, or a journal entry. The new **Expenses**
+page (Vendors & Payables) records it in one step — vendor, expense
+account, the bank or credit-card account it was paid from, amount — as
+a single balanced posting (DR expense, CR paid-from), with the Scan
+Receipt button, box-to-fix canvas, and attachment on save, exactly like
+bills. Paid From lists bank/cash assets and credit-card liabilities,
+defaulting to Checking.
+
+**Vendor quick-add on the Bill and Expense forms.** A scanned merchant
+the books don't know yet no longer dead-ends the form: the vendor
+picker gained "+ New Vendor" with an inline name box; a scan that
+doesn't match an existing vendor pre-fills it, and the vendor is
+created on save (a near-duplicate name resolves to the existing
+record instead of a twin).
+
+**Box-to-fix canvas hardening**, from the first hands-on hardware lap:
+a box dragged over two figures (tax + tip) is refused with the numbers
+it saw rather than silently taking the first; any refused read — no
+value, two values, or a value the form won't accept (a "tax" larger
+than the subtotal) — leaves no box on the scan and no stale value on
+the field buttons, so the next drag starts clean. Field buttons moved
+below the canvas, a drag paints immediately, and a box recolors the
+moment it's labeled instead of after the read comes back.
+
+**Highlights land on the right words.** The colored boxes the scan
+draws over the image are placed by matching the parsed values back to
+the recognized words; a receipt that prints the same figure twice (a
+line-item price and the grand total, or "CASH" repeating the total)
+used to get the box on the first hit, and the Date box went to the
+first thing with a slash or dash in it (an invoice number). The boxes
+now go to the word on the labeled line — lowest one for totals — and
+to the word that actually prints the parsed date in whatever order the
+receipt used. The values on the form were already right; only the
+highlight moved.
+
+**Merchant template memory** no longer anchors a remembered box on a
+word that repeats on the page when a unique label is on the same line
+("Inclusive" over "GST"), records which occurrence it meant when every
+label repeats, and fails closed — canvas takes over — when a rescan
+doesn't repeat the anchor the same way. A remembered amount or date box
+that reads only a bare digit run on a new print (a template that landed
+on a tax-ID number) is discarded instead of filling the form with it.
+
+**Windows: the second scan of a session no longer crashes the app.** On
+Windows the built-in text recognizer was driven from a throwaway thread
+per scan; when that thread exited, Windows tore down the component
+runtime the recognizer had been created in, and the next scan jumped
+through a stale handle — the server process died and the window
+reported "SlowBooks isn't responding (network error)" right after the
+first bill or expense was saved from a receipt. All recognizer work now
+runs on one thread that lives as long as the app does.
+
+**The merchant name gets a highlight box too.** The scan now boxes the
+run of words on the image that spells the parsed merchant name (pink),
+alongside the totals and date, so it can be corrected by tapping like
+the others; a name recalled from a remembered layout that isn't printed
+on the page draws nothing.
+
+**Bill numbers come off the receipt, and never block the entry.** The
+Bill # is the vendor's own invoice number — that is what stops the same
+invoice being entered twice (the check is per vendor, so two vendors
+can both send invoice 111). The scan now reads it from the receipt
+("Invoice No", "Receipt #", "Check", "Trans No" …) into Bill # and the
+expense Reference; a receipt that prints none can be saved with the
+field blank and gets `<date>-<vendor initials>` (suffixed if that vendor
+already has one that day).
+
+**Expenses can be voided.** A recorded expense booked to the wrong
+account (checking instead of the credit card) now has a Void button on
+the list and in its detail; like bills and journal entries it posts the
+mirror-image reversing entry, keeps the original in the ledger, respects
+the closing date, and shows the row as void. Enter it again to correct.
+
+**Scan Receipt field buttons are readable in dark mode.** The Total /
+Tax / Subtotal / Date / Merchant buttons under the receipt used pale
+fills with dark text regardless of theme — near-invisible on the dark
+theme. Dark mode now uses deep opaque fills with light text (8–10:1
+contrast); light mode keeps the pale fills with darker text.
+
+**Invoice / Ref # has its own box on the scan.** The picker under the
+receipt gained an **Invoice / Ref #** button (teal): draw it around the
+vendor's document number and it lands in Bill Number (bills) or
+Reference (expenses); the auto-parse also outlines the number it found,
+and a taught box is remembered per merchant like the others. The
+auto-parse no longer skips an invoice line because a "Pax"/"Table"/"Tel"
+word sits after the number on the same line.
+
+**Day-first dates parse.** `14-02-2018`, `14/02/2018`, `14.02.18` — any
+numeric date whose US reading is impossible — now resolves day-first
+(US ordering still wins when both readings are valid, so `12/02/17` is
+December 2), and month-name dates accept a two-digit year or dashes
+(`28 Mar 18`, `05-JAN-2017`). A date box that reads something the parser cannot turn into
+a date no longer reports "applied to the form" while the date input
+stays empty; it says what it read and asks for a redraw or a manual
+entry.
+
+**US register tape parses (Walmart, Whole Foods, Costco phone photos).**
+`TAX 1 7.000 %` is a tax *rate* line, not a 7.00 tax — a third decimal
+or a trailing % never reads as money. A return-policy or promotion line
+("purchases made on or after 9/15/2020") can no longer supply the
+transaction date. Walmart's `TC#` is the receipt number; the `REF #`
+printed beside APPR CODE / NETWORK ID / TERMINAL # is the card
+authorization and is ignored. The Invoice / Ref # button is present on
+the picker under the receipt (build 47 drew the box but had no button
+to assign it to).
+
+**Tilted photos read the right rows.** On a phone photo taken a couple of
+degrees off square, the amounts down the right edge of a 2000-pixel
+receipt sit a full line below the labels they belong to, and the row
+builder for the native engines put them on the neighbouring row — total
+survived but subtotal and tax silently took the wrong values (found on
+the macOS hardware pass). The engines now report each line's tilt (Apple
+Vision from its corner points, Windows OCR from its line grouping) and
+the rows are straightened before they are read; verified to 8 degrees.
+Also from that pass: the Settings OCR row names the built-in engine
+instead of assuming Tesseract everywhere, Apple Vision lists its
+recognition languages, and the macOS build's smoke test now proves Vision
+survived freezing.
+
+**Desktop launcher:** `--data-dir` (Server Edition scheduled task,
+headless test rigs) now relocates the per-user `.env` along with the
+data directory; it used to write `DATABASE_URL` into the launching
+user's own `%LOCALAPPDATA%` `.env`.
+
+### v2.6.3 — Classes cross over, and report CSVs read ANSI
+
+**Classes now come across from QuickBooks.** A class list export
+(File > Utilities > Export > Lists > Class List) previously vanished on
+import: the IIF parser only recognized accounts, customers, vendors and
+items, so the `!CLASS` section fell through the skip-unknown-sections
+path. A transaction IIF never carries the definitions either — CLASS
+appears only as a column on split lines — which left no way into the
+class list but typing every name into Settings → Classes by hand, and
+every transaction citing one failed its document. The list imports now,
+ahead of anything that can cite a class, so a single file holding both
+the list and the transactions lands in one pass. QuickBooks'
+"Parent:Child" subclass paths are kept verbatim (the split lines use
+that same path, so this is exactly what makes the two match), inactive
+classes arrive archived, and re-importing a list is a no-op. An unknown
+class on a transaction still stops that document rather than being
+invented — the error now names the list export as the fix. (#69)
+
+**Report-CSV import follow-ups**, from the #62 post-merge review: block
+types the Check and Deposit Detail parsers don't handle are now counted
+and warned about ("3 'Bill Pmt -Check' block(s) skipped") instead of
+being silently dropped, so a full Check Detail export no longer looks
+like it imported cleanly when it didn't. CSV uploads also fall back to
+Windows-1252 when UTF-8 fails — QuickBooks Desktop's Save-as-CSV
+frequently writes ANSI, and a payee like "José" used to 500 the upload.
+All four CSV import endpoints got the fix; a file neither encoding can
+read returns a guided error. (#67)
+
+### v2.6.2 — Report-CSV imports & field fixes
+
+**Field fixes** (both from a Server Edition user's report, #64/#65):
+
+- Creating a customer or vendor with a blank Email box failed with an
+  unexplained "unprocessable entity" — blank email now means "no
+  email", and validation errors name the field they're about.
+  (Workaround before this release was entering any valid email.)
+- The Server Edition install script now copies existing desktop books
+  (company files, encryption key, uploads, backups) into the server's
+  data home, as the docs always claimed; a wrong run location stops
+  with a guided message; and — found reproducing the report on real
+  hardware — the startup task could never be registered from the
+  normal installed path at all (PowerShell 5.1 mangled the quoting on
+  the spaced "Program Files" path and the script printed success over
+  the failure). Task creation is fixed and failures now stop the
+  script loudly. Field-verified end-to-end on hardware.
+
+### Deposits and checks from QuickBooks report CSVs
+
+The report-CSV path now covers three exports, auto-detected by their
+columns on one upload: **Deposit Detail** (each deposit becomes the
+journal entry moving its payments from Undeposited Funds to the bank),
+**Check Detail** (bank credit + expense debits — including payroll
+checks, whose withholding lines credit their liability accounts and
+net to the check amount; sign-aware parsing again, proven against a
+real customer's export), and the Transaction Detail sales-receipt
+report below. Blocks that don't balance or reference missing accounts
+error individually with a pointer to import the chart of accounts
+first; re-uploads dedup.
+
+### Sales receipts from a QuickBooks report CSV
+
+QuickBooks Desktop can't export transactions to IIF, so the sales-
+receipt migration doc pointed Desktop users at a Transaction Detail
+report export — which previously had nowhere to land. It does now:
+**QuickBooks Interop → Sales Receipts from Report CSV** imports a
+"Transaction Detail by Date" export (filtered to Sales Receipt), each
+receipt becoming a paid sale + payment with balanced journals.
+
+Shaped by a real customer's export, so the parser handles what real
+files contain: applied-deposit contra lines that reduce the total
+(sign-aware — an absolute-value parse would inflate them), percentage
+tax rows carrying the tax agency's name, deposits-only receipts,
+thousands separators, and per-receipt balance checks with clear
+errors. Unmatched account names post to default income with a warning;
+re-uploads dedup by customer + date + total. Receipt numbers keep the
+report's Num where free (SR-prefixed on collision).
+
+### v2.6.1 — The receipt now looks like a receipt
+
+- The printed/saved sales receipt was the unmodified invoice template —
+  titled INVOICE, with Due Date, Terms, and Balance Due rows, saved as
+  `Invoice_<n>.pdf`. It now renders as a SALES RECEIPT: date only, Sold
+  To, Total + Paid (no balance line — nothing is due), filename
+  `SalesReceipt_<n>.pdf`, and the same for the email attachment name.
+  Found on macOS hardware by the build maintainer during the v2.6.0
+  release pass. (#60)
+- The PDF's Bill To / Sold To block always prints the customer's name
+  now: the template fell back on a `customer_name` attribute only some
+  callers stamped onto the invoice, so the direct PDF route printed a
+  bare header whenever the customer had no address on file.
+- `SHA256SUMS.macos` now also lists the stable-named
+  `SlowBooksPro-macos-arm64.dmg`, so the README's direct download can be
+  checksum-verified, not just the versioned asset.
+
+### v2.6.0 — Sales receipts: one-screen POS sales + QuickBooks import
+
+For businesses that ring up sales at a counter instead of invoicing:
+a QuickBooks sales receipt is an invoice paid at the moment of sale,
+and SlowBooks now models it exactly that way — an Invoice flagged
+`is_sales_receipt` plus a Payment for the full total, so every
+existing report, PDF, export, and void path works unchanged. Schema
+migration `c7d8e9f0a1b2` adds the flag (drop-in; new databases need
+nothing).
+
+- **Enter Sales Receipts screen** — new sidebar page with a
+  one-screen form: customer (with quick-add), payment method,
+  check #/reference, deposit-to account (defaults to Undeposited
+  Funds), tax, class, currency, and line items. `POST
+  /api/sales-receipts` composes the existing invoice and payment
+  routes, so numbering, closing-date enforcement, FX, and
+  inventory/COGS behave identically to documents entered separately;
+  if the payment half fails the invoice half is voided rather than
+  left as a stray open balance. Receipts list on their own page and
+  no longer clutter the Invoices list (`GET
+  /api/invoices?is_sales_receipt=...` filters either way; omitting
+  the param returns everything, as before).
+- **IIF import: `CASH SALE` blocks** — QuickBooks Desktop's sales
+  receipts previously fell into the silently-skipped bucket. They now
+  import as paid invoice + payment with balanced journals (deposit
+  account from the TRNS header, Undeposited Funds fallback).
+  Counter sales with a blank Customer:Job land on an auto-created
+  "Walk-In Customer" (reported as a warning); unnumbered receipts get
+  the next invoice number, and re-imports dedup by document number or
+  customer + date + total.
+- **QBO import: SalesReceipt entity** — the QuickBooks Online
+  importer pulls sales receipts alongside invoices and payments, with
+  the same id-mapping dedup; the QBO page gets a Sales Receipts
+  import checkbox (import-only — there is no matching export entity).
+- **docs/migrate-from-quickbooks.md** — new guide covering both
+  paths, including the fact that Desktop's built-in IIF export is
+  lists-only and the clean Transaction Detail report recipe for
+  getting sales history out.
+
+### v2.5.3 — API hardening, from a full-surface sweep
+
+Every one of the API's 357 operations was driven end-to-end on Windows
+(installer) and Linux (source, PostgreSQL 17); everything that surfaced is
+fixed here. No schema migrations; drop-in upgrade from 2.5.x.
+
+**Data-integrity fixes**
+
+- An invalid `pay_type` or `role` on an employee was written as-is and then
+  made the row permanently unreadable — one bad `PUT` returned 500 for the
+  record *and* for `GET /api/employees` company-wide, with no API-level
+  recovery. Both fields are now validated as enums (422 at the edge), the
+  same treatment `pay_frequency` and `filing_status` already had. For rows
+  corrupted before the fix, `scripts/repair_employee_enums.py` repairs in
+  raw SQL (dry-run by default; `--apply` to write).
+- The migration dry-run tolerated a one-cent journal imbalance the importer
+  then refused, so `ok=true` could precede a mid-import 500. The gate now
+  applies the importer's exact-balance rule, including to synthesized
+  opening-balance journals.
+- Customer and vendor names: blank/whitespace-only names rejected, lengths
+  capped to the column width (was: opaque 500 on PostgreSQL, silent
+  overflow on SQLite), obviously malformed emails rejected. The CSV and
+  IIF importers honor the same rules — an IIF transaction with a blank
+  NAME no longer auto-creates an unnamed customer.
+
+**Correctness / API behavior**
+
+- Emailing an invoice (and Settings → "send test email") called
+  `send_email()` with a stale signature and could never succeed; both now
+  work, report 502 with a pointer to the email log when SMTP fails, and no
+  longer double-log.
+- Account endpoints return 409 with a real message instead of leaking
+  database errors as 500s (delete-with-history, duplicate account number);
+  an account can no longer be made its own parent.
+- `/openapi.json` no longer requires auth, so the documented agent flow
+  ("discover from the spec") works; the spec now declares its bearer
+  security scheme, with genuinely public routes exempted.
+- API tokens can no longer clear or roll back the closing date, nor set
+  the closing-date override password; moving the date forward (tightening)
+  is still allowed, and signed-in users are unaffected.
+- Machine-originated audit rows (e.g. the token `last_used_at` stamp) are
+  attributed to an explicit `system` principal instead of NULL.
+- `SlowBooksPro.exe --help` with piped/redirected output hung the frozen
+  Windows build forever on an invisible error dialog (UnicodeEncodeError
+  under cp1252 inside argparse). Launcher stdio is now total; verified on
+  Windows before/after.
+
+**Docs**
+
+- INSTALL.md's native Linux path works as written on PEP 668 distros
+  (venv steps, `.env` honored by alembic, APP_DEBUG guidance);
+  `.env.example` no longer recommends a FORCE_HTTPS setting the app
+  refuses to boot with; README operation count corrected.
+
+**Report display fix**
+
+- Balance-sheet and P&L lines rendered in the app wrapped every amount in
+  an absolute value, so a contra-balance account displayed positive while
+  the totals summed real signed values — visibly "$100 + $400 + $600 =
+  $300" after an unapplied customer payment drove A/R negative (a
+  legitimate prepayment). Lines now render signed, matching the totals
+  and the PDF output, which were always correct. (#56)
+
+**macOS releases now sign themselves in CI**
+
+- Tag builds sign, notarize, and staple the macOS DMG on the runner using
+  the same release tooling the maintainer ran locally, and attach it to
+  the release alongside the Windows assets. Starting with this release the
+  macOS publisher identity is **Trenton Von Holten** (previously releases
+  were signed by the macOS maintainer's own Developer ID).
+
+20 new regression tests (1162 total).
+
+### Native macOS desktop
+
+- Added a signed and Apple-notarized native app for Apple Silicon Macs running
+  macOS 14 or newer, distributed as a drag-to-Applications DMG.
+- Desktop companies, settings keys, uploads, logs, and backups persist under
+  the user's Application Support directory; upgrades never place writable data
+  inside the app bundle.
+- Bundled PDF libraries and the Cocoa window backend are exercised before a
+  build can become a release candidate.
+
+### v2.3.0 — Migration onramps
+
+**Migrate Data** — one page that brings accounting history in from six
+systems, each behind the same dry-run-gated engine (nothing is written
+until every reconstructed journal balances and, when supplied, the
+trial balance reconciles):
+
+- **MYOB** — fully validated against MYOB's own Clearwater sample
+  company (101 accounts, 328 journals, ledger balanced to the cent,
+  every account reconciling exactly to MYOB's trial balance). Handles
+  tab-separated classic exports, dd/mm/yyyy dates, header accounts,
+  reused journal IDs, number-only GL rows, duplicate account names,
+  and per-type journal file bundles. docs/migrate-from-myob.md walks
+  the export flow.
+- **GnuCash** — fully validated against real 5.5 exports (multi-split
+  transactions, GUID grouping, signed per-split amounts, placeholder
+  accounts).
+- **Xero** — refactored onto the shared engine (behavior-identical).
+- **Zoho Books** — chart validated against a live account's export.
+- **Wave** — trial-balance report shape validated against a live
+  account's export; supports both debit/credit and signed
+  single-amount transaction exports.
+- **Sage 50** — account-ID resolution, mm/dd dates, Sage's descriptive
+  account types.
+- Opening balances: trial-balance residuals that net to zero (the
+  source system's account-setup balances, absent from any journal
+  export) are detected and imported as one balanced opening journal.
+
+**Dependencies** — refreshed across the board for the release
+(FastAPI 0.141, Stripe SDK 15, cryptography 50, argon2-cffi 25,
+python-multipart 0.0.32, psycopg2-binary 2.9.12); pip-audit clean.
+The route-table introspection tests were taught FastAPI 0.141's new
+nested-router shape, with a tripwire so a future shape change can
+never silently empty the auth-contract suite again.
+
+### v2.2.0 — The fork-integration release
+
+The largest single release since 2.0: work mined from four community
+forks (with per-commit attribution), two new payment processors, and
+five major accounting features.
+
+**Online payments — Stripe, PayPal, Square**
+- Payment-provider abstraction with one shared, idempotent recorder
+  (row-locked; a webhook and a status poll can never double-record).
+- PayPal (Checkout Orders v2) and Square (Payment Links) join Stripe;
+  enable any combination and the pay page shows a button per processor.
+- Desktop installs record payments without webhooks: verified capture
+  on the customer's return + a "Check Payment Status" button.
+- Fixed: the public Pay button 401'd (checkout route was never
+  session-exempt) and the success banner trusted a URL query param —
+  it now renders only after provider-verified capture.
+- Fixed (found in live sandbox testing): Square leaves paid
+  payment-link orders in state OPEN; polling now recognizes them.
+
+**Class tracking**
+- QuickBooks-style class dimension on invoices, bills, estimates,
+  credit memos, recurring, journals, deposits, and cc charges;
+  managed in Settings; immutable "Uncategorized" system default.
+- P&L by Class report whose totals reconcile exactly with the plain
+  P&L; IIF SPL.CLASS resolves on import.
+
+**Multi-currency**
+- Foreign-currency invoices and bills booked at per-document rates
+  (Bank of Canada feed prefill, always overridable); the ledger stays
+  single-currency so every report and invariant holds exactly.
+- Realized FX gain/loss posts automatically on BOTH sides: customer
+  payments (A/R) and bill payments (A/P).
+- Cross-currency allocations rejected with clear errors; online
+  checkout guarded to home-currency invoices.
+
+**Fixed assets**
+- Register with per-type account mappings, straight-line and
+  declining-balance depreciation runs (one journal per asset, salvage
+  floor, idempotent re-runs), disposal with gain/loss, CSV import,
+  and a reconciliation report.
+
+**Migration onramps**
+- Xero CSV import (chart + general ledger + trial balance) gated by a
+  dry-run that verifies every journal balances and cross-checks the
+  trial balance before anything is written.
+- Opening Balances wizard: guided setup, normal-side posting rules,
+  optional auto-balance to equity.
+
+**Banking & interop**
+- Bank CSV import for Chase checking/credit and PayPal exports,
+  auto-detected by header signature, with content-derived dedup that
+  survives re-imports without dropping legitimate same-day duplicates.
+- IIF BILL and DEPOSIT transaction blocks (previously silently
+  discarded), with strict vendor/account matching and
+  duplicates-skipped reporting.
+
+**Reports**
+- Printable P&L and Balance Sheet PDFs plus the one-click Financial
+  Statements Pack (P&L + Balance Sheet + Trial Balance, page-numbered),
+  US Letter or A4 via a new setting.
+
+**Hardening**
+- Auth-contract regression suite: every API route proven to 401
+  unauthenticated or match a justified-public pattern (295 combos).
+- Upload size caps on all import endpoints; CREATE DATABASE identifier
+  quoting; decompilation debug strings scrubbed from the DOM with a
+  regression scan; version-stable ruff lint gate.
+
+**Community**
+Work in this release originates from the forks of Alex Jordan
+(@LayoverLogic), Joel Macklow (@joelmacklow), @moshgrossman, and
+@amazon1148 — authorship preserved per commit. Thank you.
+
+### v2.1.1 — Windows field fixes (first-machine feedback)
+
+- **Session cookie now reaches every native window and download.**
+  pywebview's default `private_mode=True` partitions WebView2 cookie
+  storage, so the print-preview/PDF window opened as
+  `{"detail":"Not authenticated"}` and CSV/backup downloads failed with
+  "Needs authorization" (saving the 401 JSON body as `.json`). The
+  desktop shell now uses a persistent shared profile under
+  `%LOCALAPPDATA%\SlowBooksPro\data\webview` — PDFs, exports, and
+  attachment downloads work, and logins survive app restarts.
+- **The installer now installs the WebView2 runtime when missing**
+  (silent Evergreen bootstrapper, skipped if already present) instead
+  of showing a "runtime is not installed" error on first launch —
+  Windows 10 machines without Edge updates hit this.
+
+### Native Windows desktop install (no Docker, no WSL2)
+
+Replaces the WSL2/Docker-Engine Windows setup from PR #1 with a fully
+native install: the app runs as a normal Windows process against SQLite,
+in its own desktop window (pywebview → WebView2). Desktop-mode groundwork
+contributed in PR #14; delivery is a signed Windows installer (see below).
+
+- **Multi-company, QuickBooks-style:** each company is its own SQLite file
+  under `%LOCALAPPDATA%\SlowBooksPro\data\companies\`, tracked in a
+  `companies.json` manifest. A company picker appears at every launch;
+  switching companies = close and reopen. Creating a company runs the real
+  `alembic upgrade head` plus the Chart of Accounts seed against a fresh
+  file. Company identity/settings already live per-database, so each file
+  is fully self-contained.
+- **Backups on SQLite:** `backup_service` gains a SQLite branch — backup/
+  restore are consistent `.db` snapshots via sqlite3's online backup API.
+  Postgres installs keep pg_dump/pg_restore unchanged.
+- **Migrations now genuinely run on SQLite:** four ALTER-added FK
+  constraints converted to Alembic batch mode and literal `now()` server
+  defaults replaced with the dialect-portable `CURRENT_TIMESTAMP`
+  (identical semantics on PostgreSQL; these migrations have already run on
+  existing Postgres installs and never re-run).
+- **Launcher:** `desktop_launcher.py` — env prep with a generated
+  `PAYROLL_ENCRYPTION_SECRET`, company picker, uvicorn on 127.0.0.1,
+  native window; closing the window stops the server.
+- **Delivery is a signed installer**, not setup scripts: the
+  `.bat`/`.ps1` bootstrap flow contributed in PR #14 was replaced by
+  `SlowBooksPro-Setup-x64.exe` — a PyInstaller bundle (Python and the
+  PDF-rendering libraries included, nothing installed system-wide) built
+  by CI and code-signed via Azure Trusted Signing, so Windows shows a
+  verified publisher instead of a SmartScreen warning.
+- The Docker/Postgres multi-company path (separate databases per company)
+  is unchanged and still used when `DATABASE_URL` is Postgres.
+
+### Post-merge review fixes (PR #12 follow-up)
+
+A deep review pass after merging the payroll/HR contribution surfaced and
+fixed twelve issues plus a round of structural cleanups (commits `af65843`,
+`68eb844`).
+
+**Schema / migrations:**
+
+- Six `Employee` columns (`portal_token_last_used`, `portal_token_expires_at`,
+  `everify_status`, `everify_submitted_at`, `everify_closed_at`,
+  `everify_notes`) and four whole tables (`document_audits`, `login_attempts`,
+  `reseller_permits`, `portal_accesses`) existed only in the models — no
+  Alembic migration created them. Startup `create_all()` masked the missing
+  tables but never ALTERs the existing `employees` table, so employee
+  creation, portal access, and E-Verify updates crashed with
+  `UndefinedColumn` on any alembic-migrated PostgreSQL.
+  `migrations/versions/d0e1f2a3b4c5` adds the columns;
+  `migrations/versions/bc3c3c5fd0a6` adds the tables (existence-guarded so it
+  works on databases where `create_all` already made them). Verified with a
+  full model-vs-schema diff against a scratch Postgres — zero gaps remain.
+
+**Correctness:**
+
+- `app/services/iif_export.py` — payment export filtered with
+  `.filter(not Payment.is_voided)`, which Python evaluates to
+  `.filter(False)` at query-build time (`WHERE false`), so payment IIF
+  exports were always empty. Restored the column comparison.
+- `app/routes/invoices.py` — late fees were being applied to DRAFT (unsent)
+  invoices: drafts get a terms-derived `due_date` at creation, so they
+  qualified as overdue. Filter scoped back to SENT/PARTIAL. Fee rounding
+  switched from bare `.quantize()` (banker's rounding) to `_q`
+  (ROUND_HALF_UP) to match the rest of the ledger.
+- `app/routes/bills.py` — `void_bill` gained the payments-applied guard that
+  `void_invoice` already had: voiding a paid bill reversed the full A/P while
+  the bill payment's cash JE and allocations stayed on the books,
+  double-counting the outflow.
+- `app/services/nacha_export.py` — `_split_net_pay` silently dropped
+  unallocated net pay when an employee had only PERCENT/FIXED accounts and no
+  REMAINDER/FULL account, producing an ACH file that underpaid the employee
+  with no error. Now raises `ValueError` (the route maps it to 400).
+- `app/services/payroll_service.py` + `app/routes/payroll.py` — the
+  $1M/37% supplemental-withholding tier could never fire:
+  `supplemental_federal_tax()` implements it but the call site never passed
+  `ytd_supplemental`. YTD bonus-run wages are now threaded through
+  (`_ytd_supplemental` helper; flat and gross-up paths). Deduction/gross/net
+  rounding in the pay-run route unified on `_q` — bare `.quantize(CENT)`
+  rounded half-cents the opposite direction from the service.
+- `app/static/js/employees.js` + `app/schemas/payroll.py` — the pay-frequency
+  dropdown emitted `semimonthly` but the enum value is `semi_monthly`, so
+  semi-monthly employees 500'd at flush. JS fixed; `pay_frequency` /
+  `filing_status` now typed against the model enums so bad values 422 at the
+  edge. Dropped the stale pre-2020 W-4 `allowances` field from the form.
+- `app/routes/credit_memos.py` + `app/services/recurring_service.py` — the
+  MAX+1 numbering race fix invoices got (retry on `IntegrityError` against
+  the UNIQUE constraint) now also covers credit memos and the recurring
+  batch. The recurring path retries under a SAVEPOINT so one collision can't
+  abort the whole batch; a template that can't get a number is left for the
+  next run.
+- `app/services/accounting.py` — closing-date enforcement moved inside
+  `create_journal_entry()` so every entry point inherits it. Recurring runs,
+  IIF/QBO imports, and inventory hooks could previously post into closed
+  periods that the UI forbids. Route-level checks kept for earlier, clearer
+  errors; `bypass_closing_date` kwarg exists as an operator escape hatch but
+  nothing sets it.
+- `app/routes/portal.py` — the token-in-URL POST handlers (W-4 elections,
+  direct-deposit accounts, PTO requests) resolved the employee without
+  writing a `portal_accesses` audit row, while their cookie-based twins
+  logged everything. All portal mutations are now audited.
+- `app/routes/payroll.py` — the JSON tax-form endpoints (`/forms/w2|w3|940|941`)
+  hand-rolled box math that diverged from the PDF path — W-2 box 3 returned
+  raw gross with no Social Security wage-base cap. They now delegate to the
+  same `compute_w2/w3/940/941` services the PDFs use; the 941 also now counts
+  only PROCESSED stubs.
+
+**Hardening / cleanup:**
+
+- ABA check-digit validation (`validate_routing_number`, weights 3-7-1) for
+  direct-deposit routing numbers — used by the portal and the employees API;
+  previously both accepted any 9 digits, so a typo'd routing number wasn't
+  caught until the bank bounced the ACH file.
+- `_q`/`CENT` money rounding consolidated onto `app/services/accounting.py`
+  (was copy-pasted across ~17 service modules; one divergent copy in
+  `inventory_service.py` kept deliberately — it quantizes quantities/costs to
+  4 dp).
+- Portal token/cookie handler bodies deduped into shared `_save_profile` /
+  `_add_bank` / `_request_pto` helpers; `_client_ip` moved to
+  `app/services/request_utils.py` (was duplicated in `auth.py` and
+  `portal.py`).
+- N+1 query fixes: time-entries list + pay-period summary, PTO requests
+  list, pay-run deduction loading, and W-2/W-3 generation (one stub fetch
+  for the whole year, bucketed in memory, instead of 2+ queries per
+  employee).
+
+**Test coverage:**
+
+- `tests/test_closing_date_enforcement.py` — four new service-layer tests
+  including the recurring-service path.
+- `tests/test_no_nplus1_in_list_endpoints.py` — extended to time-entries and
+  PTO list endpoints.
+- Routing-number fixtures updated to ABA-valid values (`021000021`).
+- Full suite: 458 passed; black/ruff clean.
+
+---
 
 ### AP void — `POST /api/bill-payments/{id}/void`
 
