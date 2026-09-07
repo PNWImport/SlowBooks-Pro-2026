@@ -1,6 +1,20 @@
 import os
 from logging.config import fileConfig
 
+# INSTALL.md has the user write DATABASE_URL into .env and THEN run
+# `alembic upgrade head`. Alembic is its own entrypoint and never boots
+# app.config, so without this the .env is ignored, sqlalchemy.url falls back
+# to the placeholder in alembic.ini, and the user gets
+# `FATAL: password authentication failed for user "user"` — a user they
+# never created, with no hint that the .env they just edited was unread.
+# override=False so a real exported DATABASE_URL (Docker) still wins.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(override=False)
+except ImportError:  # pragma: no cover - dotenv is in requirements.txt
+    pass
+
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
@@ -10,14 +24,23 @@ from alembic import context
 # access to the values within the .ini file in use.
 config = context.config
 
-# Override sqlalchemy.url from DATABASE_URL env var if set (used by Docker)
-if os.getenv("DATABASE_URL"):
+# Programmatic callers (company_service creating a NEW company database)
+# pass an explicit URL via config.attributes — that wins, so a per-company
+# migration never gets clobbered by the process-wide DATABASE_URL.
+# Otherwise, override sqlalchemy.url from DATABASE_URL env var (Docker).
+_url_override = config.attributes.get("database_url")
+if _url_override:
+    config.set_main_option("sqlalchemy.url", _url_override)
+elif os.getenv("DATABASE_URL"):
     config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
 
 # Interpret the config file for Python logging.
-# This line sets up loggers basically.
+# disable_existing_loggers=False: alembic also runs in-process (desktop
+# company creation, the frozen launcher) — the default True silently
+# kills every already-created app logger, eating the very tracebacks
+# that explain a failed migration.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 from app.database import Base
 from app.models import *  # noqa: F401,F403 — import all models for autogenerate

@@ -22,7 +22,7 @@ from datetime import date
 import pytest
 import sqlalchemy as sa
 
-from app.models.benefits import BenefitKind, plan_kind_index
+from app.models.benefit_coverage import BenefitKind, plan_kind_index
 from app.services.blind_index import (
     INDEX_LENGTH,
     blind_index,
@@ -62,14 +62,14 @@ def _plan(client, **overrides):
         "monthly_premium_employer": 400,
     }
     body.update(overrides)
-    r = client.post("/api/benefits/plans", json=body)
+    r = client.post("/api/benefit-coverage/plans", json=body)
     assert r.status_code == 201, r.text
     return r.json()
 
 
 def _enroll(client, emp_id, plan_id, start="2026-01-01"):
     r = client.post(
-        "/api/benefits/enrollments",
+        "/api/benefit-coverage/enrollments",
         json={"employee_id": emp_id, "plan_id": plan_id, "coverage_start": start},
     )
     assert r.status_code == 201, r.text
@@ -187,7 +187,7 @@ def test_plan_kind_is_ciphertext_in_the_database(client, db_session):
 
 def test_plan_kind_round_trips_through_the_api(client):
     assert _plan(client, kind="vision")["kind"] == "vision"
-    assert client.get("/api/benefits/plans").json()[0]["kind"] == "vision"
+    assert client.get("/api/benefit-coverage/plans").json()[0]["kind"] == "vision"
 
 
 def test_plan_kind_index_is_written_on_insert(client, db_session):
@@ -200,7 +200,7 @@ def test_plan_kind_index_is_written_on_insert(client, db_session):
 def test_plan_kind_index_is_rewritten_on_update(client, db_session):
     """A mapper event, not a call-site convention — an index that one write
     path forgets silently drops the row out of every query on it."""
-    from app.models.benefits import BenefitPlan
+    from app.models.benefit_coverage import BenefitPlan
 
     plan = _plan(client, kind="medical")
     row = db_session.query(BenefitPlan).filter_by(id=plan["id"]).first()
@@ -213,7 +213,7 @@ def test_plan_kind_index_is_rewritten_on_update(client, db_session):
 
 
 def test_the_index_is_queryable_and_selective(client, db_session):
-    from app.models.benefits import BenefitPlan
+    from app.models.benefit_coverage import BenefitPlan
 
     _plan(client, name="Med A", kind="medical")
     _plan(client, name="Med B", kind="medical")
@@ -230,7 +230,7 @@ def test_the_index_is_queryable_and_selective(client, db_session):
 def test_filtering_the_encrypted_column_directly_finds_nothing(client, db_session):
     """Documents the trap the blind index exists to avoid: comparing the
     encrypted column matches no rows, quietly."""
-    from app.models.benefits import BenefitPlan
+    from app.models.benefit_coverage import BenefitPlan
 
     _plan(client, kind="medical")
     assert (
@@ -249,7 +249,7 @@ def test_coverage_dates_are_ciphertext(client, db_session):
     plan = _plan(client)
     enr = _enroll(client, emp["id"], plan["id"], start="2026-03-01")
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-09-30"},
     )
 
@@ -263,7 +263,7 @@ def test_coverage_dates_are_ciphertext(client, db_session):
 
 
 def test_coverage_dates_round_trip_as_dates(client, db_session):
-    from app.models.benefits import BenefitEnrollment
+    from app.models.benefit_coverage import BenefitEnrollment
 
     emp = _employee(client)
     plan = _plan(client)
@@ -284,7 +284,7 @@ def test_open_enrollment_check_still_works_on_an_encrypted_column(client):
     _enroll(client, emp["id"], plan["id"])
 
     duplicate = client.post(
-        "/api/benefits/enrollments",
+        "/api/benefit-coverage/enrollments",
         json={
             "employee_id": emp["id"],
             "plan_id": plan["id"],
@@ -297,7 +297,7 @@ def test_open_enrollment_check_still_works_on_an_encrypted_column(client):
     # Ending it frees the slot, which proves the NULL check is really reading
     # the encrypted column and not always matching.
     client.post(
-        f"/api/benefits/enrollments/{emp['id']}/end",
+        f"/api/benefit-coverage/enrollments/{emp['id']}/end",
         json={"coverage_end": "2026-05-31"},
     )
 
@@ -335,7 +335,7 @@ def test_the_1095_month_window_still_narrows(client, seed_accounts):
     plan = _plan(client, kind="medical")
     enr = _enroll(client, emp["id"], plan["id"], start="2026-04-01")
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-07-15"},
     )
 
@@ -350,10 +350,10 @@ def test_the_cobra_notice_still_reads_plan_kind(client, seed_accounts):
     plan = _plan(client, kind="medical")
     enr = _enroll(client, emp["id"], plan["id"])
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-06-30"},
     )
-    r = client.post(f"/api/benefits/enrollments/{enr['id']}/cobra-notice")
+    r = client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice")
     assert r.status_code == 200, r.text
     assert r.content[:5] == b"%PDF-"
 
@@ -363,10 +363,10 @@ def test_cobra_still_refuses_a_non_medical_plan(client, seed_accounts):
     plan = _plan(client, name="Eyes", kind="vision")
     enr = _enroll(client, emp["id"], plan["id"])
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-06-30"},
     )
-    r = client.post(f"/api/benefits/enrollments/{enr['id']}/cobra-notice")
+    r = client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice")
     assert r.status_code == 400
     assert "medical" in r.json()["detail"]
 
@@ -400,7 +400,7 @@ def test_the_reindex_cli_actually_sees_the_registrations(tmp_path):
         "import app.models;"
         "from app.database import Base, engine, SessionLocal;"
         "Base.metadata.create_all(engine);"
-        "from app.models.benefits import BenefitPlan, BenefitKind;"
+        "from app.models.benefit_coverage import BenefitPlan, BenefitKind;"
         "db=SessionLocal();"
         "db.add(BenefitPlan(name='Med', kind=BenefitKind.MEDICAL));"
         "db.commit();db.close()"
@@ -430,7 +430,7 @@ def test_the_reindex_cli_actually_sees_the_registrations(tmp_path):
         f"os.environ['DATABASE_URL']='sqlite:///{db_path}';"
         "import app.models;"
         "from app.database import SessionLocal;"
-        "from app.models.benefits import BenefitPlan, BenefitKind, plan_kind_index;"
+        "from app.models.benefit_coverage import BenefitPlan, BenefitKind, plan_kind_index;"
         "db=SessionLocal();"
         "print(db.query(BenefitPlan).filter("
         "BenefitPlan.kind_bidx == plan_kind_index(BenefitKind.MEDICAL)).count())"
@@ -500,7 +500,7 @@ def test_rewrap_covers_the_new_encrypted_columns(client, db_session):
     plan = _plan(client)
     enr = _enroll(client, emp["id"], plan["id"])
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-08-31"},
     )
 
@@ -514,7 +514,7 @@ def test_rewrap_covers_the_new_encrypted_columns(client, db_session):
 def test_rewrap_reencrypts_kind_and_coverage_after_rotation(
     client, db_session, monkeypatch
 ):
-    from app.models.benefits import BenefitEnrollment, BenefitPlan
+    from app.models.benefit_coverage import BenefitEnrollment, BenefitPlan
     from app.services import encryption
 
     emp = _employee(client)
@@ -559,6 +559,6 @@ def test_encrypted_columns_are_wide_enough_for_ciphertext(table, column):
 
 def test_the_index_column_is_indexed():
     """An unindexed blind index turns every ACA query into a table scan."""
-    from app.models.benefits import BenefitPlan
+    from app.models.benefit_coverage import BenefitPlan
 
     assert BenefitPlan.__table__.columns["kind_bidx"].index is True

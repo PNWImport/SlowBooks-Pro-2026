@@ -36,6 +36,11 @@ class RecurringInvoice(Base):
     notes = Column(Text, nullable=True)
     invoices_created = Column(Integer, default=0)
 
+    # Class tracking dimension (QB-style); NULL groups with Uncategorized
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
+    # Job-costing dimension (QB "Customer:Job"); NULL = no job
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -61,6 +66,10 @@ class RecurringInvoiceLine(Base):
     description = Column(Text, nullable=True)
     quantity = Column(Numeric(10, 2), default=1)
     rate = Column(Numeric(12, 2), default=0)
+    # Per-line sales tax (default: the item's flag, or taxable). A customer-
+    # owned-device repair is labor with no tax; the part on the same invoice
+    # is taxed.
+    is_taxable = Column(Boolean, nullable=False, default=True)
     line_order = Column(Integer, default=0)
 
     recurring_invoice = relationship("RecurringInvoice", back_populates="lines")

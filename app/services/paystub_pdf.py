@@ -12,12 +12,10 @@
 # ============================================================================
 
 import json
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
-from app.services.pdf_service import _jinja_env, _safe_url_fetcher
-from weasyprint import HTML
-
-CENT = Decimal("0.01")
+from app.services.accounting import _q
+from app.services.pdf_service import _jinja_env, render_pdf
 
 # detail_json keys that are deductions (withheld from the employee). Anything
 # else in the blob is an employer-side or informational line we skip on the
@@ -51,16 +49,17 @@ _ADDITION_KEYS = {
 }
 
 
-def _q(value) -> Decimal:
-    """Coerce to Decimal and quantize to cents."""
-    if not isinstance(value, Decimal):
-        value = Decimal(str(value or 0))
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
-
-
 def _humanize(key: str) -> str:
     """Turn a detail_json key into a human-readable label."""
+    if key.startswith("benefit:"):
+        return key.split(":", 1)[1]
+    if key.startswith("garnishment:"):
+        return "Garnishment " + key.split(":")[1].replace("_", " ").title()
     return _DEDUCTION_KEYS.get(key) or key.replace("_", " ").title()
+
+
+def _is_employer_key(key: str) -> bool:
+    return key in _EMPLOYER_KEYS or key.startswith("employer_benefit:")
 
 
 def _deduction_lines(stub) -> list[dict]:
@@ -81,8 +80,15 @@ def _deduction_lines(stub) -> list[dict]:
             parsed = None
 
     if parsed:
+        # Benefit codes are itemized individually; the pre/post-tax totals
+        # that also live in the blob would double-count them.
+        has_codes = any(
+            k.startswith("benefit:") or k.startswith("other_p") for k in parsed
+        )
         for key, amount in parsed.items():
-            if key in _EMPLOYER_KEYS or key in _ADDITION_KEYS:
+            if _is_employer_key(key) or key in _ADDITION_KEYS:
+                continue
+            if has_codes and key in ("pretax_deductions", "posttax_deductions"):
                 continue
             value = _q(amount)
             if value == 0:
@@ -169,4 +175,4 @@ def generate_paystub_pdf(stub, employee, pay_run, company: dict, ytd: dict) -> b
     }
     template = _jinja_env.get_template("paystub_pdf.html")
     html_str = template.render(**ctx)
-    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    return render_pdf(html_str)

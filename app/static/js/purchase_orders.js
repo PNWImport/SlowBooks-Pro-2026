@@ -5,19 +5,13 @@
 const PurchaseOrdersPage = {
     async render() {
         const pos = await API.get('/purchase-orders');
-        let html = `
-            <div class="page-header">
-                <h2>Purchase Orders</h2>
-                <button class="btn btn-primary" onclick="PurchaseOrdersPage.showForm()">+ New PO</button>
-            </div>`;
-
-        if (pos.length === 0) {
-            html += '<div class="empty-state"><p>No purchase orders yet</p></div>';
-        } else {
-            html += `<div class="table-container"><table>
-                <thead><tr><th>#</th><th>Vendor</th><th>Date</th><th>Status</th><th class="amount">Total</th><th>Actions</th></tr></thead><tbody>`;
-            for (const po of pos) {
-                html += `<tr>
+        return renderListPage({
+            title: 'Purchase Orders',
+            headerHtml: `<button class="btn btn-primary" onclick="PurchaseOrdersPage.showForm()">+ New PO</button>`,
+            empty: '<p>No purchase orders yet</p>',
+            columns: ['#', 'Vendor', 'Date', 'Status', { label: 'Total', cls: 'amount' }, 'Actions'],
+            items: pos,
+            row: po => `<tr>
                     <td><strong>${escapeHtml(po.po_number)}</strong></td>
                     <td>${escapeHtml(po.vendor_name || '')}</td>
                     <td>${formatDate(po.date)}</td>
@@ -27,11 +21,8 @@ const PurchaseOrdersPage = {
                         <button class="btn btn-sm btn-secondary" onclick="PurchaseOrdersPage.showForm(${po.id})">Edit</button>
                         ${po.status !== 'closed' ? `<button class="btn btn-sm btn-primary" onclick="PurchaseOrdersPage.convertToBill(${po.id})">To Bill</button>` : ''}
                     </td>
-                </tr>`;
-            }
-            html += '</tbody></table></div>';
-        }
-        return html;
+                </tr>`,
+        });
     },
 
     _items: [],
@@ -58,6 +49,8 @@ const PurchaseOrdersPage = {
         if (po.lines.length === 0) po.lines = [{ item_id: '', description: '', quantity: 1, rate: 0 }];
         PurchaseOrdersPage.lineCount = po.lines.length;
 
+        const jobGroup = await jobFormGroupHtml(po.job_id || null);
+        await CostCodes.load();
         const vendorOpts = vendors.map(v => `<option value="${v.id}" ${po.vendor_id==v.id?'selected':''}>${escapeHtml(v.name)}</option>`).join('');
 
         openModal(id ? 'Edit Purchase Order' : 'New Purchase Order', `
@@ -71,10 +64,11 @@ const PurchaseOrdersPage = {
                         <input name="expected_date" type="date" value="${po.expected_date || ''}"></div>
                     <div class="form-group"><label>Tax Rate (%)</label>
                         <input name="tax_rate" type="number" step="0.01" value="${(po.tax_rate * 100) || 0}"></div>
+                    ${jobGroup}
                 </div>
                 <h3 style="margin:12px 0 8px;font-size:14px;">Line Items</h3>
                 <table class="line-items-table">
-                    <thead><tr><th>Item</th><th>Description</th><th class="col-qty">Qty</th><th class="col-rate">Rate</th><th class="col-amount">Amount</th></tr></thead>
+                    <thead><tr><th scope="col">Item</th><th scope="col">Description</th>${CostCodes.headHtml()}<th scope="col" class="col-qty">Qty</th><th scope="col" class="col-rate">Rate</th><th scope="col" class="col-amount">Amount</th></tr></thead>
                     <tbody id="po-lines">
                         ${po.lines.map((l, i) => PurchaseOrdersPage.lineHtml(i, l, items)).join('')}
                     </tbody>
@@ -94,6 +88,7 @@ const PurchaseOrdersPage = {
         return `<tr data-poline="${idx}">
             <td><select class="line-item" onchange="PurchaseOrdersPage.itemSel(${idx})"><option value="">--</option>${opts}</select></td>
             <td><input class="line-desc" value="${escapeHtml(line.description || '')}"></td>
+            ${CostCodes.cellHtml('line-cost-code', line.cost_code_id || null)}
             <td><input class="line-qty" type="number" step="0.01" value="${line.quantity || 1}"></td>
             <td><input class="line-rate" type="number" step="0.01" value="${line.rate || 0}"></td>
             <td class="col-amount">${formatCurrency((line.quantity||1)*(line.rate||0))}</td>
@@ -125,11 +120,13 @@ const PurchaseOrdersPage = {
                 description: row.querySelector('.line-desc')?.value || '',
                 quantity: parseFloat(row.querySelector('.line-qty')?.value) || 1,
                 rate: parseFloat(row.querySelector('.line-rate')?.value) || 0,
+                cost_code_id: CostCodes.fromRow(row, 'line-cost-code'),
                 line_order: i,
             });
         });
         const data = {
             vendor_id: parseInt(form.vendor_id.value),
+            job_id: jobIdFromForm(form),
             date: form.date.value,
             expected_date: form.expected_date.value || null,
             tax_rate: (parseFloat(form.tax_rate.value) || 0) / 100,

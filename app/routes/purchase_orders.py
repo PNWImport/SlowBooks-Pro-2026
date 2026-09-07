@@ -7,24 +7,17 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload, selectinload
-from sqlalchemy import func as sqlfunc
 from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
+from app.routes._helpers import clamp_pagination
 from app.models.purchase_orders import PurchaseOrder, PurchaseOrderLine, POStatus
 from app.models.contacts import Vendor
 from app.schemas.purchase_orders import POCreate, POUpdate, POResponse
 from app.services.accounting import _q, compute_line_totals
+from app.services.numbering import next_po_number
 
 router = APIRouter(prefix="/api/purchase-orders", tags=["purchase_orders"])
-
-
-def _next_po_number(db: Session) -> str:
-    last = db.query(sqlfunc.max(PurchaseOrder.po_number)).scalar()
-    if last and last.replace("PO-", "").isdigit():
-        num = int(last.replace("PO-", "")) + 1
-        return f"PO-{num:04d}"
-    return "PO-0001"
 
 
 @router.get("", response_model=list[POResponse])
@@ -35,8 +28,7 @@ def list_pos(
     limit: int = 500,
     db: Session = Depends(get_db),
 ):
-    limit = max(1, min(limit, 1000))
-    skip = max(0, skip)
+    skip, limit = clamp_pagination(skip, limit)
     # Eager-load to avoid N+1 on .vendor and .lines during model_validate.
     q = db.query(PurchaseOrder).options(
         joinedload(PurchaseOrder.vendor),
@@ -80,11 +72,11 @@ def create_po(data: POCreate, db: Session = Depends(get_db)):
     po = None
     po_number = None
     last_err = None
-    # Same race as create_invoice / create_estimate: _next_po_number is MAX+1
+    # Same race as create_invoice / create_estimate: next_po_number is MAX+1
     # without a row-level lock, so two concurrent creates can collide on the
     # po_number UNIQUE constraint. Retry on IntegrityError.
     for _ in range(10):
-        po_number = _next_po_number(db)
+        po_number = next_po_number(db)
         po = PurchaseOrder(
             po_number=po_number,
             vendor_id=vendor_id,
@@ -96,6 +88,7 @@ def create_po(data: POCreate, db: Session = Depends(get_db)):
             tax_amount=tax_amount,
             total=total,
             notes=data.notes,
+            job_id=data.job_id,
         )
         db.add(po)
         try:
@@ -121,6 +114,8 @@ def create_po(data: POCreate, db: Session = Depends(get_db)):
             quantity=line_data.quantity,
             rate=line_data.rate,
             amount=_q(Decimal(str(line_data.quantity)) * Decimal(str(line_data.rate))),
+            job_id=line_data.job_id,
+            cost_code_id=line_data.cost_code_id,
             line_order=line_data.line_order or i,
         )
         db.add(line)
@@ -158,6 +153,8 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
                     quantity=line_data.quantity,
                     rate=line_data.rate,
                     amount=amt,
+                    job_id=line_data.job_id,
+                    cost_code_id=line_data.cost_code_id,
                     line_order=line_data.line_order or i,
                 )
             )
@@ -217,6 +214,7 @@ def convert_to_bill(po_id: int, db: Session = Depends(get_db)):
         total=po.total,
         balance_due=po.total,
         notes=f"From {po.po_number}",
+        job_id=po.job_id,
     )
     db.add(bill)
     db.flush()
@@ -269,6 +267,8 @@ def convert_to_bill(po_id: int, db: Session = Depends(get_db)):
         db.add(
             BillLine(
                 bill_id=bill.id,
+                job_id=poline.job_id or po.job_id,
+                cost_code_id=poline.cost_code_id,
                 item_id=poline.item_id,
                 account_id=posting_acct,
                 description=poline.description,
@@ -285,6 +285,8 @@ def convert_to_bill(po_id: int, db: Session = Depends(get_db)):
                     "debit": amt,
                     "credit": Decimal("0"),
                     "description": poline.description or "",
+                    "job_id": poline.job_id or po.job_id,
+                    "cost_code_id": poline.cost_code_id,
                 }
             )
 
@@ -316,6 +318,7 @@ def convert_to_bill(po_id: int, db: Session = Depends(get_db)):
             journal_lines,
             source_type="bill",
             source_id=bill.id,
+            job_id=po.job_id,
         )
         bill.transaction_id = txn.id
 

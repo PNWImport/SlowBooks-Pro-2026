@@ -8,11 +8,12 @@ from decimal import Decimal
 from dateutil.relativedelta import relativedelta
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func as sqlfunc
+from sqlalchemy.exc import IntegrityError
 
 from app.models.recurring import RecurringInvoice
 from app.models.invoices import Invoice, InvoiceLine
 from app.models.items import Item
+from app.services.numbering import next_invoice_number
 from app.services.accounting import (
     _q,
     compute_line_totals,
@@ -21,13 +22,6 @@ from app.services.accounting import (
     get_default_income_account_id,
     get_sales_tax_account_id,
 )
-
-
-def _next_invoice_number(db: Session) -> str:
-    last = db.query(sqlfunc.max(Invoice.invoice_number)).scalar()
-    if last and last.isdigit():
-        return str(int(last) + 1).zfill(len(last))
-    return "1001"
 
 
 def _advance_next_due(current: date, frequency: str) -> date:
@@ -45,6 +39,10 @@ def _advance_next_due(current: date, frequency: str) -> date:
 def generate_due_invoices(db: Session, as_of: date = None) -> list[int]:
     """Generate all invoices that are due on or before as_of date.
     Returns list of created invoice IDs."""
+    from app.services.settings_service import is_nonprofit
+
+    # A nonprofit's recurring invoices are pledges (printed as such)
+    nonprofit = is_nonprofit(db)
     if as_of is None:
         as_of = date.today()
 
@@ -68,8 +66,6 @@ def generate_due_invoices(db: Session, as_of: date = None) -> list[int]:
             rec.is_active = False
             continue
 
-        invoice_number = _next_invoice_number(db)
-
         # Compute totals via the shared helper: each line is rounded to 2dp
         # before summing so the stored subtotal matches the sum of stored
         # line amounts, and journal credits land on the same cents as the
@@ -86,21 +82,45 @@ def generate_due_invoices(db: Session, as_of: date = None) -> list[int]:
             except ValueError:
                 pass
 
-        invoice = Invoice(
-            invoice_number=invoice_number,
-            customer_id=rec.customer_id,
-            date=rec.next_due,
-            due_date=due_date,
-            terms=rec.terms,
-            subtotal=subtotal,
-            tax_rate=tax_rate,
-            tax_amount=tax_amount,
-            total=total,
-            balance_due=total,
-            notes=rec.notes,
-        )
-        db.add(invoice)
-        db.flush()
+        # MAX+1 numbering races against concurrent manual creates (same as
+        # the invoices route). Retry under a SAVEPOINT so a collision rolls
+        # back only this attempt — not the other invoices already generated
+        # in this batch — and a template that can't get a number is simply
+        # left for the next run instead of aborting the whole batch.
+        invoice = None
+        invoice_number = None
+        for _ in range(10):
+            invoice_number = next_invoice_number(db)
+            candidate = Invoice(
+                invoice_number=invoice_number,
+                customer_id=rec.customer_id,
+                date=rec.next_due,
+                due_date=due_date,
+                terms=rec.terms,
+                subtotal=subtotal,
+                tax_rate=tax_rate,
+                tax_amount=tax_amount,
+                total=total,
+                balance_due=total,
+                notes=rec.notes,
+                class_id=rec.class_id,
+                job_id=rec.job_id,
+                recurring_invoice_id=rec.id,
+                is_pledge=nonprofit,
+            )
+            nested = db.begin_nested()
+            db.add(candidate)
+            try:
+                db.flush()
+                nested.commit()
+                invoice = candidate
+                break
+            except IntegrityError as e:
+                nested.rollback()
+                if "invoice_number" not in str(e.orig).lower():
+                    raise
+        if invoice is None:
+            continue
 
         for rline in rec.lines:
             db.add(
@@ -110,6 +130,7 @@ def generate_due_invoices(db: Session, as_of: date = None) -> list[int]:
                     description=rline.description,
                     quantity=rline.quantity,
                     rate=rline.rate,
+                    is_taxable=rline.is_taxable,
                     amount=_q(Decimal(str(rline.quantity)) * Decimal(str(rline.rate))),
                     line_order=rline.line_order,
                 )
@@ -161,6 +182,8 @@ def generate_due_invoices(db: Session, as_of: date = None) -> list[int]:
                 source_type="invoice",
                 source_id=invoice.id,
                 reference=invoice_number,
+                class_id=invoice.class_id,
+                job_id=invoice.job_id,
             )
             invoice.transaction_id = txn.id
 

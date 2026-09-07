@@ -1,18 +1,21 @@
 /**
- * Decompiled from QBW32.EXE!CMainFrame + CQBNavigator  Offset: 0x00042000
- * Original was an MFC CFrameWnd with a custom left-panel "Navigator" control
- * (the icon sidebar everyone remembers). CMainFrame::OnNavigate() dispatched
- * to individual CFormView subclasses via a 31-entry function pointer table.
- * We replaced the Win32 message pump with hash-based routing because, again,
- * it is no longer 2003. WM_COMMAND 0x8001 through 0x801F, rest in peace.
+ * App shell — the left-panel Navigator (the icon sidebar everyone
+ * remembers from QuickBooks) plus hash-based routing to each page.
  */
 const App = {
     routes: {
-        '/':              { page: 'dashboard',       label: 'Dashboard',          render: () => App.renderDashboard() },
+        '/':              { page: 'dashboard',       label: 'Dashboard',          render: () => DashboardPage.render() },
         '/customers':     { page: 'customers',       label: 'Customer Center',    render: () => CustomersPage.render() },
+        '/jobs':          { page: 'jobs',            label: 'Jobs',               render: () => JobsPage.render() },
+        '/jobs/:id':      { page: 'jobs',            label: 'Job',                render: (id) => JobsPage.renderDetail(id) },
+        '/job-costs':     { page: 'job-costs',       label: 'Job Cost Entries',   render: () => JobCostsPage.render() },
+        '/releases':      { page: 'releases',        label: 'Releases from Restriction', render: () => ReleasesPage.render() },
+        '/functional-allocations': { page: 'functional-allocations', label: 'Functional Allocations', render: () => AllocationsPage.render() },
         '/vendors':       { page: 'vendors',         label: 'Vendor Center',      render: () => VendorsPage.render() },
         '/items':         { page: 'items',           label: 'Item List',          render: () => ItemsPage.render() },
         '/invoices':      { page: 'invoices',        label: 'Create Invoices',    render: () => InvoicesPage.render() },
+        '/sales-receipts': { page: 'sales-receipts', label: 'Enter Sales Receipts', render: () => SalesReceiptsPage.render() },
+        '/in-kind-gifts': { page: 'in-kind-gifts',   label: 'In-Kind Gifts',      render: () => InKindPage.render() },
         '/estimates':     { page: 'estimates',       label: 'Create Estimates',   render: () => EstimatesPage.render() },
         '/payments':      { page: 'payments',        label: 'Receive Payments',   render: () => PaymentsPage.render() },
         '/banking':       { page: 'banking',         label: 'Bank Accounts',      render: () => BankingPage.render() },
@@ -44,7 +47,8 @@ const App = {
         '/hr/onboarding':   { page: 'hr-onboarding',   label: 'Onboarding',       render: () => OnboardingPage.render() },
         '/hr/time-entries': { page: 'hr-time-entries', label: 'Time Entries',      render: () => TimeEntriesPage.render() },
         '/hr/pto':          { page: 'hr-pto',           label: 'Time Off',         render: () => PTOPage.render() },
-        '/hr/deductions':   { page: 'hr-deductions',   label: 'Deductions',        render: () => DeductionsPage.render() },
+        '/hr/benefits':     { page: 'hr-benefits',     label: 'Benefits',          render: () => BenefitsPage.render() },
+        '/hr/deductions':   { page: 'hr-deductions',   label: 'Garnishments',      render: () => DeductionsPage.render() },
         '/hr/tax-forms':    { page: 'hr-tax-forms',    label: 'Tax Forms',         render: () => TaxFormsPage.render() },
         '/reseller-permits':{ page: 'reseller-permits',label: 'Reseller Permits', render: () => ResellerPermitsPage.render() },
         // Phase 9: Analytics (real-time business intelligence)
@@ -54,6 +58,7 @@ const App = {
         '/deposits':      { page: 'deposits',        label: 'Make Deposits',      render: () => DepositsPage.render() },
         '/check-register': { page: 'check-register', label: 'Check Register',     render: () => CheckRegisterPage.render() },
         '/cc-charges':    { page: 'cc-charges',      label: 'CC Charges',         render: () => CCChargesPage.render() },
+        '/expenses':      { page: 'expenses',        label: 'Enter Expenses',     render: () => ExpensesPage.render() },
         // Phase 10: Quick Wins + Medium Effort Features
         '/budgets':       { page: 'budgets',         label: 'Budget vs Actual',   render: () => BudgetsPage.render() },
         '/bank-rules':    { page: 'bank-rules',      label: 'Bank Rules',         render: () => BankRulesPage.render() },
@@ -61,7 +66,7 @@ const App = {
         // artifact verification (docs/hipaa-compliance.md § 164.312(c)(1)).
         '/compliance':    { page: 'compliance',      label: 'Compliance',         render: () => CompliancePage.render() },
         // Benefits: plans, enrollment, dependents, COBRA, ACA 1095/1094.
-        '/hr/benefits':   { page: 'hr-benefits',     label: 'Benefits',           render: () => BenefitsPage.render() },
+        '/hr/benefit-coverage':   { page: 'hr-benefits',     label: 'Benefits',           render: () => BenefitsPage.render() },
         // Contractor pay runs: batch contractor payments, JE, NACHA export.
         '/payroll/contractors': { page: 'payroll-contractors', label: 'Contractor Runs', render: () => ContractorRunsPage.render() },
         // Garnishment remittance register: withheld money owed to agencies.
@@ -78,11 +83,26 @@ const App = {
         '/payroll/workers-comp': { page: 'payroll-workers-comp', label: 'Workers Comp', render: () => WorkersCompPage.render() },
         // Payroll report library: journal, deduction register, contractor payments.
         '/payroll/reports': { page: 'payroll-reports', label: 'Payroll Reports', render: () => PayrollReportsPage.render() },
+        '/fixed-assets':  { page: 'fixed-assets',    label: 'Fixed Assets',       render: () => FixedAssetsPage.render() },
+        '/migrate':       { page: 'migrate',         label: 'Migrate Data',       render: () => MigrationPage.render() },
+        '/xero-import':   { page: 'migrate',         label: 'Migrate Data',       render: () => MigrationPage.render('xero') },
+        '/myob-import':   { page: 'migrate',         label: 'Migrate Data',       render: () => MigrationPage.render('myob') },
+        '/opening-balances': { page: 'opening-balances', label: 'Opening Balances', render: () => OpeningBalancesPage.render() },
     },
 
     async navigate(hash) {
         const path = hash.replace('#', '') || '/';
-        const route = App.routes[path];
+        let route = App.routes[path];
+        let param = null;
+        if (!route) {
+            // One-segment parameter routes: '/jobs/:id' matches '/jobs/12'
+            for (const [key, r] of Object.entries(App.routes)) {
+                const i = key.indexOf('/:');
+                if (i > 0 && path.startsWith(key.slice(0, i + 1)) && !path.slice(i + 1).includes('/')) {
+                    route = r; param = decodeURIComponent(path.slice(i + 1)); break;
+                }
+            }
+        }
         if (!route) { $('#page-content').innerHTML = '<p>Page not found</p>'; return; }
 
         // Update active nav
@@ -94,16 +114,23 @@ const App = {
         App.setStatus(`Loading ${route.label}...`);
 
         try {
-            const html = await route.render();
+            const html = await route.render(param);
             $('#page-content').innerHTML = html;
             App.setStatus(`${route.label} — Ready`);
         } catch (err) {
+            // Server-side detail (err.message and stack) goes to console
+            // for devs; the DOM gets a clean user-facing error with a
+            // recovery action. Avoid leaking framework internals into
+            // the rendered page (S1 audit finding).
             console.error(err);
             $('#page-content').innerHTML = `<div class="empty-state">
-                <p><strong>Error 0x8004:</strong> ${escapeHtml(err.message)}</p>
-                <p style="font-size:10px; color:var(--text-muted);">CQBView::OnActivate() failed at offset 0x00042A10</p>
+                <h3>Couldn't load this page</h3>
+                <p>${escapeHtml(err.message || 'An unexpected error occurred.')}</p>
+                <p style="margin-top:12px;">
+                    <a href="#/" class="btn btn-secondary">Return to Dashboard</a>
+                </p>
             </div>`;
-            App.setStatus('Error — see console for details');
+            App.setStatus('Error loading page');
         }
     },
 
@@ -144,156 +171,17 @@ const App = {
         }
     },
 
-    async renderDashboard() {
-        const data = await API.get('/dashboard');
-
-        let recentInv = data.recent_invoices.map(inv =>
-            `<tr>
-                <td><strong>${escapeHtml(inv.invoice_number)}</strong></td>
-                <td>${formatDate(inv.date)}</td>
-                <td>${statusBadge(inv.status)}</td>
-                <td class="amount">${formatCurrency(inv.total)}</td>
-            </tr>`
-        ).join('') || '<tr><td colspan="4" style="color:var(--text-muted); font-size:11px;">No invoices yet &mdash; use Create Invoice to get started</td></tr>';
-
-        let recentPay = data.recent_payments.map(p =>
-            `<tr>
-                <td>${formatDate(p.date)}</td>
-                <td>${escapeHtml(p.method || '')}</td>
-                <td class="amount">${formatCurrency(p.amount)}</td>
-            </tr>`
-        ).join('') || '<tr><td colspan="3" style="color:var(--text-muted); font-size:11px;">No payments recorded yet</td></tr>';
-
-        let bankCards = data.bank_balances.map(ba =>
-            `<div class="card" style="cursor:pointer" onclick="App.navigate('#/banking')">
-                <div class="card-header">${escapeHtml(ba.name)}</div>
-                <div class="card-value">${formatCurrency(ba.balance)}</div>
-            </div>`
-        ).join('');
-
-        if (!bankCards) {
-            bankCards = `<div class="card">
-                <div class="card-header">No Bank Accounts</div>
-                <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">
-                    Go to Banking to set up an account</div>
-            </div>`;
-        }
-
-        // Feature 3: Dashboard Charts
-        let chartsHtml = '';
-        try {
-            const charts = await API.get('/dashboard/charts');
-            // AR Aging Bar Chart
-            const agingTotal = (charts.aging_current || 0) + (charts.aging_30 || 0) + (charts.aging_60 || 0) + (charts.aging_90 || 0);
-            if (agingTotal > 0) {
-                const pctCurrent = ((charts.aging_current / agingTotal) * 100).toFixed(1);
-                const pct30 = ((charts.aging_30 / agingTotal) * 100).toFixed(1);
-                const pct60 = ((charts.aging_60 / agingTotal) * 100).toFixed(1);
-                const pct90 = ((charts.aging_90 / agingTotal) * 100).toFixed(1);
-                chartsHtml += `
-                    <div class="dashboard-section">
-                        <h3>AR Aging</h3>
-                        <div class="chart-bar-container">
-                            <div class="chart-bar" style="display:flex; height:28px; border-radius:4px; overflow:hidden;">
-                                ${pctCurrent > 0 ? `<div style="width:${pctCurrent}%; background:var(--success);" title="Current: ${formatCurrency(charts.aging_current)}"></div>` : ''}
-                                ${pct30 > 0 ? `<div style="width:${pct30}%; background:var(--qb-gold);" title="1-30 days: ${formatCurrency(charts.aging_30)}"></div>` : ''}
-                                ${pct60 > 0 ? `<div style="width:${pct60}%; background:#f97316;" title="31-60 days: ${formatCurrency(charts.aging_60)}"></div>` : ''}
-                                ${pct90 > 0 ? `<div style="width:${pct90}%; background:var(--danger);" title="61+ days: ${formatCurrency(charts.aging_90)}"></div>` : ''}
-                            </div>
-                            <div class="chart-legend" style="display:flex; gap:12px; margin-top:6px; font-size:10px;">
-                                <span><span style="color:var(--success);">&#9632;</span> Current ${formatCurrency(charts.aging_current)}</span>
-                                <span><span style="color:var(--qb-gold);">&#9632;</span> 1-30 ${formatCurrency(charts.aging_30)}</span>
-                                <span><span style="color:#f97316;">&#9632;</span> 31-60 ${formatCurrency(charts.aging_60)}</span>
-                                <span><span style="color:var(--danger);">&#9632;</span> 61+ ${formatCurrency(charts.aging_90)}</span>
-                            </div>
-                        </div>
-                    </div>`;
-            }
-
-            // Monthly Revenue Trend
-            if (charts.monthly_revenue && charts.monthly_revenue.length > 0) {
-                const maxRev = Math.max(...charts.monthly_revenue.map(m => m.amount), 1);
-                const bars = charts.monthly_revenue.map(m => {
-                    const pct = Math.max((m.amount / maxRev) * 100, 2);
-                    return `<div class="chart-bar-col" style="flex:1; text-align:center;">
-                        <div style="height:100px; display:flex; align-items:flex-end; justify-content:center;">
-                            <div style="width:80%; background:var(--qb-blue); height:${pct}%; border-radius:2px 2px 0 0;"
-                                 title="${m.month}: ${formatCurrency(m.amount)}"></div>
-                        </div>
-                        <div style="font-size:9px; color:var(--text-muted); margin-top:4px;">${m.month}</div>
-                    </div>`;
-                }).join('');
-                chartsHtml += `
-                    <div class="dashboard-section">
-                        <h3>Monthly Revenue (Last 12 Months)</h3>
-                        <div style="display:flex; gap:2px; align-items:flex-end;">${bars}</div>
-                    </div>`;
-            }
-        } catch (e) { /* charts endpoint not available yet — that's fine */ }
-
-        return `
-            <div class="page-header">
-                <h2>Company Snapshot</h2>
-                <div style="font-size:10px; color:var(--text-muted);">
-                    Slowbooks Pro 2026 &mdash; Build 12.0.3190-R
-                </div>
-            </div>
-
-            <div class="card-grid">
-                <div class="card">
-                    <div class="card-header">Total Receivables</div>
-                    <div class="card-value">${formatCurrency(data.total_receivables)}</div>
-                </div>
-                <div class="card">
-                    <div class="card-header">Overdue Invoices</div>
-                    <div class="card-value" ${data.overdue_count > 0 ? 'style="color:var(--qb-red)"' : ''}>${data.overdue_count}</div>
-                </div>
-                <div class="card">
-                    <div class="card-header">Active Customers</div>
-                    <div class="card-value">${data.customer_count}</div>
-                </div>
-                ${data.total_payables !== undefined ? `<div class="card">
-                    <div class="card-header">Total Payables</div>
-                    <div class="card-value">${formatCurrency(data.total_payables)}</div>
-                </div>` : ''}
-            </div>
-
-            <div class="dashboard-section">
-                <h3>Bank Balances</h3>
-                <div class="card-grid">${bankCards}</div>
-            </div>
-
-            ${chartsHtml}
-
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
-                <div class="dashboard-section">
-                    <h3>Recent Invoices</h3>
-                    <div class="table-container"><table>
-                        <thead><tr><th>#</th><th>Date</th><th>Status</th><th class="amount">Total</th></tr></thead>
-                        <tbody>${recentInv}</tbody>
-                    </table></div>
-                </div>
-                <div class="dashboard-section">
-                    <h3>Recent Payments</h3>
-                    <div class="table-container"><table>
-                        <thead><tr><th>Date</th><th>Method</th><th class="amount">Amount</th></tr></thead>
-                        <tbody>${recentPay}</tbody>
-                    </table></div>
-                </div>
-            </div>`;
-    },
-
     async renderAccounts() {
         const accounts = await API.get('/accounts');
         const grouped = {};
         for (const a of accounts) {
             if (!grouped[a.account_type]) grouped[a.account_type] = [];
-            grouped[a.account_type].push(a);
+            if (a.is_active !== false) grouped[a.account_type].push(a);
         }
 
         const typeOrder = ['asset', 'liability', 'equity', 'income', 'cogs', 'expense'];
-        const typeNames = { asset: 'Assets', liability: 'Liabilities', equity: 'Equity',
-            income: 'Income', cogs: 'Cost of Goods Sold', expense: 'Expenses' };
+        const typeNames = { asset: 'Assets', liability: 'Liabilities', equity: T('Equity'),
+            income: T('Income'), cogs: 'Cost of Goods Sold', expense: 'Expenses' };
 
         let html = `
             <div class="page-header">
@@ -301,7 +189,7 @@ const App = {
                 <button class="btn btn-primary" onclick="App.showAccountForm()">New Account</button>
             </div>
             <div class="table-container"><table>
-                <thead><tr><th style="width:80px;">Number</th><th>Name</th><th style="width:100px;">Type</th><th class="amount" style="width:100px;">Balance</th><th style="width:60px;">Actions</th></tr></thead>
+                <thead><tr><th scope="col" style="width:80px;">Number</th><th scope="col">Name</th><th scope="col" style="width:100px;">Type</th><th scope="col" class="amount" style="width:100px;">Balance</th><th scope="col" style="width:60px;">Actions</th></tr></thead>
                 <tbody>`;
 
         for (const type of typeOrder) {
@@ -361,7 +249,7 @@ const App = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
-    // Feature 4: Unified Global Search — replaces CQBSearchEngine @ 0x00250000
+    // Feature 4: Unified Global Search
     _searchTimeout: null,
     async globalSearch(query) {
         const dropdown = $('#search-results');
@@ -373,10 +261,10 @@ const App = {
                 const results = await API.get(`/search?q=${encodeURIComponent(query)}`);
                 let html = '';
                 const sections = [
-                    { key: 'customers', label: 'Customers', onClick: (item) => `App.navigate('#/customers');closeSearchDropdown();` },
+                    { key: 'customers', label: T('Customers'), onClick: (item) => `App.navigate('#/customers');closeSearchDropdown();` },
                     { key: 'vendors', label: 'Vendors', onClick: (item) => `App.navigate('#/vendors');closeSearchDropdown();` },
                     { key: 'items', label: 'Items', onClick: (item) => `App.navigate('#/items');closeSearchDropdown();` },
-                    { key: 'invoices', label: 'Invoices', onClick: (item) => `InvoicesPage.view(${item.id});closeSearchDropdown();` },
+                    { key: 'invoices', label: T('Invoices'), onClick: (item) => `InvoicesPage.view(${item.id});closeSearchDropdown();` },
                     { key: 'estimates', label: 'Estimates', onClick: (item) => `App.navigate('#/estimates');closeSearchDropdown();` },
                     { key: 'payments', label: 'Payments', onClick: (item) => `App.navigate('#/payments');closeSearchDropdown();` },
                 ];
@@ -411,10 +299,15 @@ const App = {
                     <h3>Export</h3>
                     <p style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">Download data as CSV files.</p>
                     <div style="display:flex; flex-direction:column; gap:8px;">
-                        <a href="/api/csv/export/customers" class="btn btn-secondary" download>Export Customers</a>
+                        <a href="/api/csv/export/customers" class="btn btn-secondary" download>Export ${T('Customers')}</a>
                         <a href="/api/csv/export/vendors" class="btn btn-secondary" download>Export Vendors</a>
                         <a href="/api/csv/export/items" class="btn btn-secondary" download>Export Items</a>
-                        <a href="/api/csv/export/invoices" class="btn btn-secondary" download>Export Invoices</a>
+                        <a href="/api/csv/export/invoices" class="btn btn-secondary" download>Export ${T('Invoices')}</a>
+                        <a href="/api/csv/export/bills" class="btn btn-secondary" download>Export Bills</a>
+                        <a href="/api/csv/export/sales-receipts" class="btn btn-secondary" download>Export ${T('Sales Receipts')}</a>
+                        <a href="/api/csv/export/deposits" class="btn btn-secondary" download>Export Deposits</a>
+                        <a href="/api/csv/export/classes" class="btn btn-secondary" download>Export ${T('Classes')}</a>
+                        <a href="/api/csv/export/jobs" class="btn btn-secondary" download>Export ${T('Jobs')}</a>
                         <a href="/api/csv/export/accounts" class="btn btn-secondary" download>Export Chart of Accounts</a>
                     </div>
                 </div>
@@ -424,7 +317,7 @@ const App = {
                     <form id="csv-import-form" onsubmit="App.importCSV(event)">
                         <div class="form-group"><label>Entity Type</label>
                             <select name="entity_type" id="csv-entity">
-                                <option value="customers">Customers</option>
+                                <option value="customers">${T('Customers')}</option>
                                 <option value="vendors">Vendors</option>
                                 <option value="items">Items</option>
                             </select></div>
@@ -480,7 +373,7 @@ const App = {
             </div>
             <form id="qe-form" onsubmit="App.saveQuickEntry(event)">
                 <div class="form-grid">
-                    <div class="form-group"><label>Customer *</label>
+                    <div class="form-group"><label>${T('Customer')} *</label>
                         <select name="customer_id" id="qe-customer" required><option value="">Select...</option>${custOpts}</select></div>
                     <div class="form-group"><label>Date *</label>
                         <input name="date" id="qe-date" type="date" required value="${todayISO()}"></div>
@@ -494,7 +387,7 @@ const App = {
                 </div>
                 <h3 style="margin:12px 0 8px; font-size:14px;">Line Items</h3>
                 <table class="line-items-table">
-                    <thead><tr><th>Item</th><th>Description</th><th class="col-qty">Qty</th><th class="col-rate">Rate</th><th class="col-amount">Amount</th></tr></thead>
+                    <thead><tr><th scope="col">Item</th><th scope="col">Description</th><th scope="col" class="col-qty">Qty</th><th scope="col" class="col-rate">Rate</th><th scope="col" class="col-amount">Amount</th></tr></thead>
                     <tbody id="qe-lines">
                         <tr data-qeline="0">
                             <td><select class="line-item" onchange="App.qeItemSelected(0)"><option value="">--</option>${itemOpts}</select></td>
@@ -588,7 +481,7 @@ const App = {
                 `<div style="padding:4px 0; font-size:11px; border-bottom:1px solid var(--gray-200);">
                     <strong>#${escapeHtml(inv.invoice_number)}</strong> created — ${escapeHtml(inv.customer_name || '')} — ${formatCurrency(inv.total)}
                 </div>`);
-            toast(`Invoice #${inv.invoice_number} created`);
+            toast(`${T('Invoice')} #${inv.invoice_number} created`);
             // Reset form for next entry
             form.po_number.value = '';
             $('#qe-lines').innerHTML = `
@@ -605,15 +498,43 @@ const App = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
-    // Load company name from settings for status bar
-    async loadCompanyName() {
+    settings: {},   // one cached copy of /api/settings for the shell (company name, company type)
+
+    // Load company settings: the status-bar name, and the vocabulary
+    // (Terms) that every page renders with. Never rejects — pre-login this
+    // 401s and auth.js reloads the page after login, same as before.
+    async loadCompanySettings() {
         try {
             const s = await API.get('/settings');
+            App.settings = s || {};
+            Terms.init(s);
             const companyEl = $('#status-company');
             if (companyEl && s.company_name && s.company_name !== 'My Company') {
                 companyEl.textContent = `Company: ${s.company_name}`;
+                // the window / tab title and the topbar brand say whose books these are
+                document.title = `${s.company_name} — Slowbooks Pro 2026`;
+                const brand = $('#topbar-company');
+                if (brand) brand.textContent = s.company_name;
             }
-        } catch (e) { /* ignore on load */ }
+        } catch (e) { Terms.init(null); /* business words until signed in */ }
+    },
+
+    // Rewrites the static shell into the company's words. index.html is
+    // served raw, so the sidebar and toolbar arrive as business-worded
+    // HTML; this runs once at boot, before the first page renders.
+    applyTerminology() {
+        for (const r of Object.values(App.routes)) r.label = T(r.label);
+        $$('#sidebar .nav-section').forEach(el => { el.textContent = T(el.textContent.trim()); });
+        $$('#sidebar .nav-link').forEach(a => {
+            const t = [...a.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+            if (t) t.textContent = ' ' + T(t.textContent.trim());
+        });
+        $$('#topbar .tb-btn[data-action]').forEach(b => { b.textContent = T(b.textContent.trim()); });
+        const search = $('#global-search');
+        if (search) search.placeholder = Terms.text(search.placeholder);
+        const np = Terms.isNonprofit();
+        $$('[data-nonprofit]').forEach(el => { el.hidden = !np; });
+        $$('[data-business-only]').forEach(el => { el.hidden = np; });
     },
 
     init() {
@@ -622,7 +543,7 @@ const App = {
         // Load saved theme
         App.loadTheme();
 
-        // Keyboard shortcuts — CAcceleratorTable @ 0x00042800
+        // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
             // Ctrl+Enter: submit quick entry form
             if (e.ctrlKey && e.key === 'Enter') {
@@ -665,12 +586,83 @@ const App = {
         App.updateClock();
         setInterval(App.updateClock, 60000);
 
-        // Load company name into status bar
-        App.loadCompanyName();
+        // Real version in the footer + update badge on desktop installs
+        App.initSystemInfo();
 
-        // Navigate after splash closes
-        App.navigate(location.hash || '#/');
+        // Settings first: the vocabulary and the nonprofit nav items must
+        // be in place before the first page paints (no flash of "Customers"
+        // on a donor's screen). loadCompanySettings never rejects.
+        App.loadCompanySettings().then(() => {
+            App.applyTerminology();
+            App.navigate(location.hash || '#/');
+        });
+    },
+
+    /**
+     * Footer version + update check. Raw fetch (not the API wrapper) on
+     * purpose: before first login these return 401, and the wrapper's 401
+     * handler would pop the auth prompt — auth.js already owns that, and
+     * it reloads the page after login so this runs again authenticated.
+     * The whole thing is best-effort; failures leave the footer as-is.
+     */
+    async initSystemInfo() {
+        try {
+            let res = await fetch('/api/system', { credentials: 'same-origin' });
+            if (!res.ok) return;
+            const info = await res.json();
+            const versionEl = $('#app-version');
+            if (versionEl && info.version) {
+                versionEl.textContent = info.server_mode
+                    ? `v${info.version} · Server`
+                    : `v${info.version}`;
+            }
+            if (info.server_mode) {
+                // Serving the LAN: the deployment announces itself.
+                document.querySelectorAll('.sidebar-edition, .splash-subtitle')
+                    .forEach(el => { el.textContent = 'Server Edition'; });
+            }
+
+            // Multi-user: always-visible identity chip in the topbar.
+            const auth = await fetch('/api/auth/status', { credentials: 'same-origin' });
+            if (auth.ok) {
+                const a = await auth.json();
+                if (a.multi_user && a.user) {
+                    const right = document.querySelector('.topbar-right');
+                    if (right && !document.getElementById('user-chip')) {
+                        const chip = document.createElement('span');
+                        chip.id = 'user-chip';
+                        chip.className = 'topbar-clock';
+                        chip.textContent =
+                            `${a.user.display_name || a.user.username} · ${a.user.role}`;
+                        right.prepend(chip);
+                    }
+                }
+            }
+            if (!info.desktop) return;
+
+            res = await fetch('/api/system/update-check', { credentials: 'same-origin' });
+            if (!res.ok) return;
+            const check = await res.json();
+            if (!check.update_available || !check.download_url) return;
+            const footer = $('#sidebar-footer');
+            if (!footer || footer.querySelector('.update-badge')) return;
+            const link = document.createElement('a');
+            // External URL: pywebview hands target="_blank" links that leave
+            // 127.0.0.1 to the system browser (see desktop_shim.js).
+            link.href = check.download_url;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.className = 'update-badge';
+            link.textContent = `⬆ Update available — v${check.latest_version}`;
+            footer.prepend(link);
+        } catch (e) { /* offline or pre-auth — footer stays as shipped */ }
     },
 };
+
+// Top-level `const` creates a global *lexical* binding, not a window
+// property — but bootstrap.js guards its listeners with `window.App && ...`
+// (theme toggle, About, search, data-nav). Without this export every one of
+// those guards short-circuits and the static-shell buttons silently no-op.
+window.App = App;
 
 document.addEventListener('DOMContentLoaded', () => App.init());

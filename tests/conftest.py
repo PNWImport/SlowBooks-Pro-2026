@@ -19,12 +19,17 @@ os.environ["ALLOWED_ORIGINS"] = "http://testserver,http://localhost:3001"
 os.environ["CORS_ALLOW_ORIGINS"] = "http://testserver,http://localhost:3001"
 os.environ["RATE_LIMIT_ENABLED"] = "0"
 os.environ["SESSION_IDLE_TIMEOUT_SECONDS"] = "0"  # Disable idle expiry in tests
+# The suite is written against tesseract; on a Mac/Windows dev box with the
+# native OCR bridge installed, auto-selection would pick Vision/WinRT and
+# bypass the ocr_service monkeypatches. Selection tests override per-test.
+os.environ.setdefault("SLOWBOOKS_OCR_ENGINE", "tesseract")
 # Point the app at an in-memory DB by default; fixtures override per-test.
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest  # noqa: E402
+from starlette.requests import HTTPConnection  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
@@ -55,7 +60,9 @@ from app.models import (  # noqa: F401
     estimates,
     hr,
     invoices,
+    in_kind as in_kind_model,
     items,
+    nonprofit as nonprofit_model,
     payments,
     payroll,
     pto,
@@ -165,8 +172,18 @@ def seed_customer(db_session):
 def _wire_app(TestSession):
     """Override app's get_db dependency to use the per-test session factory."""
 
-    def override_get_db():
+    def override_get_db(request: HTTPConnection = None):
         session = TestSession()
+        # Mirror production's attribution stamping so tests exercise the
+        # session.info path (the mechanism that works on frozen Windows),
+        # not just the contextvar fallback.
+        http_session = getattr(request, "session", None) if request else None
+        if isinstance(http_session, dict) and http_session.get("authenticated") is True:
+            session.info["acting_username"] = http_session.get("username") or "operator"
+        elif request is not None:
+            tp = getattr(getattr(request, "state", None), "token_principal", None)
+            if isinstance(tp, dict) and tp.get("username"):
+                session.info["acting_username"] = tp["username"]
         try:
             yield session
         finally:

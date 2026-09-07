@@ -9,6 +9,22 @@ from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
 from app.models.audit import AuditLog
+from app.services.request_context import acting_username
+
+
+def _actor(session) -> str | None:
+    """Who is acting: the Session's own info dict (stamped by get_db —
+    travels with the object, immune to task/context propagation quirks),
+    falling back to the request contextvar for sessions created outside
+    the request cycle."""
+    # Fall back to an explicit "system" principal rather than NULL. A
+    # tamper-evident trail with anonymous rows is weaker than it looks:
+    # NULL is ambiguous between "the system did it" (token last_used_at
+    # stamps, startup writes) and "attribution failed". Naming the machine
+    # principal makes the distinction auditable — a NULL username is now
+    # always a bug, never a normal state.
+    return session.info.get("acting_username") or acting_username.get() or "system"
+
 
 # Tables to skip auditing.
 # audit_log itself must be skipped to prevent infinite recursion (the
@@ -21,9 +37,13 @@ _SKIP_TABLES = {
     "audit_log",  # primary audit table (recursion guard)
     "portal_accesses",  # portal cookie / token claim access log
     "login_attempts",  # admin failed-login tracking
-    "document_audits",  # per-document hash ledger
+    "document_audits",  # hash-chain document audit
     "email_log",  # outbound email send log
 }
+
+# Column values that must never be snapshotted into audit JSON — the users
+# table is audited (who created/changed accounts matters), its hashes are not.
+_REDACT_COLUMNS = {"password_hash"}
 
 
 def _serialize_value(val):
@@ -55,6 +75,9 @@ def _get_instance_dict(instance):
     result = {}
     for col in mapper.columns:
         key = col.key
+        if key in _REDACT_COLUMNS:
+            result[key] = "***"
+            continue
         val = getattr(instance, key, None)
         result[key] = _serialize_value(val)
     return result
@@ -79,6 +102,7 @@ def log_event(
         new_values=new_values,
         changed_fields=changed_fields,
         source=source,
+        username=_actor(db),
     )
     db.add(entry)
 
@@ -105,6 +129,7 @@ def _after_flush(session, flush_context):
                 new_values=new_vals,
                 changed_fields=list(new_vals.keys()),
                 source="api",
+                username=_actor(session),
             )
         )
 
@@ -143,6 +168,7 @@ def _after_flush(session, flush_context):
                     new_values=new_vals,
                     changed_fields=changed,
                     source="api",
+                    username=_actor(session),
                 )
             )
 
@@ -164,6 +190,7 @@ def _after_flush(session, flush_context):
                 new_values=None,
                 changed_fields=None,
                 source="api",
+                username=_actor(session),
             )
         )
 

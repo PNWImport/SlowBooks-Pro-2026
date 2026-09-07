@@ -1,10 +1,9 @@
 # ============================================================================
-# Slowbooks Pro 2026 — Auth routes (Phase 9.7)
+# Slowbooks Pro 2026 — Auth routes
 #
-# Single-operator password flow. No user model — just:
-#   GET  /api/auth/status  → {setup_needed, authenticated}
+#   GET  /api/auth/status  → {setup_needed, authenticated, multi_user, user?}
 #   POST /api/auth/setup   → first-time password set (409 if already set)
-#   POST /api/auth/login   → verify password, issue session cookie
+#   POST /api/auth/login   → password (+ username once 2+ users exist)
 #   POST /api/auth/logout  → clear session
 #
 # These routes are deliberately NOT protected by require_auth — they're
@@ -14,35 +13,24 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import Field
+from app.schemas.common import StrictModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.auth import LoginAttempt
 from app.services.auth import (
-    check_password,
+    authenticate,
+    ensure_admin_user,
+    is_multi_user,
     password_is_set,
     set_password,
 )
 from app.services.rate_limit import limiter
+from app.services.request_utils import client_ip as _client_ip
 from app.services.settings_service import set_setting
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-
-
-def _client_ip(request: Request) -> str:
-    """Best-effort client IP. Honors X-Forwarded-For ONLY when the deployment
-    declares it runs behind a trusted proxy (TRUST_PROXY_HEADERS) — otherwise
-    XFF is client-spoofable and would let an attacker forge the audited IP.
-    Direct deploys fall back to the socket peer."""
-    from app.config import TRUST_PROXY_HEADERS
-
-    fwd = request.headers.get("x-forwarded-for", "") if TRUST_PROXY_HEADERS else ""
-    if fwd:
-        # Take the first hop — that's the client (proxies append to the right).
-        return fwd.split(",")[0].strip()[:45]
-    client = request.client
-    return (client.host if client else "")[:45]
 
 
 def _record_login_attempt(db: Session, request: Request, success: bool) -> None:
@@ -61,11 +49,13 @@ def _record_login_attempt(db: Session, request: Request, success: bool) -> None:
         db.rollback()
 
 
-class PasswordPayload(BaseModel):
+class PasswordPayload(StrictModel):
     password: str = Field(..., min_length=1, max_length=512)
+    # Server Edition: required only when more than one user exists.
+    username: Optional[str] = Field(None, max_length=100)
 
 
-class SetupPayload(BaseModel):
+class SetupPayload(StrictModel):
     """First-run setup. Password is required; everything else is optional and
     falls back to the DEFAULT_SETTINGS values if blank."""
 
@@ -115,10 +105,32 @@ _SETUP_SETTINGS_KEYS = (
 def auth_status(request: Request, db: Session = Depends(get_db)):
     """Tell the SPA whether first-run setup is needed and whether the
     current session is authenticated."""
-    return {
-        "setup_needed": not password_is_set(db),
-        "authenticated": request.session.get("authenticated") is True,
+    authenticated = request.session.get("authenticated") is True
+    setup_needed = not password_is_set(db)
+    out = {
+        "setup_needed": setup_needed,
+        "authenticated": authenticated,
+        # Login UI shows a username field only when this is true.
+        "multi_user": is_multi_user(db),
     }
+    if setup_needed:
+        # First-run setup can be reached on a file that already holds a
+        # company's books (a file copied in, or seeded through the API
+        # before anyone set a password). The form prefills the name the
+        # books already carry and warns, so setup does not silently rename
+        # another company's ledger (2.9.0 gate).
+        from app.models.transactions import Transaction
+        from app.services.settings_service import get_setting_raw
+
+        out["company_name"] = get_setting_raw(db, "company_name") or ""
+        out["has_data"] = db.query(Transaction.id).first() is not None
+    if authenticated and request.session.get("username"):
+        out["user"] = {
+            "username": request.session.get("username"),
+            "display_name": request.session.get("display_name") or "",
+            "role": request.session.get("role") or "admin",
+        }
+    return out
 
 
 @router.post("/setup")
@@ -136,6 +148,25 @@ def setup(
             detail="Password already set — use /login",
         )
 
+    if payload.company_name:
+        from app.services.company_service import (
+            _current_company_file,
+            company_name_taken_by,
+        )
+
+        other = company_name_taken_by(
+            payload.company_name, exclude_file=_current_company_file()
+        )
+        if other:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Another company file ({other}) is already named "
+                    f"'{payload.company_name.strip()}'. Choose a name that "
+                    "tells the two apart."
+                ),
+            )
+
     # Persist any non-blank settings the user provided. set_password() will
     # commit at the end, so all writes land in a single transaction.
     payload_dict = payload.model_dump()
@@ -145,13 +176,31 @@ def setup(
             set_setting(db, key, value)
 
     set_password(db, payload.password)
+    # Materialize the operator as the admin user row right away (Server
+    # Edition principal model) — same password, zero extra questions.
+    admin = ensure_admin_user(db)
+    if payload.company_name:
+        from app.services.company_service import sync_manifest_name
+
+        sync_manifest_name(payload.company_name)
     # Rotate session before issuing — clears anything an attacker might have
     # planted via a fixation attempt. Starlette's signed-cookie session is
     # already fixation-resistant (signature changes with payload) but this
     # is defence in depth and intent-revealing.
     request.session.clear()
     request.session["authenticated"] = True
+    _stash_user(request, admin)
     return {"status": "ok", "authenticated": True}
+
+
+def _stash_user(request: Request, user) -> None:
+    """Record the acting principal in the session (None = legacy no-row)."""
+    if user is None:
+        return
+    request.session["user_id"] = user.id
+    request.session["username"] = user.username
+    request.session["display_name"] = user.display_name
+    request.session["role"] = user.role
 
 
 @router.post("/login")
@@ -173,16 +222,27 @@ def login(
             status_code=status.HTTP_409_CONFLICT,
             detail="Setup required — set a password first",
         )
-    if not check_password(db, payload.password):
+    if is_multi_user(db) and not (payload.username or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username required",
+        )
+    user = authenticate(db, payload.password, username=payload.username)
+    if user is None:
         _record_login_attempt(db, request, success=False)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect password",
+            detail=(
+                "Incorrect username or password"
+                if is_multi_user(db)
+                else "Incorrect password"
+            ),
         )
     _record_login_attempt(db, request, success=True)
     # Same rotation rationale as /setup.
     request.session.clear()
     request.session["authenticated"] = True
+    _stash_user(request, user)
     return {"status": "ok", "authenticated": True}
 
 

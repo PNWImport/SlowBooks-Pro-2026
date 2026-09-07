@@ -52,14 +52,14 @@ def _plan(client, **over):
         "monthly_premium_employer": 450,
     }
     body.update(over)
-    r = client.post("/api/benefits/plans", json=body)
+    r = client.post("/api/benefit-coverage/plans", json=body)
     assert r.status_code == 201, r.text
     return r.json()
 
 
 def _enroll(client, emp_id, plan_id, start="2026-01-01"):
     r = client.post(
-        "/api/benefits/enrollments",
+        "/api/benefit-coverage/enrollments",
         json={"employee_id": emp_id, "plan_id": plan_id, "coverage_start": start},
     )
     assert r.status_code == 201, r.text
@@ -136,10 +136,10 @@ def test_enrollment_list_includes_dependents_inline(client):
     plan = _plan(client)
     enr = _enroll(client, emp["id"], plan["id"])
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/dependents",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/dependents",
         json={"name": "Kid Covered", "relationship_kind": "child"},
     )
-    row = client.get("/api/benefits/enrollments").json()[0]
+    row = client.get("/api/benefit-coverage/enrollments").json()[0]
     assert row["dependents"][0]["name"] == "Kid Covered"
     assert row["dependents"][0]["relationship_kind"] == "child"
 
@@ -183,17 +183,17 @@ def test_cobra_needs_an_ended_medical_enrollment(client, seed_accounts):
     enr = _enroll(client, emp["id"], medical["id"])
 
     # Still open -> refused.
-    r = client.post(f"/api/benefits/enrollments/{enr['id']}/cobra-notice")
+    r = client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice")
     assert r.status_code == 400
     assert "end it first" in r.json()["detail"]
 
     # Ended -> works.
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-07-15"},
     )
     assert (
-        client.post(f"/api/benefits/enrollments/{enr['id']}/cobra-notice").status_code
+        client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice").status_code
         == 200
     )
 
@@ -203,10 +203,10 @@ def test_cobra_is_refused_for_a_non_medical_plan(client, seed_accounts):
     vision = _plan(client, name="Eyes", kind="vision")
     enr = _enroll(client, emp["id"], vision["id"])
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-07-15"},
     )
-    r = client.post(f"/api/benefits/enrollments/{enr['id']}/cobra-notice")
+    r = client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice")
     assert r.status_code == 400
     assert "medical" in r.json()["detail"]
 
@@ -219,7 +219,7 @@ def test_one_open_enrollment_per_plan(client):
     _enroll(client, emp["id"], plan["id"])
 
     dup = client.post(
-        "/api/benefits/enrollments",
+        "/api/benefit-coverage/enrollments",
         json={
             "employee_id": emp["id"],
             "plan_id": plan["id"],
@@ -231,13 +231,13 @@ def test_one_open_enrollment_per_plan(client):
 
     # Ending it frees the slot, proving the NULL check reads the real column
     # rather than always matching.
-    enrollments = client.get("/api/benefits/enrollments").json()
+    enrollments = client.get("/api/benefit-coverage/enrollments").json()
     client.post(
-        f"/api/benefits/enrollments/{enrollments[0]['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enrollments[0]['id']}/end",
         json={"coverage_end": "2026-05-31"},
     )
     again = client.post(
-        "/api/benefits/enrollments",
+        "/api/benefit-coverage/enrollments",
         json={
             "employee_id": emp["id"],
             "plan_id": plan["id"],
@@ -254,7 +254,7 @@ def test_aca_months_narrow_when_coverage_ends_mid_year(client, seed_accounts):
     plan = _plan(client)
     enr = _enroll(client, emp["id"], plan["id"], start="2026-01-01")
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-07-15"},
     )
     data = client.get("/api/tax-forms/1095?year=2026").json()

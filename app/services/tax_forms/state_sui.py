@@ -7,20 +7,12 @@
 # ============================================================================
 
 from datetime import date, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 from sqlalchemy.orm import joinedload
 
 from app.models.payroll import Employee, PayRun, PayStub, PayRunStatus
-
-CENT = Decimal("0.01")
-
-
-def _q(value) -> Decimal:
-    """Coerce to Decimal and quantize to cents."""
-    if not isinstance(value, Decimal):
-        value = Decimal(str(value or 0))
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
+from app.services.accounting import _q
 
 
 def _quarter_bounds(year: int, quarter: int) -> tuple[date, date]:

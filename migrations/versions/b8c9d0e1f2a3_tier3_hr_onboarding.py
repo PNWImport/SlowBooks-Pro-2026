@@ -56,12 +56,18 @@ def upgrade() -> None:
             "role", enum_col("employeerole"), server_default="EMPLOYEE", nullable=True
         ),
     )
-    op.add_column(
-        "employees",
-        sa.Column(
-            "manager_id", sa.Integer(), sa.ForeignKey("employees.id"), nullable=True
-        ),
-    )
+    # Batch mode: an ALTER-added FK constraint isn't possible on SQLite
+    # (native desktop installs) — batch rebuilds the table there; on
+    # PostgreSQL this emits the same ALTER TABLE as a plain add_column.
+    with op.batch_alter_table("employees") as batch_op:
+        batch_op.add_column(
+            sa.Column(
+                "manager_id",
+                sa.Integer(),
+                sa.ForeignKey("employees.id", name="fk_employees_manager"),
+                nullable=True,
+            )
+        )
     op.add_column("employees", sa.Column("portal_token", sa.String(64), nullable=True))
     op.add_column(
         "employees", sa.Column("everify_case_number", sa.String(30), nullable=True)
@@ -71,12 +77,15 @@ def upgrade() -> None:
     )
 
     # -- Attachments: per-employee HR document vault --
-    op.add_column(
-        "attachments",
-        sa.Column(
-            "employee_id", sa.Integer(), sa.ForeignKey("employees.id"), nullable=True
-        ),
-    )
+    with op.batch_alter_table("attachments") as batch_op:
+        batch_op.add_column(
+            sa.Column(
+                "employee_id",
+                sa.Integer(),
+                sa.ForeignKey("employees.id", name="fk_attachments_employee"),
+                nullable=True,
+            )
+        )
     op.add_column(
         "attachments", sa.Column("doc_category", sa.String(50), nullable=True)
     )

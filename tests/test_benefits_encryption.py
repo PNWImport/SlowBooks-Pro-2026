@@ -42,14 +42,14 @@ def _plan(client, **overrides):
         "monthly_premium_employer": 450,
     }
     body.update(overrides)
-    r = client.post("/api/benefits/plans", json=body)
+    r = client.post("/api/benefit-coverage/plans", json=body)
     assert r.status_code == 201, r.text
     return r.json()
 
 
 def _enroll(client, emp_id, plan_id, start="2026-01-01"):
     r = client.post(
-        "/api/benefits/enrollments",
+        "/api/benefit-coverage/enrollments",
         json={"employee_id": emp_id, "plan_id": plan_id, "coverage_start": start},
     )
     assert r.status_code == 201, r.text
@@ -77,7 +77,7 @@ def test_carrier_name_is_ciphertext_in_the_database(client, db_session):
 def test_carrier_name_round_trips_through_the_api(client):
     plan = _plan(client)
     assert plan["carrier_name"] == "Blue Shield of Testland"
-    listed = client.get("/api/benefits/plans").json()
+    listed = client.get("/api/benefit-coverage/plans").json()
     assert listed[0]["carrier_name"] == "Blue Shield of Testland"
 
 
@@ -95,7 +95,7 @@ def test_dependent_identifiers_are_ciphertext(client, db_session):
     plan = _plan(client)
     enr = _enroll(client, emp["id"], plan["id"])
     r = client.post(
-        f"/api/benefits/enrollments/{enr['id']}/dependents",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/dependents",
         json={
             "name": "Wilhelmina Dependent",
             "relationship_kind": "child",
@@ -124,13 +124,13 @@ def test_dependent_identifiers_are_ciphertext(client, db_session):
 
 
 def test_dependent_dob_round_trips_as_a_date(client, db_session):
-    from app.models.benefits import BenefitDependent
+    from app.models.benefit_coverage import BenefitDependent
 
     emp = _create_employee(client)
     plan = _plan(client)
     enr = _enroll(client, emp["id"], plan["id"])
     dep_id = client.post(
-        f"/api/benefits/enrollments/{enr['id']}/dependents",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/dependents",
         json={"name": "Dee Pendant", "dob": "2015-04-02"},
     ).json()["id"]
 
@@ -146,7 +146,7 @@ def test_dependent_name_reaches_the_1095_covered_individuals(client):
     plan = _plan(client, name="Self-Funded", self_insured=True)
     enr = _enroll(client, emp["id"], plan["id"])
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/dependents",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/dependents",
         json={"name": "Kid Worker", "relationship_kind": "child"},
     )
     data = client.get("/api/tax-forms/1095?year=2026").json()
@@ -160,10 +160,10 @@ def test_carrier_name_reaches_the_cobra_notice(client):
     plan = _plan(client)
     enr = _enroll(client, emp["id"], plan["id"])
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-06-30"},
     )
-    r = client.post(f"/api/benefits/enrollments/{enr['id']}/cobra-notice")
+    r = client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice")
     assert r.status_code == 200, r.text
     assert r.content[:5] == b"%PDF-"
 
@@ -180,7 +180,7 @@ def test_rewrap_covers_every_encrypted_column(client, db_session):
     plan = _plan(client)
     enr = _enroll(client, emp["id"], plan["id"])
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/dependents",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/dependents",
         json={"name": "Rota Ted", "ssn_last_four": "1111", "dob": "2010-01-01"},
     )
     r = client.post(
@@ -208,7 +208,7 @@ def test_rewrap_reencrypts_benefit_columns_after_rotation(
     plan = _plan(client)
     enr = _enroll(client, emp["id"], plan["id"])
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/dependents",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/dependents",
         json={"name": "Rolled Over", "ssn_last_four": "2222"},
     )
     original = _raw(db_session, "benefit_plans", "carrier_name", plan["id"])
@@ -226,7 +226,7 @@ def test_rewrap_reencrypts_benefit_columns_after_rotation(
     assert rewrapped != original, "ciphertext unchanged — rewrap did nothing"
 
     db_session.expire_all()
-    from app.models.benefits import BenefitDependent, BenefitPlan
+    from app.models.benefit_coverage import BenefitDependent, BenefitPlan
 
     assert (
         db_session.query(BenefitPlan).filter_by(id=plan["id"]).first().carrier_name
@@ -239,7 +239,7 @@ def test_rewrap_reencrypts_benefit_columns_after_rotation(
 
 def test_undecryptable_value_returns_none_not_an_exception(client, db_session):
     """One unreadable row must not take down a whole ACA or payroll run."""
-    from app.models.benefits import BenefitPlan
+    from app.models.benefit_coverage import BenefitPlan
 
     plan = _plan(client)
     db_session.execute(
@@ -256,7 +256,7 @@ def test_undecryptable_value_returns_none_not_an_exception(client, db_session):
 @pytest.mark.parametrize("column", ["name", "ssn_last_four", "dob"])
 def test_dependent_columns_are_wide_enough_for_ciphertext(column):
     """Fernet output is ~100-200 chars; a 4-char column would truncate."""
-    from app.models.benefits import BenefitDependent
+    from app.models.benefit_coverage import BenefitDependent
 
     length = BenefitDependent.__table__.columns[column].type.length
     assert length >= 255, f"{column} is only {length} chars wide"

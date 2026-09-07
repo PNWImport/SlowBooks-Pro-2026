@@ -11,21 +11,16 @@
 # this for actual payroll.
 # ============================================================================
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
-CENT = Decimal("0.01")
+from app.services.accounting import _q
+
 WEEKLY_THRESHOLD = Decimal("40")
 DAILY_OT_THRESHOLD = Decimal("8")
 DAILY_DT_THRESHOLD = Decimal("12")
 
 # States with a daily overtime rule (over 8/day OT, over 12/day DT).
 _DAILY_RULE_STATES = {"CA", "AK", "NV", "CO"}
-
-
-def _q(value) -> Decimal:
-    if not isinstance(value, Decimal):
-        value = Decimal(str(value))
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 def _zero_result() -> dict:

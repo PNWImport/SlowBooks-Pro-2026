@@ -17,7 +17,7 @@
 
 from datetime import date, timedelta
 
-from app.models.benefits import (
+from app.models.benefit_coverage import (
     BenefitEnrollment,
     BenefitKind,
     BenefitPlan,

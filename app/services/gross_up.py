@@ -11,16 +11,10 @@
 # this module pure and trivial to unit-test.
 # ============================================================================
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from typing import Callable
 
-CENT = Decimal("0.01")
-
-
-def _q(value) -> Decimal:
-    if not isinstance(value, Decimal):
-        value = Decimal(str(value))
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
+from app.services.accounting import _q
 
 
 def _as_decimal(value) -> Decimal:

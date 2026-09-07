@@ -1,9 +1,5 @@
 # ============================================================================
-# Decompiled from qbw32.exe!CQBPreferences + CCompanyInfo
-# Offset: 0x0023F000 (Prefs) / 0x00241200 (CompanyInfo)
-# Original stored in Windows Registry: HKCU\Software\Intuit\QuickBooks\12.0
-# and in the .QBW file header (first 512 bytes, encrypted with XOR 0x1F).
-# We moved everything to .env because it's 2026 and registry is not a config.
+# App configuration — everything comes from .env / environment variables.
 # ============================================================================
 
 import os
@@ -12,7 +8,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
+# Desktop installs keep .env in the per-user data area (the install dir is
+# read-only); the launcher passes its location via SLOWBOOKS_ENV_FILE.
+load_dotenv(os.getenv("SLOWBOOKS_ENV_FILE") or BASE_DIR / ".env")
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://bookkeeper:bookkeeper@localhost:5432/bookkeeper"
@@ -93,24 +91,17 @@ AUDIT_CHECKPOINT_SIGNING_SECRET = os.getenv(
 AUDIT_CHECKPOINT_SIGNING_SECRET_PREV = os.getenv(
     "AUDIT_CHECKPOINT_SIGNING_SECRET_PREV", ""
 ).strip()
-# Label stored alongside each signature so an auditor knows which key to use.
 AUDIT_CHECKPOINT_KEY_ID = os.getenv("AUDIT_CHECKPOINT_KEY_ID", "primary").strip()
 
 # Employer identifiers and rates used by payroll tax forms / state engines.
 EMPLOYER_EIN = os.getenv("EMPLOYER_EIN", "")
 EMPLOYER_STATE = os.getenv("EMPLOYER_STATE", "WA")
 # State unemployment (SUTA) experience rate as a decimal, e.g. 0.012 for 1.2%.
-# This is the rate for the employer's home state (EMPLOYER_STATE above).
 SUTA_RATE = float(os.getenv("SUTA_RATE", "0.012"))
 
 
 def _parse_state_rates(raw: str) -> dict:
-    """Parse a "WA:0.012,OR:0.021" rate list into {state: rate}.
-
-    Malformed pairs are skipped rather than raising: a typo in an environment
-    variable should not stop the application from booting, and the per-state
-    resolver already falls back to the state's new-employer rate.
-    """
+    """Parse a "WA:0.012,OR:0.021" rate list into {state: rate}."""
     rates: dict[str, float] = {}
     for pair in (raw or "").split(","):
         pair = pair.strip()
@@ -127,26 +118,11 @@ def _parse_state_rates(raw: str) -> dict:
     return rates
 
 
-# Per-state SUTA experience rates for multi-state employers, as a
-# comma-separated "ST:rate" list — e.g. SUTA_RATE_BY_STATE="WA:0.0121,OR:0.024".
-# States assign each employer its own experience rate, so applying one rate
-# across every state (which a single SUTA_RATE does) is wrong the moment you
-# hire outside your home state. Unlisted states fall back to the state's
-# new-employer rate from its tax table, then to SUTA_RATE.
 SUTA_RATE_BY_STATE = _parse_state_rates(os.getenv("SUTA_RATE_BY_STATE", ""))
 
-# Minimum-wage floors for tipped-employee top-up math. Federal defaults;
-# set your state/city floor when it is higher — the top-up guarantee uses
-# MINIMUM_WAGE, and the FICA tip credit (Form 8846) is statutorily pinned
-# to the 2007 federal minimum of $5.15 regardless of these.
 MINIMUM_WAGE = float(os.getenv("MINIMUM_WAGE", "7.25"))
 TIPPED_MINIMUM_WAGE = float(os.getenv("TIPPED_MINIMUM_WAGE", "2.13"))
 
-# When true, a state tax table whose `verified` flag is still false withholds
-# NO state income tax and labels the omission on the pay stub, instead of
-# withholding an amount nobody has reviewed. Off by default — an approximate
-# withholding is usually closer than zero — but operators running live payroll
-# may prefer to fail loud. See app/services/state_tax/table_engine.py.
 PAYROLL_STRICT_TAX_TABLES = os.getenv("PAYROLL_STRICT_TAX_TABLES", "").lower() in (
     "1",
     "true",

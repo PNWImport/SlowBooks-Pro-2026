@@ -35,8 +35,8 @@ const LocationsPage = {
         }
         let html = `<div class="table-container"><table>
             <thead><tr>
-                <th>Name</th><th>State</th><th>City</th>
-                <th>Locality</th><th>WC Class</th><th>Status</th><th>Actions</th>
+                <th scope="col">Name</th><th scope="col">State</th><th scope="col">City</th>
+                <th scope="col">Locality</th><th scope="col">WC Class</th><th scope="col">Status</th><th scope="col">Actions</th>
             </tr></thead><tbody>`;
         for (const loc of locations) {
             html += `<tr>
@@ -211,7 +211,7 @@ const LocationsPage = {
                 html += '<p style="color:var(--text-muted); font-size:11px;">No employees assigned.</p>';
             } else {
                 html += `<div class="table-container"><table>
-                    <thead><tr><th>Name</th><th>Status</th></tr></thead><tbody>`;
+                    <thead><tr><th scope="col">Name</th><th scope="col">Status</th></tr></thead><tbody>`;
                 for (const e of employees) {
                     html += `<tr>
                         <td>${escapeHtml(e.name)}</td>

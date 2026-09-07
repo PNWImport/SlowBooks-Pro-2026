@@ -6,27 +6,18 @@
 # ============================================================================
 
 from datetime import date, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 from sqlalchemy.orm import joinedload
 
 from app.models.payroll import PayRun, PayStub, PayRunStatus
-from app.services.pdf_service import _jinja_env, _safe_url_fetcher
-from weasyprint import HTML
-
-CENT = Decimal("0.01")
+from app.services.accounting import _q
+from app.services.pdf_service import _jinja_env, render_pdf
 
 # 941 combines the employee + employer FICA share into a single line and
 # expresses it as a rate applied to wages: 12.4% Social Security, 2.9% Medicare.
 SS_COMBINED_RATE = Decimal("0.124")
 MEDICARE_COMBINED_RATE = Decimal("0.029")
-
-
-def _q(value) -> Decimal:
-    """Coerce to Decimal and quantize to cents."""
-    if not isinstance(value, Decimal):
-        value = Decimal(str(value or 0))
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 def _quarter_bounds(year: int, quarter: int) -> tuple[date, date]:
@@ -121,4 +112,4 @@ def generate_941_pdf(
     data = compute_941(db, year, quarter)
     template = _jinja_env.get_template("form_941.html")
     html_str = template.render(data=data, company=company or {}, audit=audit or {})
-    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    return render_pdf(html_str)

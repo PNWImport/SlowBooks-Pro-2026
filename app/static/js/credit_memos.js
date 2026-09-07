@@ -5,20 +5,14 @@
 const CreditMemosPage = {
     async render() {
         const memos = await API.get('/credit-memos');
-        let html = `
-            <div class="page-header">
-                <h2>Credit Memos</h2>
-                <button class="btn btn-primary" onclick="CreditMemosPage.showForm()">+ New Credit Memo</button>
-            </div>`;
-
-        if (memos.length === 0) {
-            html += '<div class="empty-state"><p>No credit memos yet</p></div>';
-        } else {
-            html += `<div class="table-container"><table>
-                <thead><tr><th>#</th><th>Customer</th><th>Date</th><th>Status</th>
-                <th class="amount">Total</th><th class="amount">Remaining</th><th>Actions</th></tr></thead><tbody>`;
-            for (const m of memos) {
-                html += `<tr>
+        return renderListPage({
+            title: 'Credit Memos',
+            headerHtml: `<button class="btn btn-primary" onclick="CreditMemosPage.showForm()">+ New Credit Memo</button>`,
+            empty: '<p>No credit memos yet</p>',
+            columns: ['#', T('Customer'), 'Date', 'Status',
+                { label: 'Total', cls: 'amount' }, { label: 'Remaining', cls: 'amount' }, 'Actions'],
+            items: memos,
+            row: m => `<tr>
                     <td><strong>${escapeHtml(m.memo_number)}</strong></td>
                     <td>${escapeHtml(m.customer_name || '')}</td>
                     <td>${formatDate(m.date)}</td>
@@ -27,12 +21,19 @@ const CreditMemosPage = {
                     <td class="amount">${formatCurrency(m.balance_remaining)}</td>
                     <td class="actions">
                         ${m.status === 'issued' ? `<button class="btn btn-sm btn-primary" onclick="CreditMemosPage.showApply(${m.id})">Apply</button>` : ''}
+                        ${m.status !== 'void' ? `<button class="btn btn-sm btn-secondary" onclick="CreditMemosPage.void(${m.id})">Void</button>` : ''}
                     </td>
-                </tr>`;
-            }
-            html += '</tbody></table></div>';
-        }
-        return html;
+                </tr>`,
+        });
+    },
+
+    async void(id) {
+        if (!confirm('Void this credit memo? Any applied credit goes back onto the invoice and a reversing entry is posted.')) return;
+        try {
+            await API.post(`/credit-memos/${id}/void`, {});
+            toast('Credit memo voided');
+            App.navigate('#/credit-memos');
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     _items: [],
@@ -45,6 +46,7 @@ const CreditMemosPage = {
         ]);
         CreditMemosPage._items = items;
         CreditMemosPage.lineCount = 1;
+        const classGroup = await classFormGroupHtml();
 
         const custOpts = customers.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
         const itemOpts = items.map(i => `<option value="${i.id}">${escapeHtml(i.name)}</option>`).join('');
@@ -52,16 +54,17 @@ const CreditMemosPage = {
         openModal('New Credit Memo', `
             <form onsubmit="CreditMemosPage.save(event)">
                 <div class="form-grid">
-                    <div class="form-group"><label>Customer *</label>
+                    <div class="form-group"><label>${T('Customer')} *</label>
                         <select name="customer_id" required><option value="">Select...</option>${custOpts}</select></div>
                     <div class="form-group"><label>Date *</label>
                         <input name="date" type="date" required value="${todayISO()}"></div>
                     <div class="form-group"><label>Tax Rate (%)</label>
                         <input name="tax_rate" type="number" step="0.01" value="0"></div>
+                    ${classGroup}
                 </div>
                 <h3 style="margin:12px 0 8px;font-size:14px;">Credit Lines</h3>
                 <table class="line-items-table">
-                    <thead><tr><th>Item</th><th>Description</th><th class="col-qty">Qty</th><th class="col-rate">Rate</th></tr></thead>
+                    <thead><tr><th scope="col">Item</th><th scope="col">Description</th><th scope="col" class="col-qty">Qty</th><th scope="col" class="col-rate">Rate</th></tr></thead>
                     <tbody id="cm-lines">
                         <tr data-cmline="0">
                             <td><select class="line-item"><option value="">--</option>${itemOpts}</select></td>
@@ -112,6 +115,7 @@ const CreditMemosPage = {
                 date: form.date.value,
                 tax_rate: (parseFloat(form.tax_rate.value) || 0) / 100,
                 notes: form.notes.value || null,
+                class_id: classIdFromForm(form),
                 lines,
             });
             toast('Credit memo created');
@@ -136,7 +140,7 @@ const CreditMemosPage = {
         openModal(`Apply Credit ${cm.memo_number}`, `
             <p style="margin-bottom:8px;">Credit remaining: <strong>${formatCurrency(cm.balance_remaining)}</strong></p>
             <div class="table-container"><table>
-                <thead><tr><th>Invoice</th><th class="amount">Balance</th><th class="amount">Apply</th></tr></thead>
+                <thead><tr><th scope="col">${T('Invoice')}</th><th scope="col" class="amount">Balance</th><th scope="col" class="amount">Apply</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table></div>
             <div class="form-actions">

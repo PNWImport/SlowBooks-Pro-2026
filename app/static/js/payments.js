@@ -1,10 +1,6 @@
 /**
- * Decompiled from QBW32.EXE!CReceivePaymentsView  Offset: 0x001A4200
- * The payment allocation grid in the original was a custom MFC control
- * called CQBPaymentGrid that would auto-fill oldest invoices first when
- * you typed a payment amount (FIFO allocation via CQBAllocList::AutoApply
- * at 0x001A2800). We kept the manual allocation approach because the auto
- * version had a known bug with credit memos that Intuit never fixed.
+ * Receive Payments — manual allocation across open invoices (we
+ * skipped QB's "auto-apply oldest first" behavior on purpose).
  */
 const PaymentsPage = {
     async render() {
@@ -23,8 +19,8 @@ const PaymentsPage = {
         } else {
             html += `<div class="table-container"><table>
                 <thead><tr>
-                    <th>Date</th><th>Customer</th><th>Method</th><th>Reference</th>
-                    <th class="amount">Amount</th><th>Actions</th>
+                    <th scope="col">Date</th><th scope="col">${T('Customer')}</th><th scope="col">Method</th><th scope="col">Reference</th>
+                    <th scope="col" class="amount">Amount</th><th scope="col">Actions</th>
                 </tr></thead><tbody>`;
             for (const p of payments) {
                 html += `<tr>
@@ -45,11 +41,17 @@ const PaymentsPage = {
 
     async view(id) {
         const p = await API.get(`/payments/${id}`);
+        // Nonprofit: a pledge payment or an unapplied gift gets a letter; a
+        // receipt's own payment does not (the receipt is acknowledged).
+        let ack = null;
+        if (Terms.isNonprofit() && !p.is_voided) {
+            try { ack = await API.get(`/donors/gifts/payment/${id}/acknowledgment/preview`); } catch (e) { ack = null; }
+        }
         let allocHtml = '';
         if (p.allocations.length) {
-            allocHtml = `<h4 style="margin:12px 0 8px;">Applied to Invoices</h4>
+            allocHtml = `<h4 style="margin:12px 0 8px;">Applied to ${T('Invoices')}</h4>
                 <div class="table-container"><table><thead><tr>
-                <th>Invoice</th><th class="amount">Amount</th></tr></thead><tbody>`;
+                <th scope="col">${T('Invoice')}</th><th scope="col" class="amount">Amount</th></tr></thead><tbody>`;
             for (const a of p.allocations) {
                 allocHtml += `<tr><td>#${a.invoice_id}</td><td class="amount">${formatCurrency(a.amount)}</td></tr>`;
             }
@@ -58,7 +60,7 @@ const PaymentsPage = {
 
         openModal('Payment Details', `
             <div style="margin-bottom:12px;">
-                <strong>Customer:</strong> ${escapeHtml(p.customer_name || '')}<br>
+                <strong>${T('Customer')}:</strong> ${escapeHtml(p.customer_name || '')}<br>
                 <strong>Date:</strong> ${formatDate(p.date)}<br>
                 <strong>Amount:</strong> ${formatCurrency(p.amount)}<br>
                 <strong>Method:</strong> ${escapeHtml(p.method || 'N/A')}<br>
@@ -69,6 +71,8 @@ const PaymentsPage = {
             ${allocHtml}
             ${p.is_voided ? '<div style="color:var(--danger);font-weight:700;margin:12px 0;">This payment has been voided.</div>' : ''}
             <div class="form-actions">
+                ${ack && ack.eligible ? `<button class="btn btn-secondary" onclick="window.open('/api/donors/gifts/payment/${p.id}/acknowledgment/pdf','_blank')">Acknowledgment (PDF)</button>
+                <button class="btn btn-secondary" onclick="Donors.emailAcknowledgment('payment', ${p.id})">Email Acknowledgment</button>` : ''}
                 ${!p.is_voided ? `<button class="btn btn-danger" onclick="PaymentsPage.void(${p.id})">Void Payment</button>` : ''}
                 ${p.method === 'Check' && p.check_number && !p.is_voided ? `<button class="btn btn-secondary" onclick="window.open('/api/checks/print?payment_id=${p.id}','_blank')">Print Check</button>` : ''}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
@@ -76,7 +80,7 @@ const PaymentsPage = {
     },
 
     async void(id) {
-        if (!confirm('Void this payment? Invoice balances will be restored.')) return;
+        if (!confirm(`Void this payment? ${T('Invoice')} balances will be restored.`)) return;
         try {
             await API.post(`/payments/${id}/void`);
             toast('Payment voided');
@@ -100,7 +104,7 @@ const PaymentsPage = {
         openModal('Record Payment', `
             <form id="payment-form" onsubmit="PaymentsPage.save(event)">
                 <div class="form-grid">
-                    <div class="form-group"><label>Customer *</label>
+                    <div class="form-group"><label>${T('Customer')} *</label>
                         <select name="customer_id" required onchange="PaymentsPage.loadInvoices(this.value)">
                             <option value="">Select...</option>${custOpts}</select></div>
                     <div class="form-group"><label>Date *</label>
@@ -146,9 +150,9 @@ const PaymentsPage = {
             return;
         }
 
-        let html = `<h4 style="margin-bottom:8px;">Apply to Invoices</h4>
+        let html = `<h4 style="margin-bottom:8px;">Apply to ${T('Invoices')}</h4>
             <div class="table-container"><table><thead><tr>
-            <th>Invoice</th><th>Date</th><th class="amount">Balance</th><th class="amount">Apply</th>
+            <th scope="col">${T('Invoice')}</th><th scope="col">Date</th><th scope="col" class="amount">Balance</th><th scope="col" class="amount">Apply</th>
             </tr></thead><tbody>`;
         for (const inv of PaymentsPage._invoices) {
             html += `<tr>
@@ -252,3 +256,7 @@ const PaymentsPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 };
+
+// Top-level const creates no window property — the topbar's
+// data-action dispatch (bootstrap.js callByPath) needs this export.
+window.PaymentsPage = PaymentsPage;

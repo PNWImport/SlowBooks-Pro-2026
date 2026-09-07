@@ -1,9 +1,7 @@
 /**
- * Decompiled from QBW32.EXE!CPreferencesDialog  Offset: 0x0023F800
- * Original: tabbed dialog (IDD_PREFERENCES) with 12 tabs. We condensed
- * everything into a single page because nobody needs 12 tabs for
- * company name and tax rate. The registry writes at 0x00240200 are now
- * PostgreSQL INSERTs. Progress.
+ * Settings — QuickBooks 2003 had a 12-tab preferences dialog; we
+ * condensed everything into a single page because nobody needs 12 tabs
+ * for company name and tax rate.
  */
 const SettingsPage = {
     async render() {
@@ -12,14 +10,19 @@ const SettingsPage = {
             SettingsPage.loadBackups();
             SettingsPage.loadEmailTemplates();
             SettingsPage.loadAiConfig();
+            SettingsPage.loadClasses();
+            SettingsPage.loadCostCodes();
+            SettingsPage.loadCostTypes();
+            SettingsPage.loadEquipment();
+            SettingsPage.loadUsers();
+            SettingsPage.loadApiTokens();
+            SettingsPage.loadOcrStatus();
+            SettingsPage.loadOcrEnginePref();
             SettingsPage.scrollToFocus();
         }, 0);
         return `
             <div class="page-header">
                 <h2>Company Settings</h2>
-                <div style="font-size:10px; color:var(--text-muted);">
-                    CPreferencesDialog — IDD_PREFERENCES @ 0x0023F800
-                </div>
             </div>
             <form id="settings-form" onsubmit="SettingsPage.save(event)">
                 <div class="settings-section">
@@ -45,6 +48,13 @@ const SettingsPage = {
                             <input name="company_website" value="${escapeHtml(s.company_website || '')}"></div>
                         <div class="form-group"><label>Tax ID / EIN</label>
                             <input name="company_tax_id" value="${escapeHtml(s.company_tax_id || '')}"></div>
+                        <div class="form-group full-width"><label for="company-type">Company Type</label>
+                            <select id="company-type" name="company_type" onchange="SettingsPage.changeCompanyType(this)">
+                                <option value="business" ${s.company_type !== 'nonprofit' ? 'selected' : ''}>Business</option>
+                                <option value="nonprofit" ${s.company_type === 'nonprofit' ? 'selected' : ''}>Nonprofit</option>
+                            </select>
+                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">Nonprofit shows donors, pledges, donations and funds in place of customers, invoices, sales receipts and classes, and adds the net-asset accounts and statements. Your data does not change; switch back any time.</div>
+                        </div>
                     </div>
                 </div>
 
@@ -60,7 +70,7 @@ const SettingsPage = {
                 </div>
 
                 <div class="settings-section">
-                    <h3>Invoice Defaults</h3>
+                    <h3>${T('Invoice')} Defaults</h3>
                     <div class="form-grid">
                         <div class="form-group"><label>Default Terms</label>
                             <select name="default_terms">
@@ -69,18 +79,23 @@ const SettingsPage = {
                             </select></div>
                         <div class="form-group"><label>Default Tax Rate (%)</label>
                             <input name="default_tax_rate" type="number" step="0.01" value="${s.default_tax_rate || '0.0'}"></div>
-                        <div class="form-group"><label>Invoice Prefix</label>
+                        <div class="form-group"><label>${`${T('Invoice')} Prefix`}</label>
                             <input name="invoice_prefix" value="${escapeHtml(s.invoice_prefix || '')}" placeholder="e.g. INV-"></div>
-                        <div class="form-group"><label>Next Invoice #</label>
+                        <div class="form-group"><label>${`Next ${T('Invoice')} #`}</label>
                             <input name="invoice_next_number" value="${escapeHtml(s.invoice_next_number || '1001')}"></div>
                         <div class="form-group"><label>Estimate Prefix</label>
                             <input name="estimate_prefix" value="${escapeHtml(s.estimate_prefix || '')}" placeholder="e.g. E-"></div>
                         <div class="form-group"><label>Next Estimate #</label>
                             <input name="estimate_next_number" value="${escapeHtml(s.estimate_next_number || '1001')}"></div>
-                        <div class="form-group full-width"><label>Default Invoice Notes</label>
+                        <div class="form-group full-width"><label>${`Default ${T('Invoice')} Notes`}</label>
                             <textarea name="invoice_notes">${escapeHtml(s.invoice_notes || '')}</textarea></div>
-                        <div class="form-group full-width"><label>Invoice Footer</label>
+                        <div class="form-group full-width"><label>${`${T('Invoice')} Footer`}</label>
                             <input name="invoice_footer" value="${escapeHtml(s.invoice_footer || '')}"></div>
+                        <div class="form-group"><label>Report PDF Paper Size</label>
+                            <select name="pdf_paper_size">
+                                <option value="letter" ${s.pdf_paper_size !== 'a4' ? 'selected' : ''}>US Letter</option>
+                                <option value="a4" ${s.pdf_paper_size === 'a4' ? 'selected' : ''}>A4</option>
+                            </select></div>
                     </div>
                 </div>
 
@@ -127,12 +142,14 @@ const SettingsPage = {
                 </div>
 
                 <div class="settings-section">
-                    <h3>Online Payments (Stripe)</h3>
+                    <h3>Online Payments</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
-                        Accept online payments via Stripe Checkout. Customers can pay invoices directly from emailed links.
+                        Accept online payments on emailed invoice links. Enable any combination of
+                        providers — the customer pay page shows one button per enabled provider.
                     </div>
+                    <h4 style="margin:8px 0 4px; font-size:12px;">Stripe</h4>
                     <div class="form-grid">
-                        <div class="form-group"><label>Enable Online Payments</label>
+                        <div class="form-group"><label>Stripe Payments</label>
                             <select name="stripe_enabled">
                                 <option value="false" ${s.stripe_enabled !== 'true' ? 'selected' : ''}>Disabled</option>
                                 <option value="true" ${s.stripe_enabled === 'true' ? 'selected' : ''}>Enabled</option>
@@ -143,6 +160,48 @@ const SettingsPage = {
                             <input name="stripe_secret_key" type="password" value="${escapeHtml(s.stripe_secret_key || '')}" placeholder="sk_..."></div>
                         <div class="form-group"><label>Webhook Secret</label>
                             <input name="stripe_webhook_secret" type="password" value="${escapeHtml(s.stripe_webhook_secret || '')}" placeholder="whsec_..."></div>
+                    </div>
+                    <h4 style="margin:12px 0 4px; font-size:12px;">PayPal</h4>
+                    <div class="form-grid">
+                        <div class="form-group"><label>PayPal Payments</label>
+                            <select name="paypal_enabled">
+                                <option value="false" ${s.paypal_enabled !== 'true' ? 'selected' : ''}>Disabled</option>
+                                <option value="true" ${s.paypal_enabled === 'true' ? 'selected' : ''}>Enabled</option>
+                            </select></div>
+                        <div class="form-group"><label>Environment</label>
+                            <select name="paypal_environment">
+                                <option value="sandbox" ${s.paypal_environment !== 'live' ? 'selected' : ''}>Sandbox</option>
+                                <option value="live" ${s.paypal_environment === 'live' ? 'selected' : ''}>Live</option>
+                            </select></div>
+                        <div class="form-group"><label>Client ID</label>
+                            <input name="paypal_client_id" value="${escapeHtml(s.paypal_client_id || '')}"></div>
+                        <div class="form-group"><label>Client Secret</label>
+                            <input name="paypal_client_secret" type="password" value="${escapeHtml(s.paypal_client_secret || '')}"></div>
+                        <div class="form-group"><label>Webhook ID</label>
+                            <input name="paypal_webhook_id" value="${escapeHtml(s.paypal_webhook_id || '')}"
+                                placeholder="From the PayPal developer dashboard"></div>
+                    </div>
+                    <h4 style="margin:12px 0 4px; font-size:12px;">Square</h4>
+                    <div class="form-grid">
+                        <div class="form-group"><label>Square Payments</label>
+                            <select name="square_enabled">
+                                <option value="false" ${s.square_enabled !== 'true' ? 'selected' : ''}>Disabled</option>
+                                <option value="true" ${s.square_enabled === 'true' ? 'selected' : ''}>Enabled</option>
+                            </select></div>
+                        <div class="form-group"><label>Environment</label>
+                            <select name="square_environment">
+                                <option value="sandbox" ${s.square_environment !== 'production' ? 'selected' : ''}>Sandbox</option>
+                                <option value="production" ${s.square_environment === 'production' ? 'selected' : ''}>Production</option>
+                            </select></div>
+                        <div class="form-group"><label>Access Token</label>
+                            <input name="square_access_token" type="password" value="${escapeHtml(s.square_access_token || '')}"></div>
+                        <div class="form-group"><label>Location ID</label>
+                            <input name="square_location_id" value="${escapeHtml(s.square_location_id || '')}"></div>
+                        <div class="form-group"><label>Webhook Signature Key</label>
+                            <input name="square_webhook_signature_key" type="password" value="${escapeHtml(s.square_webhook_signature_key || '')}"></div>
+                        <div class="form-group"><label>Webhook Notification URL</label>
+                            <input name="square_notification_url" value="${escapeHtml(s.square_notification_url || '')}"
+                                placeholder="Exact URL registered in the Square dashboard"></div>
                     </div>
                 </div>
 
@@ -185,6 +244,32 @@ const SettingsPage = {
                     </div>
                 </div>
 
+                <div class="settings-section" id="settings-ocr">
+                    <h3>Receipt Scanning</h3>
+                    <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
+                        ${Terms.text('Local OCR for the Scan Receipt button on the Enter Sales Receipt and Enter Bill forms.')}
+                        Everything runs on this computer — no cloud, no data leaves the machine.
+                        The desktop app ships with a built-in engine (Windows OCR / Apple Vision), so scanning
+                        works out of the box; Tesseract is an optional extra engine you can install yourself.
+                    </div>
+                    <div id="ocr-status" style="font-size:12px;">Checking…</div>
+                    <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
+                        <label for="ocr-engine-pref" style="font-size:11px;">OCR engine:</label>
+                        <select id="ocr-engine-pref" style="font-size:11px;"
+                            onchange="SettingsPage.saveOcrEngine(this.value)">
+                            <option value="auto">Automatic (recommended) — built-in engine first</option>
+                            <option value="tesseract">Prefer Tesseract (if installed)</option>
+                        </select>
+                    </div>
+                    <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">
+                        Optional: Tesseract can sharpen box re-reads on faded receipts. Install it with
+                        <code>sudo apt-get install tesseract-ocr</code> (Ubuntu),
+                        <code>brew install tesseract</code> (macOS), or the
+                        UB&nbsp;Mannheim build from
+                        <code>github.com/UB-Mannheim/tesseract</code> (Windows), then choose it here.
+                    </div>
+                </div>
+
                 <div class="settings-section">
                     <h3>Late Fees</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
@@ -207,12 +292,83 @@ const SettingsPage = {
                     <h3>Email Templates</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         Customize email templates for invoices, payment receipts, and collection notices.
-                        Templates use Jinja2 syntax. Available variables: {{ invoice }}, {{ customer_name }}, {{ company }}, {{ pay_url }}.
+                        Templates use Jinja2 syntax. Available variables: {{ invoice }}, {{ customer_name }}, {{ company }}, {{ pay_url }}. The donation acknowledgment letter (nonprofit) also gets {{ donor }}, {{ donor_name }}, {{ gift }} and {{ irs.text }}.
                     </div>
                     <div style="display:flex; gap:8px; margin-bottom:12px;">
                         <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.seedTemplates()">Seed Default Templates</button>
                     </div>
                     <div id="email-template-list"></div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>${T('Classes')}</h3>
+                    <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
+                        Track income and expenses by department, location, or line of
+                        business. ${T('Classes')} appear on entry forms and the ${T('P&L by Class')} report.
+                    </div>
+                    <div style="display:flex; gap:8px; margin-bottom:12px;">
+                        <input type="text" id="new-class-name" placeholder="New ${T('class')} name" style="width:220px;">
+                        <button type="button" class="btn btn-primary" onclick="SettingsPage.addClass()">Add ${T('Class')}</button>
+                    </div>
+                    <div id="classes-list"></div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Cost Types</h3>
+                    <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
+                        How job costs roll up: labor, material, subcontract, equipment, other — add your own
+                        (permits, bonding, warranty…). A labor-type carries a burden % (employer taxes, benefits,
+                        insurance) posted as its own line. The cost account is where a job-cost line lands when its
+                        code has none; the offset accounts are the credit side of job cost entries (payroll clearing,
+                        applied equipment, applied overhead).
+                    </div>
+                    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+                        <input type="text" id="new-ct-code" placeholder="Code (e.g. permits)" style="width:150px;">
+                        <input type="text" id="new-ct-name" placeholder="Name" style="width:200px;">
+                        <label style="font-weight:normal;font-size:11px;"><input type="checkbox" id="new-ct-labor"> labor-type (burden applies)</label>
+                        <button type="button" class="btn btn-primary" onclick="SettingsPage.addCostType()">Add Cost Type</button>
+                        <button type="button" class="btn btn-secondary" onclick="SettingsPage.setupOffsets()" title="Creates Applied Labor Cost, Applied Labor Burden, Applied Equipment Cost and Applied Overhead if missing, points each cost type at the matching COGS account (Materials, Labor, Subcontractor) and fills in any blank accounts">Create default offset accounts</button>
+                    </div>
+                    <div id="cost-types-list"></div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Cost Codes</h3>
+                    <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
+                        ${Terms.text('The job-costing chart: which part of a job a cost belongs to')}
+                        ("03 Concrete", "26 Electrical"), independent of the account it posts
+                        to. Picked per line on bills, expenses, purchase orders and journal
+                        entries; ${Terms.text('the Job detail rolls costs up by code and cost type.')}
+                    </div>
+                    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+                        <input type="text" id="new-cc-code" placeholder="Code" style="width:90px;">
+                        <input type="text" id="new-cc-name" placeholder="Name" style="width:220px;">
+                        <select id="new-cc-type">
+                            <option value="labor">Labor</option><option value="material">Material</option>
+                            <option value="subcontract">Subcontract</option><option value="equipment">Equipment</option>
+                            <option value="other" selected>Other</option>
+                        </select>
+                        <select id="new-cc-parent"><option value="">(top level)</option></select>
+                        <button type="button" class="btn btn-primary" onclick="SettingsPage.addCostCode()">Add Cost Code</button>
+                        <button type="button" class="btn btn-secondary" onclick="SettingsPage.loadStandardCostCodes()" title="CSI MasterFormat divisions + Labor + Equipment Rental">Load standard list</button>
+                        <button type="button" class="btn btn-secondary" onclick="SettingsPage.showCostCodeImport()">Import CSV</button>
+                    </div>
+                    <div id="cost-codes-list"></div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Equipment</h3>
+                    <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
+                        ${Terms.text('Owned machines charged to jobs by the hour from a Job Cost Entry.')} The recovery account is
+                        the credit side (defaults to the equipment cost type's offset).
+                    </div>
+                    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+                        <input type="text" id="new-eq-code" placeholder="Code" style="width:90px;">
+                        <input type="text" id="new-eq-name" placeholder="Name (Skid steer, F-250…)" style="width:220px;">
+                        <input type="number" step="0.01" id="new-eq-rate" placeholder="$/hr" style="width:90px;">
+                        <button type="button" class="btn btn-primary" onclick="SettingsPage.addEquipment()">Add Equipment</button>
+                    </div>
+                    <div id="equipment-list"></div>
                 </div>
 
                 <div class="settings-section">
@@ -223,10 +379,188 @@ const SettingsPage = {
                     <div id="backup-list"></div>
                 </div>
 
+                <div class="settings-section" id="settings-users" style="display:none;">
+                    <h3>Users &mdash; Server Edition</h3>
+                    <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
+                        Add a second user and this deployment becomes
+                        <strong>Server Edition</strong>: everyone signs in with a
+                        username, every change is attributed in the audit log, and
+                        roles limit what each person can do.
+                    </p>
+                    <div id="users-list" style="margin-bottom:12px;"></div>
+                    <div class="form-grid" style="align-items:end;">
+                        <div class="form-group"><label>Username</label>
+                            <input id="user-new-username" autocomplete="off"></div>
+                        <div class="form-group"><label>Display name</label>
+                            <input id="user-new-display" autocomplete="off"></div>
+                        <div class="form-group"><label>Password</label>
+                            <input id="user-new-password" type="password" autocomplete="new-password"></div>
+                        <div class="form-group"><label>Role</label>
+                            <select id="user-new-role">
+                                <option value="bookkeeper">Bookkeeper — daily books, no admin</option>
+                                <option value="readonly">Read-only — reports and lookups</option>
+                                <option value="admin">Admin — everything</option>
+                            </select></div>
+                    </div>
+                    <button type="button" class="btn btn-primary" onclick="SettingsPage.createUser()">Add User</button>
+                </div>
+
+                <div class="settings-section" id="settings-api-tokens" style="display:none;">
+                    <h3>API Tokens &mdash; agents &amp; integrations</h3>
+                    <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
+                        Scoped credentials for non-humans: AI agents, the receipt
+                        service, scripts. A token wears a role just like a user —
+                        give read-only to anything that only reports, and every
+                        change it makes is attributed in the audit log as
+                        <code>token:&lt;label&gt;</code>. Tokens can never manage
+                        users or other tokens, whatever their role.
+                    </p>
+                    <div id="api-token-reveal" style="display:none; margin-bottom:12px; padding:10px; border:1px solid var(--qb-gold); border-radius:4px; background:rgba(224,158,36,0.08); font-size:12px;">
+                        <strong>Copy this token now — it will never be shown again:</strong>
+                        <div style="font-family:var(--font-mono); margin-top:6px; word-break:break-all;" id="api-token-secret"></div>
+                    </div>
+                    <div id="api-token-list" style="margin-bottom:12px;"></div>
+                    <div class="form-grid" style="align-items:end;">
+                        <div class="form-group"><label>Label</label>
+                            <input id="token-new-label" autocomplete="off" placeholder="e.g. claude-code, receipt-service"></div>
+                        <div class="form-group"><label>Role</label>
+                            <select id="token-new-role">
+                                <option value="readonly">Read-only — reports and lookups</option>
+                                <option value="bookkeeper">Bookkeeper — daily books, no admin</option>
+                                <option value="admin">Admin — everything except identity management</option>
+                            </select></div>
+                    </div>
+                    <button type="button" class="btn btn-primary" onclick="SettingsPage.createApiToken()">Create Token</button>
+                </div>
+
                 <div class="form-actions">
                     <button type="submit" class="btn btn-primary">Save Settings</button>
                 </div>
             </form>`;
+    },
+
+    // ------------------------------------------------------------------
+    // Users (Server Edition) — section is visible to admins only; the
+    // backend enforces the same rule, this just avoids a useless 403.
+    // ------------------------------------------------------------------
+    async loadUsers() {
+        const section = $('#settings-users');
+        if (!section) return;
+        try {
+            const status = await API.get('/auth/status');
+            if (!status.user || status.user.role !== 'admin') return;
+            const users = await API.get('/users');
+            section.style.display = '';
+            const rows = users.map(u => `<tr>
+                <td>${escapeHtml(u.username)}</td>
+                <td>${escapeHtml(u.display_name)}</td>
+                <td>
+                    <select onchange="SettingsPage.updateUser(${u.id}, {role: this.value})">
+                        ${['admin', 'bookkeeper', 'readonly'].map(r =>
+                            `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
+                    </select>
+                </td>
+                <td>${u.last_login_at ? formatDate(u.last_login_at) : '—'}</td>
+                <td>${u.is_active
+                    ? `<button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.updateUser(${u.id}, {is_active: false})">Deactivate</button>`
+                    : `<button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.updateUser(${u.id}, {is_active: true})">Reactivate</button>`}
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.resetUserPassword(${u.id}, '${escapeHtml(u.username)}')">Reset password</button>
+                </td>
+            </tr>`).join('');
+            $('#users-list').innerHTML = `<div class="table-container"><table>
+                <thead><tr><th scope="col">Username</th><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Last login</th><th scope="col"></th></tr></thead>
+                <tbody>${rows}</tbody></table></div>`;
+        } catch (e) { /* non-admin or pre-upgrade server: section stays hidden */ }
+    },
+
+    // ------------------------------------------------------------------
+    // API tokens — admin-only, mirrors the Users section
+    // ------------------------------------------------------------------
+    async loadApiTokens() {
+        const section = $('#settings-api-tokens');
+        if (!section) return;
+        try {
+            const status = await API.get('/auth/status');
+            if (!status.user || status.user.role !== 'admin') return;
+            const tokens = await API.get('/tokens');
+            section.style.display = '';
+            if (!tokens.length) {
+                $('#api-token-list').innerHTML =
+                    '<div style="font-size:11px; color:var(--text-muted);">No tokens yet.</div>';
+                return;
+            }
+            const rows = tokens.map(t => `<tr>
+                <td>${escapeHtml(t.label)}</td>
+                <td style="font-family:var(--font-mono); font-size:10px;">${escapeHtml(t.token_hint)}&hellip;</td>
+                <td>${escapeHtml(t.role)}</td>
+                <td>${t.last_used_at ? formatDate(t.last_used_at) : '—'}</td>
+                <td>${t.is_active
+                    ? `<button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.updateApiToken(${t.id}, {is_active: false})">Revoke</button>`
+                    : `<button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.updateApiToken(${t.id}, {is_active: true})">Reactivate</button>`}
+                </td>
+            </tr>`).join('');
+            $('#api-token-list').innerHTML = `<div class="table-container"><table>
+                <thead><tr><th scope="col">Label</th><th scope="col">Token</th><th scope="col">Role</th><th scope="col">Last used</th><th scope="col"></th></tr></thead>
+                <tbody>${rows}</tbody></table></div>`;
+        } catch (e) { /* non-admin or pre-upgrade server: section stays hidden */ }
+    },
+
+    async createApiToken() {
+        try {
+            const created = await API.post('/tokens', {
+                label: $('#token-new-label').value.trim(),
+                role: $('#token-new-role').value,
+            });
+            $('#api-token-secret').textContent = created.token;
+            $('#api-token-reveal').style.display = '';
+            $('#token-new-label').value = '';
+            toast('Token created — copy it now, it will not be shown again');
+            SettingsPage.loadApiTokens();
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async updateApiToken(id, patch) {
+        try {
+            await API.put(`/tokens/${id}`, patch);
+            toast('Token updated');
+            SettingsPage.loadApiTokens();
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async createUser() {
+        try {
+            await API.post('/users', {
+                username: $('#user-new-username').value.trim(),
+                display_name: $('#user-new-display').value.trim(),
+                password: $('#user-new-password').value,
+                role: $('#user-new-role').value,
+            });
+            toast('User added — this deployment is now Server Edition');
+            $('#user-new-username').value = '';
+            $('#user-new-display').value = '';
+            $('#user-new-password').value = '';
+            SettingsPage.loadUsers();
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async updateUser(id, patch) {
+        try {
+            await API.put(`/users/${id}`, patch);
+            toast('User updated');
+            SettingsPage.loadUsers();
+        } catch (err) {
+            toast(err.message, 'error');
+            SettingsPage.loadUsers(); // revert any optimistic select change
+        }
+    },
+
+    async resetUserPassword(id, username) {
+        const pw = prompt(`New password for ${username} (min 8 characters):`);
+        if (!pw) return;
+        try {
+            await API.put(`/users/${id}`, { password: pw });
+            toast('Password updated');
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     async save(e) {
@@ -271,6 +605,76 @@ const SettingsPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
+    // Company type saves on its own and reloads: the vocabulary and the
+    // nonprofit nav items are applied at boot (App.applyTerminology), so
+    // the whole shell has to come up again in the new words.
+    async changeCompanyType(sel) {
+        const value = sel.value;
+        const previous = value === 'nonprofit' ? 'business' : 'nonprofit';
+        const msg = value === 'nonprofit'
+            ? 'Switch this company to nonprofit mode? Screens will say donor, pledge, donation and fund; the net-asset accounts are added. Nothing in your data changes.'
+            : 'Switch this company back to business mode? Screens return to customer, invoice, sales receipt and class. Nothing in your data changes.';
+        if (!confirm(msg)) { sel.value = previous; return; }
+        try {
+            await API.put('/settings', { company_type: value });
+            if (value === 'nonprofit') {
+                try { await API.post('/nonprofit/setup-accounts', {}); }
+                catch (e) { /* accounts can be created later from the Nonprofit section */ }
+            }
+            toast('Company type saved — reloading');
+            setTimeout(() => location.reload(), 600);
+        } catch (err) {
+            sel.value = previous;
+            toast(err.message, 'error');
+        }
+    },
+
+    async saveOcrEngine(value) {
+        try {
+            await API.put('/settings', { ocr_engine: value });
+            toast('OCR engine preference saved');
+            this.loadOcrStatus();
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async loadOcrEnginePref() {
+        const sel = $('#ocr-engine-pref');
+        if (!sel) return;
+        try {
+            const settings = await API.get('/settings');
+            if (settings.ocr_engine) sel.value = settings.ocr_engine;
+        } catch (e) { /* leave the default selected */ }
+    },
+
+    async loadOcrStatus() {
+        const el = $('#ocr-status');
+        if (!el) return;
+        try {
+            const s = await API.get('/ocr/status');
+            if (s.available) {
+                const langs = (s.languages || []).join(', ') || '—';
+                const engineNames = { tesseract: 'Tesseract OCR', vision: 'Apple Vision (built into macOS)', winrt: 'Windows OCR (built into Windows)' };
+                const engineLabel = engineNames[s.engine] || 'OCR engine';
+                el.innerHTML = `<strong style="color:#166534;">${escapeHtml(engineLabel)} is ready</strong>`
+                    + (s.version ? ` <span style="color:var(--text-muted);">(${escapeHtml(s.version)})</span>` : '')
+                    + ` &middot; languages: ${escapeHtml(langs)}`;
+            } else {
+                el.innerHTML = '<strong style="color:#b45309;">No OCR engine is available — scanning is disabled.</strong>'
+                    + '<div style="font-size:11px; color:var(--text-muted); margin-top:4px;">macOS and Windows normally use the engine built into the OS; installing Tesseract enables scanning anywhere.</div>'
+                    + '<div style="font-size:11px; color:var(--text-muted); margin-top:6px;">'
+                    + 'Ubuntu: <code>sudo apt-get install tesseract-ocr</code> &middot; '
+                    + 'macOS: <code>brew install tesseract</code> &middot; '
+                    + 'Windows: install the UB Mannheim Tesseract build.<br>'
+                    + 'PDFs also need poppler-utils: '
+                    + '<code>sudo apt-get install poppler-utils</code> (Ubuntu) / '
+                    + '<code>brew install poppler</code> (macOS).'
+                    + '</div>';
+            }
+        } catch (e) {
+            el.textContent = 'Could not check OCR status.';
+        }
+    },
+
     async createBackup() {
         try {
             const result = await API.post('/backups');
@@ -289,7 +693,7 @@ const SettingsPage = {
                 return;
             }
             el.innerHTML = `<div class="table-container"><table>
-                <thead><tr><th>Filename</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead>
+                <thead><tr><th scope="col">Filename</th><th scope="col">Size</th><th scope="col">Created</th><th scope="col">Actions</th></tr></thead>
                 <tbody>${backups.map(b => `<tr>
                     <td>${escapeHtml(b.filename)}</td>
                     <td>${(b.file_size / 1024).toFixed(1)} KB</td>
@@ -320,7 +724,7 @@ const SettingsPage = {
                 return;
             }
             el.innerHTML = `<div class="table-container"><table>
-                <thead><tr><th>Name</th><th>Type</th><th>Subject</th><th>Actions</th></tr></thead>
+                <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Subject</th><th scope="col">Actions</th></tr></thead>
                 <tbody>${templates.map(t => `<tr>
                     <td><strong>${escapeHtml(t.name)}</strong></td>
                     <td>${escapeHtml(t.template_type)}</td>
@@ -400,6 +804,7 @@ const SettingsPage = {
             providers.find(p => p.key === currentProvider) || providers[0] || {};
         const needsAccount = !!currentSpec.needs_account_id;
         const needsWorker = !!currentSpec.needs_worker_url;
+        const needsEndpoint = !!currentSpec.needs_endpoint_url;
         const hasKey = !!cfg.has_api_key;
         const currentModel = cfg.model || '';
 
@@ -457,8 +862,33 @@ const SettingsPage = {
                     and TLS certificates are always verified.
                 </p>
             </fieldset>
+            <fieldset id="ai-settings-endpoint-wrap" class="ai-worker-section"
+                      style="${needsEndpoint ? '' : 'display:none'}">
+                <legend>Custom OpenAI-Compatible Endpoint</legend>
+                <p class="ai-worker-help">
+                    Point Slowbooks at any OpenAI-compatible chat API on the
+                    public internet — another vendor's <code>/v1</code> base URL,
+                    or a gateway you host. <code>/chat/completions</code> is
+                    appended automatically if you don't include it. A model on
+                    this machine or your LAN cannot be reached this way: the
+                    address check below refuses it on purpose.
+                </p>
+                <label class="form-field">
+                    <span>Base URL <em class="ai-worker-required">(https only)</em></span>
+                    <input type="url" id="ai-settings-endpoint-url"
+                           value="${escapeHtml(cfg.endpoint_url || '')}"
+                           placeholder="https://api.example.com/v1"
+                           autocomplete="off" spellcheck="false">
+                </label>
+                <p class="ai-worker-security">
+                    <strong>Security:</strong> only <code>https://</code> URLs
+                    are accepted; private/loopback IPs, embedded credentials,
+                    and non-HTTPS schemes are rejected. Redirects are disabled
+                    and TLS certificates are always verified.
+                </p>
+            </fieldset>
             <label class="form-field">
-                <span>API Key / Shared Secret ${hasKey ? '<em class="ai-key-saved">(saved &#10003;)</em>' : ''}</span>
+                <span>API Key / Shared Secret ${hasKey ? '<em class="ai-key-saved">(saved &#10003;)</em> <button type="button" class="btn btn-sm" id="ai-settings-key-remove" title="Remove the stored key">Remove</button>' : ''}</span>
                 <input type="password" id="ai-settings-key"
                        placeholder="${hasKey ? 'Leave blank to keep existing' : 'Paste key or openssl rand -hex 32'}"
                        autocomplete="new-password">
@@ -501,6 +931,7 @@ const SettingsPage = {
         const modelCustom = document.getElementById('ai-settings-model-custom');
         const cfWrap = document.getElementById('ai-settings-cf-wrap');
         const workerWrap = document.getElementById('ai-settings-worker-wrap');
+        const endpointWrap = document.getElementById('ai-settings-endpoint-wrap');
         const saveBtn = document.getElementById('ai-settings-save');
         const testBtn = document.getElementById('ai-settings-test');
         const testRes = document.getElementById('ai-settings-test-result');
@@ -530,6 +961,7 @@ const SettingsPage = {
             syncCustomVisibility();
             cfWrap.style.display = spec.needs_account_id ? '' : 'none';
             workerWrap.style.display = spec.needs_worker_url ? '' : 'none';
+            if (endpointWrap) endpointWrap.style.display = spec.needs_endpoint_url ? '' : 'none';
         });
 
         const resolveModel = () => {
@@ -542,12 +974,34 @@ const SettingsPage = {
             model: resolveModel(),
             cloudflare_account_id: document.getElementById('ai-settings-cf-account').value.trim(),
             worker_url: document.getElementById('ai-settings-worker-url').value.trim(),
-            api_key: document.getElementById('ai-settings-key').value,
+            endpoint_url: document.getElementById('ai-settings-endpoint-url') ? document.getElementById('ai-settings-endpoint-url').value.trim() : '',
         });
+        // The key field is write-only: send it only when the user typed a new
+        // one. A blank field must never round-trip as "clear the key".
+        const keyPayload = () => {
+            const v = document.getElementById('ai-settings-key').value;
+            return v.trim() ? { api_key: v } : {};
+        };
+
+        const removeBtn = document.getElementById('ai-settings-key-remove');
+        if (removeBtn) {
+            removeBtn.addEventListener('click', async () => {
+                if (!confirm('Remove the stored API key? AI Insights will be off until a new key is saved.')) return;
+                try {
+                    // An explicit empty string is the API's "clear the key".
+                    const updated = await API.put('/analytics/ai-config', { ...collectPayload(), api_key: '' });
+                    SettingsPage.aiConfigState = updated;
+                    toast('AI provider key removed', 'success');
+                    SettingsPage.loadAiConfig();
+                } catch (err) {
+                    toast('Could not remove the key: ' + (err.message || err), 'error');
+                }
+            });
+        }
 
         saveBtn.addEventListener('click', async () => {
             try {
-                const updated = await API.put('/analytics/ai-config', collectPayload());
+                const updated = await API.put('/analytics/ai-config', { ...collectPayload(), ...keyPayload() });
                 SettingsPage.aiConfigState = updated;
                 toast('AI settings saved', 'success');
                 // Re-render to reflect "(saved ✓)" state and clear the key input
@@ -562,7 +1016,7 @@ const SettingsPage = {
             testRes.textContent = 'Saving…';
             testRes.className = 'ai-settings-test-result';
             try {
-                await API.put('/analytics/ai-config', collectPayload());
+                await API.put('/analytics/ai-config', { ...collectPayload(), ...keyPayload() });
             } catch (err) {
                 testRes.textContent = 'Save failed: ' + (err.message || err);
                 testRes.classList.add('ai-test-fail');
@@ -590,3 +1044,356 @@ const SettingsPage = {
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     },
 };
+
+
+// --- Class tracking management (Settings > Classes) ---------------------
+SettingsPage.loadClasses = async function () {
+    const el = document.getElementById('classes-list');
+    if (!el) return;
+    try {
+        const classes = await API.get('/classes?include_archived=true');
+        SettingsPage._classes = classes;
+        const np = Terms.isNonprofit();
+        const fundCols = np ? `<th scope="col">Restriction</th><th scope="col">Function</th><th scope="col">Donor / purpose</th>` : '';
+        const fundCells = c => np ? `
+                <td>${escapeHtml(SettingsPage.RESTRICTION_LABELS[c.restriction] || c.restriction)}</td>
+                <td>${escapeHtml(SettingsPage.FUNCTION_LABELS[c.default_function] || '—')}</td>
+                <td style="font-size:10px;">${escapeHtml(c.donor_name || '')}${c.donor_name && c.purpose ? ' — ' : ''}${escapeHtml(c.purpose || '')}</td>` : '';
+        el.innerHTML = `<div class="table-container"><table>
+            <thead><tr><th scope="col">Name</th>${fundCols}<th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+            <tbody>` + classes.map(c => `<tr>
+                <td>${escapeHtml(c.name)}${c.is_system_default ? ' <span style="font-size:9px;color:var(--text-muted);">(default)</span>' : ''}</td>
+                ${fundCells(c)}
+                <td>${c.is_archived ? 'Archived' : 'Active'}</td>
+                <td class="actions">
+                    ${np ? `<button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.editFund(${c.id})">Edit</button>` : ''}
+                    ${c.is_system_default ? '' : `
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.renameClass(${c.id})">Rename</button>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.toggleArchiveClass(${c.id}, ${!c.is_archived})">${c.is_archived ? 'Unarchive' : 'Archive'}</button>`}
+                </td>
+            </tr>`).join('') + `</tbody></table></div>`;
+    } catch (err) {
+        el.innerHTML = `<div style="color:var(--danger); font-size:11px;">${escapeHtml(err.message)}</div>`;
+    }
+};
+
+SettingsPage.addClass = async function () {
+    const input = document.getElementById('new-class-name');
+    const name = (input?.value || '').trim();
+    if (!name) { toast(Terms.text('Enter a class name'), 'error'); return; }
+    try {
+        await API.post('/classes', { name });
+        input.value = '';
+        toast(Terms.text('Class added'));
+        SettingsPage.loadClasses();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+SettingsPage.RESTRICTION_LABELS = {
+    unrestricted: 'Without donor restrictions',
+    temporarily_restricted: 'With donor restrictions (purpose / time)',
+    permanently_restricted: 'With donor restrictions (permanent)',
+};
+SettingsPage.FUNCTION_LABELS = { program: 'Program services', management: 'Management & general', fundraising: 'Fundraising' };
+
+// Nonprofit: a class is a fund. Restriction decides which net-asset line
+// its activity reports on; the default function is what expenses in the
+// fund count as on the Statement of Functional Expenses unless a line
+// says otherwise.
+SettingsPage.editFund = function (id) {
+    const c = (SettingsPage._classes || []).find(x => x.id === id);
+    if (!c) return;
+    const opt = (map, sel) => Object.entries(map).map(([v, l]) => `<option value="${v}" ${v === sel ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('');
+    openModal(`Fund: ${escapeHtml(c.name)}`, `
+        <form onsubmit="SettingsPage.saveFund(event, ${c.id})">
+            <div class="form-grid">
+                <div class="form-group full-width"><label>Restriction</label>
+                    <select name="restriction" ${c.is_system_default ? 'disabled' : ''}>${opt(SettingsPage.RESTRICTION_LABELS, c.restriction)}</select>
+                    ${c.is_system_default ? '<div style="font-size:10px;color:var(--text-muted);">The default bucket for untagged activity is always without restrictions.</div>' : ''}</div>
+                <div class="form-group full-width"><label>Default function</label>
+                    <select name="default_function"><option value="">— none —</option>${opt(SettingsPage.FUNCTION_LABELS, c.default_function)}</select></div>
+                <div class="form-group full-width"><label>Donor / grantor</label>
+                    <input name="donor_name" maxlength="200" value="${escapeHtml(c.donor_name || '')}"></div>
+                <div class="form-group full-width"><label>Purpose</label>
+                    <textarea name="purpose" rows="2">${escapeHtml(c.purpose || '')}</textarea></div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>`);
+};
+
+SettingsPage.saveFund = async function (e, id) {
+    e.preventDefault();
+    const f = e.target;
+    const body = {
+        default_function: f.default_function.value || null,
+        donor_name: f.donor_name.value.trim() || null,
+        purpose: f.purpose.value.trim() || null,
+    };
+    if (!f.restriction.disabled) body.restriction = f.restriction.value;
+    try {
+        await API.put(`/classes/${id}`, body);
+        closeModal();
+        toast(`${T('Class')} saved`);
+        SettingsPage.loadClasses();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+SettingsPage.renameClass = async function (id) {
+    const name = prompt(Terms.text('New class name:'));
+    if (!name || !name.trim()) return;
+    try {
+        await API.put(`/classes/${id}`, { name: name.trim() });
+        toast(Terms.text('Class renamed'));
+        SettingsPage.loadClasses();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+SettingsPage.toggleArchiveClass = async function (id, archive) {
+    try {
+        await API.put(`/classes/${id}`, { is_archived: archive });
+        toast(Terms.text(archive ? 'Class archived' : 'Class unarchived'));
+        SettingsPage.loadClasses();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+// --- Cost codes (Settings > Cost Codes) ----------------------------------
+SettingsPage.loadCostCodes = async function () {
+    const el = document.getElementById('cost-codes-list');
+    if (!el) return;
+    try {
+        const codes = await API.get('/cost-codes?include_inactive=true');
+        if (!codes.length) {
+            el.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">No cost codes yet. Add your own, or load the standard CSI list.</div>';
+            return;
+        }
+        const parentSel = document.getElementById('new-cc-parent');
+        if (parentSel) parentSel.innerHTML = '<option value="">(top level)</option>' + codes.filter(c => c.is_active).map(c => `<option value="${c.id}">${'\u00a0\u00a0'.repeat(c.depth || 0)}${escapeHtml(c.label)}</option>`).join('');
+        el.innerHTML = `<div class="table-container"><table>
+            <thead><tr><th scope="col">Code</th><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Default account</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+            <tbody>` + codes.map(c => `<tr>
+                <td style="padding-left:${8 + (c.depth || 0) * 16}px">${c.depth ? '<span style="color:#aaa">└ </span>' : ''}<code>${escapeHtml(c.code)}</code></td>
+                <td>${escapeHtml(c.name)}</td>
+                <td>${escapeHtml(c.cost_type)}</td>
+                <td>${escapeHtml(c.account_name || '')}</td>
+                <td>${c.is_active ? 'Active' : 'Inactive'}</td>
+                <td class="actions">
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.renameCostCode(${c.id})">Rename</button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.toggleCostCode(${c.id}, ${!c.is_active})">${c.is_active ? 'Deactivate' : 'Activate'}</button>
+                </td>
+            </tr>`).join('') + `</tbody></table></div>`;
+    } catch (err) {
+        el.innerHTML = `<div style="color:var(--danger); font-size:11px;">${escapeHtml(err.message)}</div>`;
+    }
+};
+
+SettingsPage.addCostCode = async function () {
+    const code = (document.getElementById('new-cc-code')?.value || '').trim();
+    const name = (document.getElementById('new-cc-name')?.value || '').trim();
+    const cost_type = document.getElementById('new-cc-type')?.value || 'other';
+    const parentVal = document.getElementById('new-cc-parent')?.value;
+    if (!code || !name) { toast('Enter a code and a name', 'error'); return; }
+    try {
+        await API.post('/cost-codes', { code, name, cost_type, parent_id: parentVal ? parseInt(parentVal) : null });
+        document.getElementById('new-cc-code').value = '';
+        document.getElementById('new-cc-name').value = '';
+        toast('Cost code added');
+        SettingsPage.loadCostCodes();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+SettingsPage.loadStandardCostCodes = async function () {
+    try {
+        const codes = await API.post('/cost-codes/standard', {});
+        toast(`${codes.length} cost codes active`);
+        SettingsPage.loadCostCodes();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+SettingsPage.renameCostCode = async function (id) {
+    const name = prompt('New cost code name:');
+    if (!name || !name.trim()) return;
+    try {
+        await API.put(`/cost-codes/${id}`, { name: name.trim() });
+        toast('Cost code renamed');
+        SettingsPage.loadCostCodes();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+SettingsPage.toggleCostCode = async function (id, active) {
+    try {
+        await API.put(`/cost-codes/${id}`, { is_active: active });
+        toast(active ? 'Cost code activated' : 'Cost code deactivated');
+        SettingsPage.loadCostCodes();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+SettingsPage.showCostCodeImport = function () {
+    openModal('Import Cost Codes', `
+        <p style="font-size:12px;margin:0 0 8px 0">Paste CSV rows as <code>code,name,cost_type,parent_code</code> (header optional). Existing codes are updated, parents linked afterwards, so order doesn't matter.</p>
+        <textarea id="cc-import-csv" rows="12" style="width:100%;font-family:monospace;font-size:12px" placeholder="03,Concrete,subcontract,
+03-300,Cast-in-place concrete,subcontract,03
+03-310,Footings,subcontract,03-300"></textarea>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="SettingsPage.importCostCodes()">Import</button>
+        </div>`);
+};
+
+SettingsPage.importCostCodes = async function () {
+    const csv = document.getElementById('cc-import-csv')?.value || '';
+    if (!csv.trim()) { toast('Paste some rows first', 'error'); return; }
+    try {
+        const r = await API.post('/cost-codes/import', { csv });
+        toast(`${r.created} created, ${r.updated} updated${r.errors.length ? `, ${r.errors.length} skipped: ${r.errors[0]}` : ''}`, r.errors.length ? 'error' : undefined);
+        closeModal();
+        SettingsPage.loadCostCodes();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+// --- Cost types (Settings > Cost Types) ----------------------------------
+SettingsPage._accountsCache = null;
+SettingsPage._accountOptions = async function (selected) {
+    if (!SettingsPage._accountsCache) { try { SettingsPage._accountsCache = await API.get('/accounts'); } catch (e) { SettingsPage._accountsCache = []; } }
+    return '<option value="">--</option>' + SettingsPage._accountsCache.map(a => `<option value="${a.id}" ${selected === a.id ? 'selected' : ''}>${escapeHtml((a.account_number ? a.account_number + ' ' : '') + a.name)}</option>`).join('');
+};
+
+SettingsPage.loadCostTypes = async function () {
+    const el = document.getElementById('cost-types-list');
+    if (!el) return;
+    try {
+        const types = await API.get('/cost-types?include_inactive=true');
+        const rows = [];
+        for (const t of types) {
+            rows.push(`<tr data-ct="${t.id}">
+                <td><code>${escapeHtml(t.code)}</code></td>
+                <td><input class="ct-name" value="${escapeHtml(t.name)}" style="width:130px"></td>
+                <td style="text-align:center"><input type="checkbox" class="ct-labor" ${t.is_labor ? 'checked' : ''}></td>
+                <td><input type="number" step="0.01" class="ct-burden" value="${t.burden_pct ?? ''}" style="width:70px" placeholder="%" aria-label="Flat burden percent"></td>
+                <td>${t.is_labor ? `<select class="ct-burden-method" aria-label="Burden method" title="Flat: the % above posts with each time entry. Payroll: the pay run distributes actual employer taxes + job-routed benefit codes by hours — only for stubs built from time entries (Use approved time entries on the pay run); hours typed on a stub leave that employee's burden in the pool.">
+                    <option value="flat" ${t.burden_method !== 'payroll' ? 'selected' : ''}>Flat %</option>
+                    <option value="payroll" ${t.burden_method === 'payroll' ? 'selected' : ''}>Actual payroll</option>
+                </select>` : '—'}</td>
+                <td><select class="ct-default">${await SettingsPage._accountOptions(t.default_account_id)}</select></td>
+                <td><select class="ct-offset">${await SettingsPage._accountOptions(t.offset_account_id)}</select></td>
+                <td><select class="ct-burden-offset">${await SettingsPage._accountOptions(t.burden_offset_account_id)}</select></td>
+                <td class="actions">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="SettingsPage.saveCostType(${t.id})">Save</button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.toggleCostType(${t.id}, ${!t.is_active})">${t.is_active ? 'Deactivate' : 'Activate'}</button>
+                </td>
+            </tr>`);
+        }
+        el.innerHTML = `<div class="table-container"><table style="font-size:12px">
+            <thead><tr><th scope="col">Code</th><th scope="col">Name</th><th scope="col">Labor?</th><th scope="col">Burden %</th><th scope="col">Burden method</th><th scope="col">Cost account</th><th scope="col">Offset account</th><th scope="col">Burden offset</th><th scope="col">Actions</th></tr></thead>
+            <tbody>${rows.join('')}</tbody></table></div>`;
+    } catch (err) {
+        el.innerHTML = `<div style="color:var(--danger); font-size:11px;">${escapeHtml(err.message)}</div>`;
+    }
+};
+
+SettingsPage.saveCostType = async function (id) {
+    const tr = document.querySelector(`[data-ct="${id}"]`);
+    if (!tr) return;
+    const sel = cls => { const v = tr.querySelector(cls)?.value; return v ? parseInt(v) : null; };
+    const burden = tr.querySelector('.ct-burden')?.value;
+    try {
+        await API.put(`/cost-types/${id}`, {
+            name: tr.querySelector('.ct-name').value.trim(),
+            is_labor: tr.querySelector('.ct-labor').checked,
+            burden_pct: burden === '' ? null : parseFloat(burden),
+            burden_method: tr.querySelector('.ct-burden-method')?.value || undefined,
+            default_account_id: sel('.ct-default'),
+            offset_account_id: sel('.ct-offset'),
+            burden_offset_account_id: sel('.ct-burden-offset'),
+        });
+        toast('Cost type saved');
+        SettingsPage.loadCostTypes();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+SettingsPage.addCostType = async function () {
+    const code = (document.getElementById('new-ct-code')?.value || '').trim();
+    const name = (document.getElementById('new-ct-name')?.value || '').trim();
+    const is_labor = !!document.getElementById('new-ct-labor')?.checked;
+    if (!code || !name) { toast('Enter a code and a name', 'error'); return; }
+    try {
+        await API.post('/cost-types', { code, name, is_labor });
+        document.getElementById('new-ct-code').value = '';
+        document.getElementById('new-ct-name').value = '';
+        toast('Cost type added');
+        SettingsPage.loadCostTypes();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+SettingsPage.toggleCostType = async function (id, active) {
+    try {
+        await API.put(`/cost-types/${id}`, { is_active: active });
+        SettingsPage.loadCostTypes();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+SettingsPage.setupOffsets = async function () {
+    try {
+        await API.post('/cost-types/setup-offsets', {});
+        SettingsPage._accountsCache = null;
+        toast('Offset accounts ready — job cost entries and time postings can post');
+        SettingsPage.loadCostTypes();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+// --- Equipment (Settings > Equipment) ------------------------------------
+SettingsPage.loadEquipment = async function () {
+    const el = document.getElementById('equipment-list');
+    if (!el) return;
+    try {
+        const list = await API.get('/equipment?include_inactive=true');
+        if (!list.length) { el.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">No equipment yet.</div>'; return; }
+        el.innerHTML = `<div class="table-container"><table>
+            <thead><tr><th scope="col">Code</th><th scope="col">Name</th><th scope="col" class="amount">$/hr</th><th scope="col">Cost code</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+            <tbody>` + list.map(q => `<tr>
+                <td><code>${escapeHtml(q.code || '')}</code></td>
+                <td>${escapeHtml(q.name)}</td>
+                <td class="amount">${formatCurrency(q.hourly_rate)}</td>
+                <td>${escapeHtml(q.cost_code_label || '')}</td>
+                <td>${q.is_active ? 'Active' : 'Inactive'}</td>
+                <td class="actions">
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.rateEquipment(${q.id})">Set rate</button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.toggleEquipment(${q.id}, ${!q.is_active})">${q.is_active ? 'Deactivate' : 'Activate'}</button>
+                </td>
+            </tr>`).join('') + `</tbody></table></div>`;
+    } catch (err) {
+        el.innerHTML = `<div style="color:var(--danger); font-size:11px;">${escapeHtml(err.message)}</div>`;
+    }
+};
+
+SettingsPage.addEquipment = async function () {
+    const code = (document.getElementById('new-eq-code')?.value || '').trim();
+    const name = (document.getElementById('new-eq-name')?.value || '').trim();
+    const rate = parseFloat(document.getElementById('new-eq-rate')?.value) || 0;
+    if (!name) { toast('Enter a name', 'error'); return; }
+    try {
+        await API.post('/equipment', { code: code || null, name, hourly_rate: rate });
+        document.getElementById('new-eq-name').value = '';
+        toast('Equipment added');
+        SettingsPage.loadEquipment();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+SettingsPage.rateEquipment = async function (id) {
+    const v = prompt('Hourly rate:');
+    if (v === null) return;
+    try {
+        await API.put(`/equipment/${id}`, { hourly_rate: parseFloat(v) || 0 });
+        SettingsPage.loadEquipment();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+SettingsPage.toggleEquipment = async function (id, active) {
+    try {
+        await API.put(`/equipment/${id}`, { is_active: active });
+        SettingsPage.loadEquipment();
+    } catch (err) { toast(err.message, 'error'); }
+};
+

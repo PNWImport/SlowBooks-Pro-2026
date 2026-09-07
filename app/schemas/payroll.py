@@ -1,19 +1,28 @@
 from datetime import date
 from typing import Optional
 from pydantic import BaseModel, model_validator
+from app.schemas.common import StrictModel
+
+from app.models.payroll import EmployeeRole, FilingStatus, PayFrequency, PayType
+from app.schemas.benefits import PayStubBenefitResponse
 
 
 # ---------------------------------------------------------------------------
 # Employees — 2020+ Form W-4 (no "allowances"), per-employee pay frequency
 # ---------------------------------------------------------------------------
-class EmployeeCreate(BaseModel):
+class EmployeeCreate(StrictModel):
     first_name: str
     last_name: str
     ssn_last_four: Optional[str] = None
-    pay_type: str = "hourly"
+    pay_type: PayType = PayType.HOURLY
     pay_rate: float = 0
-    pay_frequency: str = "biweekly"
-    filing_status: str = "single"
+    cost_rate: Optional[float] = None
+    burden_pct: Optional[float] = None
+    employee_group_id: Optional[int] = None
+    # Typed against the model enums so a bad value is a 422 at the edge
+    # instead of a LookupError at flush (an opaque 500).
+    pay_frequency: PayFrequency = PayFrequency.BIWEEKLY
+    filing_status: FilingStatus = FilingStatus.SINGLE
     # 2020+ Form W-4
     multiple_jobs: bool = False
     dependents_amount: float = 0
@@ -30,21 +39,28 @@ class EmployeeCreate(BaseModel):
     work_locality: Optional[str] = None
     residence_locality: Optional[str] = None
     wc_class_code: Optional[str] = None
+    state_allowances: int = 0
+    state_extra_withholding: float = 0
+    state_rate_override: Optional[float] = None
+    local_tax_rate: Optional[float] = None
     email: Optional[str] = None
-    role: str = "employee"
+    role: EmployeeRole = EmployeeRole.EMPLOYEE
     manager_id: Optional[int] = None
     hire_date: Optional[date] = None
     notes: Optional[str] = None
 
 
-class EmployeeUpdate(BaseModel):
+class EmployeeUpdate(StrictModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     ssn_last_four: Optional[str] = None
-    pay_type: Optional[str] = None
+    pay_type: Optional[PayType] = None
     pay_rate: Optional[float] = None
-    pay_frequency: Optional[str] = None
-    filing_status: Optional[str] = None
+    cost_rate: Optional[float] = None
+    burden_pct: Optional[float] = None
+    employee_group_id: Optional[int] = None
+    pay_frequency: Optional[PayFrequency] = None
+    filing_status: Optional[FilingStatus] = None
     multiple_jobs: Optional[bool] = None
     dependents_amount: Optional[float] = None
     other_income_annual: Optional[float] = None
@@ -60,8 +76,12 @@ class EmployeeUpdate(BaseModel):
     work_locality: Optional[str] = None
     residence_locality: Optional[str] = None
     wc_class_code: Optional[str] = None
+    state_allowances: Optional[int] = None
+    state_extra_withholding: Optional[float] = None
+    state_rate_override: Optional[float] = None
+    local_tax_rate: Optional[float] = None
     email: Optional[str] = None
-    role: Optional[str] = None
+    role: Optional[EmployeeRole] = None
     manager_id: Optional[int] = None
     hire_date: Optional[date] = None
     is_active: Optional[bool] = None
@@ -73,8 +93,11 @@ class EmployeeResponse(BaseModel):
     first_name: str
     last_name: str
     ssn_last_four: Optional[str] = None
-    pay_type: str
+    pay_type: PayType
     pay_rate: float = 0
+    cost_rate: Optional[float] = None
+    burden_pct: Optional[float] = None
+    employee_group_id: Optional[int] = None
     pay_frequency: str = "biweekly"
     filing_status: str
     multiple_jobs: bool = False
@@ -92,8 +115,12 @@ class EmployeeResponse(BaseModel):
     work_locality: Optional[str] = None
     residence_locality: Optional[str] = None
     wc_class_code: Optional[str] = None
+    state_allowances: int = 0
+    state_extra_withholding: float = 0
+    state_rate_override: Optional[float] = None
+    local_tax_rate: Optional[float] = None
     email: Optional[str] = None
-    role: str = "employee"
+    role: EmployeeRole = EmployeeRole.EMPLOYEE
     manager_id: Optional[int] = None
     is_active: bool = True
     hire_date: Optional[date] = None
@@ -103,7 +130,7 @@ class EmployeeResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Pay runs / pay stubs
 # ---------------------------------------------------------------------------
-class PayStubInput(BaseModel):
+class PayStubInput(StrictModel):
     employee_id: int
     hours: float = 0  # total hours (hourly employees)
     regular_hours: Optional[float] = None
@@ -111,7 +138,7 @@ class PayStubInput(BaseModel):
     doubletime_hours: float = 0
     gross_override: Optional[float] = None  # explicit gross (bonuses / off-cycle runs)
     pretax_deductions: float = (
-        0  # ad-hoc; configured EmployeeDeductions are auto-applied
+        0  # ad-hoc; the employee's benefit codes are applied automatically
     )
     posttax_deductions: float = 0
     reimbursements: float = 0  # non-taxable accountable-plan reimbursements
@@ -158,7 +185,7 @@ class PayStubInput(BaseModel):
         return self
 
 
-class PayRunCreate(BaseModel):
+class PayRunCreate(StrictModel):
     period_start: date
     period_end: date
     pay_date: date
@@ -197,6 +224,8 @@ class PayStubResponse(BaseModel):
     futa_tax: float = 0
     suta_tax: float = 0
     state_other_employer: float = 0
+    employer_benefits: float = 0
+    benefits: list[PayStubBenefitResponse] = []
     model_config = {"from_attributes": True}
 
 
@@ -211,6 +240,8 @@ class PayRunResponse(BaseModel):
     total_net: float = 0
     total_taxes: float = 0
     total_employer_taxes: float = 0
+    total_employer_benefits: float = 0
+    burden_job_cost_id: Optional[int] = None
     stubs: list[PayStubResponse] = []
     model_config = {"from_attributes": True}
 
@@ -232,7 +263,7 @@ class YTDResponse(BaseModel):
     net: float = 0
 
 
-class BankAccountCreate(BaseModel):
+class BankAccountCreate(StrictModel):
     nickname: Optional[str] = None
     account_kind: str = "checking"
     routing_number: str

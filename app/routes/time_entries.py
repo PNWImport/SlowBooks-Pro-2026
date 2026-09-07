@@ -7,8 +7,8 @@ from datetime import datetime, timezone, date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from app.schemas.common import StrictModel
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models.payroll import Employee
@@ -28,7 +28,46 @@ def _resp(entry: TimeEntry) -> TimeEntryResponse:
     r = TimeEntryResponse.model_validate(entry)
     if entry.employee:
         r.employee_name = entry.employee.full_name
+    if entry.job_id and entry.job:
+        r.job_name = entry.job.full_name
+    if entry.cost_code_id and entry.cost_code:
+        r.cost_code_label = entry.cost_code.label
     return r
+
+
+class PostToJobRequest(StrictModel):
+    ids: list[int]
+
+
+@router.post("/post-to-job")
+def post_entries_to_job(data: PostToJobRequest, db: Session = Depends(get_db)):
+    """Post several approved time entries to their jobs as labor cost (one
+    Job Cost Entry each). Returns per-entry results; nothing is rolled
+    back for a single failure, so the caller sees exactly what posted."""
+    from app.services.job_costing import post_time_entry_to_job
+
+    results = []
+    for entry_id in data.ids:
+        entry = db.get(TimeEntry, entry_id)
+        if not entry:
+            results.append({"id": entry_id, "ok": False, "error": "not found"})
+            continue
+        try:
+            jc = post_time_entry_to_job(db, entry)
+            db.commit()
+            results.append(
+                {
+                    "id": entry_id,
+                    "ok": True,
+                    "job_cost_id": jc.id,
+                    "number": jc.number,
+                    "total": float(jc.total),
+                }
+            )
+        except ValueError as exc:
+            db.rollback()
+            results.append({"id": entry_id, "ok": False, "error": str(exc)})
+    return {"results": results, "posted": sum(1 for r in results if r["ok"])}
 
 
 @router.get("", response_model=list[TimeEntryResponse])
@@ -39,7 +78,7 @@ def list_time_entries(
     status: str = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    q = db.query(TimeEntry)
+    q = db.query(TimeEntry).options(joinedload(TimeEntry.employee))
     if employee_id:
         q = q.filter(TimeEntry.employee_id == employee_id)
     if start:
@@ -131,18 +170,55 @@ def approve_time_entry(
     return _resp(entry)
 
 
+@router.post("/{entry_id}/post-to-job")
+def post_entry_to_job(entry_id: int, db: Session = Depends(get_db)):
+    """Post one approved time entry to its job as labor cost at the
+    employee's loaded rate, with burden as its own line."""
+    from app.services.job_costing import post_time_entry_to_job
+
+    entry = db.get(TimeEntry, entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Time entry not found")
+    try:
+        jc = post_time_entry_to_job(db, entry)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    db.commit()
+    return {
+        "id": entry.id,
+        "job_cost_id": jc.id,
+        "number": jc.number,
+        "total": float(jc.total),
+    }
+
+
 @router.post("/{entry_id}/reject", response_model=TimeEntryResponse)
 def reject_time_entry(entry_id: int, db: Session = Depends(get_db)):
     entry = db.query(TimeEntry).filter(TimeEntry.id == entry_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Time entry not found")
+    # A submitted entry may already be posted to its job; rejecting it has
+    # to take that labor cost back off the job, not leave it behind.
+    if entry.job_cost_id:
+        from app.models.job_costing import JobCost
+        from app.services.closing_date import check_closing_date
+        from app.services.job_costing import void_job_cost
+
+        jc = db.get(JobCost, entry.job_cost_id)
+        if jc is not None and jc.status != "void":
+            check_closing_date(db, jc.date)  # the reversal posts on that date
+            try:
+                void_job_cost(db, jc)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+        entry.job_cost_id = None
     entry.status = TimeEntryStatus.REJECTED
     db.commit()
     db.refresh(entry)
     return _resp(entry)
 
 
-class ClassifyRequest(BaseModel):
+class ClassifyRequest(StrictModel):
     weeks: list[list[float]]  # each inner list = daily hours for one workweek
     state: str = "WA"
 
@@ -173,6 +249,7 @@ def pay_period_summary(
 
     rows = (
         db.query(TimeEntry)
+        .options(joinedload(TimeEntry.employee))
         .filter(
             TimeEntry.status == TimeEntryStatus.APPROVED,
             TimeEntry.pay_run_id.is_(None),

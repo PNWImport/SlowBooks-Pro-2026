@@ -870,7 +870,7 @@ def test_portal_bank_account_encryption(client: any, db_session: Session):
         data={
             "nickname": "Primary Checking",
             "account_kind": "checking",
-            "routing_number": "123456789",
+            "routing_number": "021000021",
             "account_number": "9876543210",
             "deposit_type": "full",
         },
@@ -1040,7 +1040,7 @@ def test_tier3_complete_workflow(client: any, db_session: Session, seed_accounts
         f"/portal/{token}/bank",
         data={
             "account_kind": "checking",
-            "routing_number": "987654321",
+            "routing_number": "021000021",
             "account_number": "1234567890",
             "deposit_type": "full",
         },
@@ -1342,8 +1342,13 @@ def test_reseller_permit_crud(client: any):
     assert created["jurisdiction"] == "WA"
     # WA 9-digit format auto-normalizes — dashes stripped on write
     assert created["permit_number"] == "123456789"
-    # Verification URL pre-filled for WA
-    assert created["verification_url"] and "dor.wa.gov" in created["verification_url"]
+    # Verification URL pre-filled for WA (parse the host rather than a
+    # substring check — py/incomplete-url-substring-sanitization)
+    from urllib.parse import urlparse
+
+    assert created["verification_url"]
+    _host = urlparse(created["verification_url"]).hostname or ""
+    assert _host == "dor.wa.gov" or _host.endswith(".dor.wa.gov")
 
     fetched = client.get(f"/api/reseller-permits/{pid}").json()
     assert fetched["id"] == pid

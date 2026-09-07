@@ -9,6 +9,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.models.banking import BankTransaction
+from app.services.bank_rules_engine import apply_bank_rules
 
 
 def parse_ofx(content: str) -> list[dict]:
@@ -78,9 +79,16 @@ def _extract_tag(block: str, tag: str) -> str:
 
 
 def import_transactions(
-    db: Session, bank_account_id: int, transactions: list[dict]
+    db: Session,
+    bank_account_id: int,
+    transactions: list[dict],
+    import_source: str = "ofx",
 ) -> dict:
-    """Import parsed transactions, deduplicating by FITID."""
+    """Import parsed transactions, deduplicating by FITID.
+
+    Shared by the OFX upload path and the SimpleFIN feed (which passes
+    import_source="simplefin" and SimpleFIN transaction ids as fitids).
+    """
     imported = 0
     skipped = 0
 
@@ -108,7 +116,7 @@ def import_transactions(
             payee=txn.get("payee", ""),
             description=txn.get("memo", ""),
             import_id=fitid,
-            import_source="ofx",
+            import_source=import_source,
             match_status="unmatched",
         )
         db.add(bt)
@@ -118,47 +126,6 @@ def import_transactions(
 
     # Auto-apply bank rules to newly imported transactions
     if imported > 0:
-        try:
-            from app.models.bank_rules import BankRule
-
-            rules = (
-                db.query(BankRule)
-                .filter(BankRule.is_active)
-                .order_by(BankRule.priority.desc())
-                .all()
-            )
-            if rules:
-                unmatched = (
-                    db.query(BankTransaction)
-                    .filter(
-                        BankTransaction.bank_account_id == bank_account_id,
-                        BankTransaction.match_status == "unmatched",
-                    )
-                    .all()
-                )
-                auto_matched = 0
-                for txn in unmatched:
-                    payee = (txn.payee or "").lower()
-                    for rule in rules:
-                        pattern = rule.pattern.lower()
-                        hit = False
-                        if rule.rule_type == "contains" and pattern in payee:
-                            hit = True
-                        elif rule.rule_type == "starts_with" and payee.startswith(
-                            pattern
-                        ):
-                            hit = True
-                        elif rule.rule_type == "exact" and payee == pattern:
-                            hit = True
-                        if hit:
-                            if rule.account_id:
-                                txn.category_account_id = rule.account_id
-                            txn.match_status = "auto"
-                            auto_matched += 1
-                            break
-                if auto_matched > 0:
-                    db.commit()
-        except ImportError:
-            pass  # bank_rules model not available yet
+        apply_bank_rules(db, bank_account_id)
 
     return {"imported": imported, "skipped": skipped, "total": len(transactions)}

@@ -7,23 +7,14 @@
 # ============================================================================
 
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 from sqlalchemy.orm import joinedload
 
 from app.models.payroll import Employee, PayRun, PayStub, PayRunStatus
+from app.services.accounting import _q
 from app.services.payroll_service import SS_WAGE_BASE
-from app.services.pdf_service import _jinja_env, _safe_url_fetcher
-from weasyprint import HTML
-
-CENT = Decimal("0.01")
-
-
-def _q(value) -> Decimal:
-    """Coerce to Decimal and quantize to cents."""
-    if not isinstance(value, Decimal):
-        value = Decimal(str(value or 0))
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
+from app.services.pdf_service import _jinja_env, render_pdf
 
 
 def _year_stubs(db, year: int, employee_id: int | None = None) -> list[PayStub]:
@@ -94,42 +85,69 @@ def _employee_box_totals(stubs: list[PayStub]) -> dict:
     }
 
 
-def compute_w2(db, year: int, employee_id: int) -> dict:
-    """Annual W-2 wage statement for one employee."""
-    employee = db.query(Employee).filter(Employee.id == employee_id).first()
-    stubs = _year_stubs(db, year, employee_id)
-    boxes = _employee_box_totals(stubs)
+def _employee_dict(employee: Employee | None) -> dict | None:
+    """Serialize the employee block embedded in a W-2 result."""
+    if employee is None:
+        return None
+    return {
+        "id": employee.id,
+        "name": employee.full_name,
+        "first_name": employee.first_name,
+        "last_name": employee.last_name,
+        "ssn_last_four": employee.ssn_last_four,
+        "address1": employee.address1,
+        "address2": employee.address2,
+        "city": employee.city,
+        "state": employee.state,
+        "zip": employee.zip,
+        "work_state": employee.work_state,
+    }
 
+
+def _build_w2(
+    year: int, employee_id: int, employee: Employee | None, stubs: list
+) -> dict:
+    """Assemble one W-2 result dict from already-fetched stubs."""
     result: dict = {
         "year": year,
         "employee_id": employee_id,
         "num_stubs": len(stubs),
+        "employee": _employee_dict(employee),
     }
-    if employee is not None:
-        result["employee"] = {
-            "id": employee.id,
-            "name": employee.full_name,
-            "first_name": employee.first_name,
-            "last_name": employee.last_name,
-            "ssn_last_four": employee.ssn_last_four,
-            "address1": employee.address1,
-            "address2": employee.address2,
-            "city": employee.city,
-            "state": employee.state,
-            "zip": employee.zip,
-            "work_state": employee.work_state,
-        }
-    else:
-        result["employee"] = None
-    result.update(boxes)
+    result.update(_employee_box_totals(stubs))
     return result
 
 
+def compute_w2(db, year: int, employee_id: int) -> dict:
+    """Annual W-2 wage statement for one employee."""
+    employee = db.query(Employee).filter(Employee.id == employee_id).first()
+    stubs = _year_stubs(db, year, employee_id)
+    return _build_w2(year, employee_id, employee, stubs)
+
+
 def compute_all_w2(db, year: int) -> list[dict]:
-    """W-2 statements for every employee with wages in the year."""
+    """W-2 statements for every employee with wages in the year.
+
+    Single-pass: fetch every PROCESSED stub for the year ONCE (with the
+    employee joined-loaded), bucket by employee_id in Python, and build each
+    W-2 from the in-memory group — no per-employee re-query (fixes the N+1
+    that compute_w2-in-a-loop would otherwise produce).
+    """
     stubs = _year_stubs(db, year)
-    employee_ids = sorted({s.employee_id for s in stubs if s.employee_id})
-    return [compute_w2(db, year, emp_id) for emp_id in employee_ids]
+
+    by_employee: dict[int, list] = {}
+    employees: dict[int, Employee] = {}
+    for s in stubs:
+        if not s.employee_id:
+            continue
+        by_employee.setdefault(s.employee_id, []).append(s)
+        if s.employee_id not in employees and s.employee is not None:
+            employees[s.employee_id] = s.employee
+
+    return [
+        _build_w2(year, emp_id, employees.get(emp_id), by_employee[emp_id])
+        for emp_id in sorted(by_employee)
+    ]
 
 
 def compute_w3(db, year: int) -> dict:
@@ -168,7 +186,7 @@ def generate_w2_pdf(
     data = compute_w2(db, year, employee_id)
     template = _jinja_env.get_template("w2.html")
     html_str = template.render(data=data, company=company or {}, audit=audit or {})
-    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    return render_pdf(html_str)
 
 
 def generate_w3_pdf(db, year: int, company: dict, audit: dict | None = None) -> bytes:
@@ -176,4 +194,4 @@ def generate_w3_pdf(db, year: int, company: dict, audit: dict | None = None) -> 
     data = compute_w3(db, year)
     template = _jinja_env.get_template("w3.html")
     html_str = template.render(data=data, company=company or {}, audit=audit or {})
-    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    return render_pdf(html_str)

@@ -1,6 +1,5 @@
 # ============================================================================
-# Decompiled from qbw32.exe!CCompanyInfo + CQBPreferences
-# Offset: 0x00241200 / 0x0023F000
+# Settings — one key-value table, merged over DEFAULT_SETTINGS on read.
 # Original stored company info in the .QBW file header (bytes 0x40-0x1FF)
 # encrypted with a simple XOR 0x1F cipher. Preferences lived in the registry
 # at HKCU\Software\Intuit\QuickBooks\12.0\Preferences.
@@ -24,6 +23,16 @@ class Settings(Base):
 
 # Default settings keys
 DEFAULT_SETTINGS = {
+    # Receipt-scanning engine preference: "auto" = platform-native engine
+    # first (Windows OCR / Apple Vision), tesseract fallback; "tesseract"
+    # = prefer tesseract when installed (sharper region reads). The
+    # SLOWBOOKS_OCR_ENGINE env var (support tool) outranks this.
+    "ocr_engine": "auto",
+    # Company type drives the vocabulary (Customer/Donor, Invoice/Pledge,
+    # Class/Fund ...), the nonprofit nav items and reports, the default
+    # dashboard layout and the on-demand net-asset accounts. Data never
+    # changes name; only what is rendered. business | nonprofit
+    "company_type": "business",
     "company_name": "My Company",
     "company_address1": "",
     "company_address2": "",
@@ -57,11 +66,39 @@ DEFAULT_SETTINGS = {
     "smtp_use_tls": "true",
     # Feature 15: Company Logo
     "company_logo_path": "",
+    # Report PDF paper size: letter | a4
+    "pdf_paper_size": "letter",
+    # Opening-balance wizard readiness metadata
+    "chart_setup_source": "",
+    "chart_setup_ready_at": "",
+    # Multi-currency: ISO code the general ledger is kept in
+    "home_currency": "USD",
     # Stripe Online Payments
     "stripe_enabled": "false",
     "stripe_publishable_key": "",
     "stripe_secret_key": "",
     "stripe_webhook_secret": "",
+    # PayPal Online Payments
+    "paypal_enabled": "false",
+    "paypal_environment": "sandbox",  # sandbox | live
+    "paypal_client_id": "",
+    "paypal_client_secret": "",
+    "paypal_webhook_id": "",
+    # Square Online Payments
+    "square_enabled": "false",
+    "square_environment": "sandbox",  # sandbox | production
+    "square_access_token": "",
+    "square_location_id": "",
+    "square_webhook_signature_key": "",
+    # Square signs webhooks over the EXACT notification URL registered in
+    # its dashboard; set this to that URL (required for webhook verification)
+    "square_notification_url": "",
+    # SimpleFIN bank feeds (user-held bridge.simplefin.org credential).
+    # access_url embeds basic-auth creds — listed in SECRET_KEYS.
+    "simplefin_access_url": "",
+    "simplefin_account_map": "{}",  # JSON {simplefin id: bank_account_id}
+    "simplefin_accounts_cache": "[]",  # last-seen bridge accounts, for the UI
+    "simplefin_last_sync": "",
     # QuickBooks Online Integration
     "qbo_enabled": "false",
     "qbo_client_id": "",

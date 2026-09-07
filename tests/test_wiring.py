@@ -56,13 +56,29 @@ def _normalize_js_path(raw: str) -> str:
     return path
 
 
+def _iter_app_routes(routes):
+    """Yield concrete routes across FastAPI versions.
+
+    FastAPI 0.141 wraps each include_router() in an _IncludedRouter that
+    carries no .path itself — the real APIRoutes live on its
+    .original_router. Older versions put routes directly in app.routes.
+    Duck-typed so both shapes work.
+    """
+    for route in routes:
+        if hasattr(route, "path"):
+            yield route
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            yield from _iter_app_routes(inner.routes)
+
+
 @pytest.fixture(scope="module")
 def app_routes():
     """List of (METHOD, [path_segments]) for every registered FastAPI route."""
     from app.main import app
 
     out = []
-    for route in app.routes:
+    for route in _iter_app_routes(app.routes):
         methods = getattr(route, "methods", None) or set()
         segs = route.path.split("/")
         for m in methods:
@@ -247,7 +263,12 @@ def test_collector_finds_something():
 # - One-shot seeds run once during setup, not from the running SPA
 # - Legacy paths superseded by newer endpoints (kept for backwards compat)
 _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
-    ("POST", "/api/stripe/webhook"),
+    ("POST", "/api/stripe/webhook"),  # legacy alias for provider webhook
+    # Provider payment routes without SPA callers: webhooks fire from the
+    # provider's servers; create-checkout-session is called from the
+    # public /pay/{token} page (a Jinja template, outside the JS scan).
+    ("POST", "/api/payments/{provider_name}/webhook"),
+    ("POST", "/api/payments/{provider_name}/create-checkout-session"),
     ("GET", "/api/qbo/callback"),
     ("POST", "/api/deductions/types/seed-standard"),
     ("POST", "/api/payroll/gross-up"),
@@ -309,9 +330,6 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     # Backup restore — dangerous; deliberately not exposed in the SPA.
     # Run via CLI: `python -m app.services.backup restore <file>`.
     ("POST", "/api/backups/restore"),
-    # Stripe checkout — billing/upgrade flow not surfaced yet (product is
-    # currently a single-tier release). Webhook handler already on this list.
-    ("POST", "/api/stripe/create-checkout-session"),
     # Employee self-service "submit timecard" — meant to be called from
     # the employee portal, not the admin TimeEntriesPage (which uses
     # /approve and /reject). Portal time-entry UI is future work.

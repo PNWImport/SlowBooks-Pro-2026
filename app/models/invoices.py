@@ -1,9 +1,6 @@
 # ============================================================================
-# Decompiled from qbw32.exe!CInvoiceManager  Offset: 0x0015C800
-# Original Btrieve table: INVOICE.DAT (record size 0x0340)
-# + INVOICE_LINE.DAT (variable-length records, max 1000 lines per invoice)
-# CInvoice inherits from CQBTxnBase — all invoices generate journal entries
-# through the TransactionBus (see transactions.py)
+# Invoices — header + line items.
+# Every invoice generates a balanced journal entry (see transactions.py).
 # ============================================================================
 # Fun fact: QB2003 hardcoded a max of 14 characters for invoice numbers.
 # We lifted that to 50 because it's not 2003 anymore. Mostly.
@@ -13,6 +10,7 @@ import enum
 import uuid
 
 from sqlalchemy import (
+    Boolean,
     Column,
     Integer,
     String,
@@ -22,6 +20,7 @@ from sqlalchemy import (
     Text,
     Enum,
     ForeignKey,
+    false,
     func,
 )
 from sqlalchemy.orm import relationship
@@ -30,12 +29,11 @@ from app.database import Base
 
 
 class InvoiceStatus(str, enum.Enum):
-    # enum InvStatus @ 0x0015CA30 — originally a DWORD bitfield
-    DRAFT = "draft"  # 0x00 — "Pending" in original UI
-    SENT = "sent"  # 0x01
-    PARTIAL = "partial"  # 0x02 — "PartialPmt" internally
-    PAID = "paid"  # 0x04
-    VOID = "void"  # 0x08 — sets TxnVoidFlag in JRNL.DAT
+    DRAFT = "draft"  # "Pending" in the QB2003 UI
+    SENT = "sent"
+    PARTIAL = "partial"
+    PAID = "paid"
+    VOID = "void"
 
 
 class Invoice(Base):
@@ -75,7 +73,7 @@ class Invoice(Base):
     notes = Column(Text, nullable=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
 
-    # Stripe online payments
+    # Online payments (Stripe / any registered provider)
     payment_token = Column(
         String(36),
         unique=True,
@@ -84,6 +82,39 @@ class Invoice(Base):
         default=lambda: str(uuid.uuid4()),
     )
     stripe_checkout_session_id = Column(String(255), nullable=True)
+    # Most recent checkout attempt: which provider, and its session/order id.
+    # checkout_external_id is indexed because providers without metadata
+    # passthrough (Square) resolve the invoice by this id on webhook/poll.
+    checkout_provider = Column(String(20), nullable=True)
+    checkout_external_id = Column(String(255), nullable=True, index=True)
+
+    # Class tracking dimension (QB-style); NULL groups with Uncategorized
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
+    # Job-costing dimension (QB "Customer:Job"); NULL = no job
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+
+    # Sales receipt = invoice + payment entered as one step (QB's "Enter
+    # Sales Receipts"). Stored as a regular Invoice so reports, PDFs, and
+    # exports need no special casing; the flag drives the dedicated list
+    # and QB interop typing.
+    is_sales_receipt = Column(
+        Boolean, nullable=False, default=False, server_default=false(), index=True
+    )
+
+    # Multi-currency: document currency + rate it was booked at (GL is home)
+    currency = Column(String(3), nullable=True)
+    exchange_rate = Column(Numeric(18, 8), nullable=True)
+
+    # Nonprofit: a pledge prints as one (a nonprofit still invoices program
+    # fees); a donation receipt states what the donor got back so the
+    # deductible portion prints (IRS Pub. 1771). recurring_invoice_id links
+    # a generated invoice to its template for the pledge report.
+    is_pledge = Column(Boolean, nullable=False, default=False, server_default=false())
+    fair_value_amount = Column(Numeric(12, 2), nullable=True)
+    fair_value_description = Column(String(200), nullable=True)
+    recurring_invoice_id = Column(
+        Integer, ForeignKey("recurring_invoices.id"), nullable=True, index=True
+    )
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
@@ -113,6 +144,14 @@ class InvoiceLine(Base):
     rate = Column(Numeric(12, 2), default=0)
     amount = Column(Numeric(12, 2), default=0)
     class_name = Column(String(100), nullable=True)
+    # Per-line job / class; NULL falls back to the transaction header
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
+    cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)
+    # Per-line sales tax (default: the item's flag, or taxable). A customer-
+    # owned-device repair is labor with no tax; the part on the same invoice
+    # is taxed.
+    is_taxable = Column(Boolean, nullable=False, default=True)
     line_order = Column(Integer, default=0)
 
     invoice = relationship("Invoice", back_populates="lines")

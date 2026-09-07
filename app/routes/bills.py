@@ -4,26 +4,29 @@
 # ============================================================================
 
 from datetime import timedelta
+import re
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
+from app.routes._helpers import clamp_pagination
 from app.models.bills import Bill, BillLine, BillStatus
 from app.models.contacts import Vendor
 from app.models.items import Item
 from app.models.accounts import Account
 from app.schemas.bills import BillCreate, BillResponse
-from app.services.accounting import _q, create_journal_entry, compute_line_totals
+from app.services.accounting import (
+    _q,
+    create_journal_entry,
+    compute_line_totals,
+    get_ap_account_id,
+    reversing_lines,
+)
 from app.services.closing_date import check_closing_date
 
 router = APIRouter(prefix="/api/bills", tags=["bills"])
-
-
-def _get_ap_account_id(db):
-    acct = db.query(Account).filter(Account.account_number == "2000").first()
-    return acct.id if acct else None
 
 
 @router.get("", response_model=list[BillResponse])
@@ -34,8 +37,7 @@ def list_bills(
     limit: int = 500,
     db: Session = Depends(get_db),
 ):
-    limit = max(1, min(limit, 1000))
-    skip = max(0, skip)
+    skip, limit = clamp_pagination(skip, limit)
     # Eager-load vendor + lines so a 500-row list doesn't fire 1001
     # follow-up SELECTs through BillResponse.model_validate.
     q = db.query(Bill).options(
@@ -67,6 +69,27 @@ def get_bill(bill_id: int, db: Session = Depends(get_db)):
     return resp
 
 
+def _default_bill_number(db: Session, vendor: Vendor, date) -> str:
+    """'20260902-GK' for Gin Kee on 2026-09-02; '-2', '-3' … when that
+    vendor already has a bill under the same generated number."""
+    initials = "".join(
+        w[0] for w in re.findall(r"[A-Za-z0-9]+", vendor.name or "")
+    ).upper()[:4]
+    base = f"{date:%Y%m%d}-{initials or 'BILL'}"
+    taken = {
+        row[0]
+        for row in db.query(Bill.bill_number)
+        .filter(Bill.vendor_id == vendor.id, Bill.bill_number.like(f"{base}%"))
+        .all()
+    }
+    if base not in taken:
+        return base
+    n = 2
+    while f"{base}-{n}" in taken:
+        n += 1
+    return f"{base}-{n}"
+
+
 @router.post("", response_model=BillResponse, status_code=201)
 def create_bill(data: BillCreate, db: Session = Depends(get_db)):
     check_closing_date(db, data.date)
@@ -75,19 +98,29 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
     if not vendor:
         raise HTTPException(status_code=404, detail="Vendor not found")
 
+    # The bill number is the VENDOR's invoice number (the scan pre-fills it
+    # when the receipt prints one). A receipt with no number shouldn't block
+    # the entry: fall back to date + vendor initials, suffixed if that
+    # vendor already has one for the day.
+    bill_number = (data.bill_number or "").strip()
+    if not bill_number:
+        bill_number = _default_bill_number(db, vendor, data.date)
+    data.bill_number = bill_number
+
     # Reject duplicate vendor + bill_number combos. Vendors typically use a
     # monotonically-increasing invoice number; receiving the same one twice is
     # almost always a re-entry mistake, and accepting it silently produces
-    # duplicate payables and double-counted expenses.
+    # duplicate payables and double-counted expenses. (Scoped to the vendor:
+    # two different vendors can both send invoice 111.)
     dup = (
         db.query(Bill)
-        .filter(Bill.vendor_id == data.vendor_id, Bill.bill_number == data.bill_number)
+        .filter(Bill.vendor_id == data.vendor_id, Bill.bill_number == bill_number)
         .first()
     )
     if dup:
         raise HTTPException(
             status_code=409,
-            detail=f"Bill number {data.bill_number!r} already exists for this vendor (bill #{dup.id})",
+            detail=f"Bill number {bill_number!r} already exists for this vendor (bill #{dup.id})",
         )
 
     due_date = data.due_date
@@ -100,8 +133,14 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
 
     subtotal, tax_amount, total = compute_line_totals(data.lines, data.tax_rate)
 
+    from app.services.currency import convert_lines, resolve_rate
+
+    doc_currency, doc_rate = resolve_rate(db, data.currency, data.exchange_rate)
+
     bill = Bill(
         bill_number=data.bill_number,
+        currency=doc_currency,
+        exchange_rate=doc_rate,
         vendor_id=data.vendor_id,
         date=data.date,
         due_date=due_date,
@@ -113,6 +152,8 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
         tax_amount=tax_amount,
         total=total,
         balance_due=total,
+        class_id=data.class_id,
+        job_id=data.job_id,
         notes=data.notes,
     )
     db.add(bill)
@@ -187,6 +228,11 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
                 quantity=line_data.quantity,
                 rate=line_data.rate,
                 amount=amt,
+                job_id=line_data.job_id,
+                class_id=line_data.class_id,
+                cost_code_id=line_data.cost_code_id,
+                function=line_data.function,
+                is_billable=line_data.is_billable,
                 line_order=line_data.line_order or i,
             )
         )
@@ -198,6 +244,16 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
                     "debit": amt,
                     "credit": Decimal("0"),
                     "description": line_data.description or "",
+                    "job_id": line_data.job_id,
+                    "class_id": line_data.class_id,
+                    "cost_code_id": line_data.cost_code_id,
+                    "is_billable": line_data.is_billable,
+                    # absent = default from the fund; explicit null = unassigned
+                    **(
+                        {"function": line_data.function}
+                        if "function" in line_data.model_fields_set
+                        else {}
+                    ),
                 }
             )
 
@@ -215,7 +271,7 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
             )
 
     # Credit AP
-    ap_id = _get_ap_account_id(db)
+    ap_id = get_ap_account_id(db)
     if ap_id and journal_lines:
         journal_lines.append(
             {
@@ -229,9 +285,11 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
             db,
             data.date,
             f"Bill {data.bill_number} - {vendor.name}",
-            journal_lines,
+            convert_lines(journal_lines, doc_rate),
             source_type="bill",
             source_id=bill.id,
+            class_id=bill.class_id,
+            job_id=bill.job_id,
         )
         bill.transaction_id = txn.id
 
@@ -264,6 +322,18 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Bill not found")
     if bill.status == BillStatus.VOID:
         raise HTTPException(status_code=400, detail="Bill already voided")
+    # Voiding a bill with payments applied would reverse the full A/P
+    # while the bill payment's cash JE + allocations stay on the books —
+    # double-counting cash and reversing A/P twice. Require the payment(s)
+    # to be voided first so the ledger stays consistent (mirrors void_invoice).
+    if (bill.amount_paid or Decimal("0")) > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Cannot void a bill with payments applied. Void the "
+                "bill payment(s) first, then void the bill."
+            ),
+        )
     # Voids post a reversing entry dated to the bill — must respect the
     # closing date like invoice/payment/journal voids already do, or a bill
     # can be reversed into a locked period.
@@ -277,15 +347,7 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
             .filter(TransactionLine.transaction_id == bill.transaction_id)
             .all()
         )
-        reverse_lines = [
-            {
-                "account_id": ol.account_id,
-                "debit": ol.credit,
-                "credit": ol.debit,
-                "description": f"VOID: {ol.description or ''}",
-            }
-            for ol in original_lines
-        ]
+        reverse_lines = reversing_lines(original_lines)
         if reverse_lines:
             create_journal_entry(
                 db,
@@ -294,6 +356,8 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
                 reverse_lines,
                 source_type="bill_void",
                 source_id=bill.id,
+                class_id=bill.class_id,
+                job_id=bill.job_id,
             )
 
     # Phase 11: reverse inventory receipts (the reversing JE already undoes

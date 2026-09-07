@@ -1,9 +1,6 @@
 # ============================================================================
-# Decompiled from qbw32.exe!CCreateEstimatesView  Offset: 0x00195200
-# CEstimate::ConvertToInvoice() at 0x001944A0 deep-copied every field and
-# line item, then set EstimateStatus to CONVERTED. Our version does the same
-# through SQL. The PDF generation was originally Crystal Reports — we use
-# WeasyPrint now because Crystal Reports licenses cost more than this app.
+# Estimates — "Convert to Invoice" deep-copies every field and line item,
+# then marks the estimate CONVERTED. PDFs are rendered with WeasyPrint.
 # ============================================================================
 
 from datetime import timedelta
@@ -15,12 +12,15 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
+from app.routes.invoices.helpers import resolve_line_taxable
+from app.routes._helpers import clamp_pagination
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
 from app.models.contacts import Customer
 from app.schemas.estimates import EstimateCreate, EstimateUpdate, EstimateResponse
 from app.schemas.invoices import InvoiceResponse
 from app.services.pdf_service import generate_estimate_pdf
+from app.services.numbering import next_estimate_number, next_invoice_number
 from app.services.settings_service import get_all_settings as get_settings, set_setting
 from app.services.accounting import (
     _q,
@@ -34,31 +34,15 @@ from app.services.accounting import (
 router = APIRouter(prefix="/api/estimates", tags=["estimates"])
 
 
-def _next_estimate_number(db: Session) -> str:
-    settings = get_settings(db)
-    prefix = settings.get("estimate_prefix", "E-")
-    next_number = settings.get("estimate_next_number", "1001").strip() or "1001"
-    try:
-        current_number = int(next_number)
-    except ValueError:
-        current_number = 1001
-
-    while True:
-        estimate_number = f"{prefix}{current_number}"
-        exists = (
-            db.query(Estimate.id)
-            .filter(Estimate.estimate_number == estimate_number)
-            .first()
-        )
-        if not exists:
-            return estimate_number
-        current_number += 1
-
-
 @router.get("", response_model=list[EstimateResponse])
 def list_estimates(
-    status: str = None, customer_id: int = None, db: Session = Depends(get_db)
+    status: str = None,
+    customer_id: int = None,
+    skip: int = 0,
+    limit: int = 500,
+    db: Session = Depends(get_db),
 ):
+    skip, limit = clamp_pagination(skip, limit)
     # Eager-load .customer and .lines to avoid N+1 during model_validate.
     q = db.query(Estimate).options(
         joinedload(Estimate.customer),
@@ -68,7 +52,7 @@ def list_estimates(
         q = q.filter(Estimate.status == status)
     if customer_id:
         q = q.filter(Estimate.customer_id == customer_id)
-    estimates = q.order_by(Estimate.date.desc()).all()
+    estimates = q.order_by(Estimate.date.desc()).offset(skip).limit(limit).all()
     results = []
     for est in estimates:
         resp = EstimateResponse.model_validate(est)
@@ -97,16 +81,17 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
 
     cust_id = customer.id
     cust_name = customer.name
+    resolve_line_taxable(db, data.lines, customer)
     subtotal, tax_amount, total = compute_line_totals(data.lines, data.tax_rate)
 
     estimate = None
     estimate_number = None
     last_err = None
-    # Same race as create_invoice: _next_estimate_number's check-then-insert
+    # Same race as create_invoice: next_estimate_number's check-then-insert
     # window lets two concurrent creates pick the same number. Retry on
     # IntegrityError; the UNIQUE constraint is the safety net.
     for _ in range(10):
-        estimate_number = _next_estimate_number(db)
+        estimate_number = next_estimate_number(db)
         estimate = Estimate(
             estimate_number=estimate_number,
             customer_id=cust_id,
@@ -117,6 +102,8 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
             tax_amount=tax_amount,
             total=total,
             notes=data.notes,
+            class_id=data.class_id,
+            job_id=data.job_id,
         )
         db.add(estimate)
         try:
@@ -143,6 +130,12 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
             rate=line_data.rate,
             amount=_q(Decimal(str(line_data.quantity)) * Decimal(str(line_data.rate))),
             class_name=line_data.class_name,
+            job_id=line_data.job_id,
+            cost_code_id=line_data.cost_code_id,
+            unit_cost=line_data.unit_cost,
+            is_taxable=(
+                line_data.is_taxable if line_data.is_taxable is not None else True
+            ),
             line_order=line_data.line_order or i,
         )
         db.add(line)
@@ -184,11 +177,18 @@ def update_estimate(
                     Decimal(str(line_data.quantity)) * Decimal(str(line_data.rate))
                 ),
                 class_name=line_data.class_name,
+                job_id=line_data.job_id,
+                cost_code_id=line_data.cost_code_id,
+                unit_cost=line_data.unit_cost,
+                is_taxable=(
+                    line_data.is_taxable if line_data.is_taxable is not None else True
+                ),
                 line_order=line_data.line_order or i,
             )
             db.add(line)
 
         tax_rate = data.tax_rate if data.tax_rate is not None else estimate.tax_rate
+        resolve_line_taxable(db, data.lines, estimate.customer)
         subtotal, tax_amount, total = compute_line_totals(data.lines, tax_rate)
         estimate.subtotal = subtotal
         estimate.tax_amount = tax_amount
@@ -204,7 +204,7 @@ def update_estimate(
 
 @router.get("/{estimate_id}/pdf")
 def estimate_pdf(estimate_id: int, db: Session = Depends(get_db)):
-    """Generate PDF — CEstimatePrintLayout::RenderPage() @ 0x00221800"""
+    """Generate the estimate PDF."""
     est = db.query(Estimate).filter(Estimate.id == estimate_id).first()
     if not est:
         raise HTTPException(status_code=404, detail="Estimate not found")
@@ -249,7 +249,7 @@ def estimate_print_preview(estimate_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{estimate_id}/convert", response_model=InvoiceResponse)
 def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
-    """CEstimate::ConvertToInvoice() @ 0x001944A0 — deep-copies all fields/lines"""
+    """Convert to invoice — deep-copies all fields and lines."""
     from app.services.closing_date import check_closing_date
 
     estimate = db.query(Estimate).filter(Estimate.id == estimate_id).first()
@@ -262,9 +262,8 @@ def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
     check_closing_date(db, estimate.date)
 
     # Get next invoice number
-    from app.routes.invoices import _next_invoice_number
 
-    invoice_number = _next_invoice_number(db)
+    invoice_number = next_invoice_number(db)
 
     # Parse terms for due date
     settings = get_settings(db)
@@ -292,6 +291,8 @@ def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
         tax_amount=estimate.tax_amount,
         total=estimate.total,
         balance_due=estimate.total,
+        class_id=estimate.class_id,
+        job_id=estimate.job_id,
         notes=estimate.notes,
     )
     db.add(invoice)
@@ -306,6 +307,9 @@ def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
             rate=eline.rate,
             amount=eline.amount,
             class_name=eline.class_name,
+            job_id=eline.job_id,
+            cost_code_id=eline.cost_code_id,
+            is_taxable=eline.is_taxable,
             line_order=eline.line_order,
         )
         db.add(iline)
@@ -369,6 +373,8 @@ def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
             source_type="invoice",
             source_id=invoice.id,
             reference=invoice_number,
+            class_id=invoice.class_id,
+            job_id=invoice.job_id,
         )
         invoice.transaction_id = txn.id
 

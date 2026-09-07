@@ -1,13 +1,6 @@
 # ============================================================================
-# Decompiled from qbw32.exe!CCustomerManager + CVendorManager
-# Offset: 0x000D8400 (Customer) / 0x000DC200 (Vendor)
-# Original Btrieve tables: CUST.DAT (rec 0x0280) + VENDOR.DAT (rec 0x0200)
-# Both inherit from CQBNameBase — Intuit's base class for any "name list"
-# entry (customers, vendors, employees, other names).
-# ============================================================================
-# NOTE: Original had a 41-character limit on customer names inherited from
-# the QuickBooks 1.0 DOS version. We found this out the hard way during
-# decompilation when field 0x02 was a char[41] with null terminator.
+# Customers + Vendors — QuickBooks treated every contact as a "name list"
+# entry (customers, vendors, employees, other names); same idea here.
 # ============================================================================
 
 from sqlalchemy import (
@@ -23,7 +16,6 @@ from sqlalchemy import (
 )
 
 from app.database import Base
-from app.services.encryption import EncryptedString
 
 
 class Customer(Base):
@@ -56,13 +48,17 @@ class Customer(Base):
 
     terms = Column(String(50), default="Net 30")
     credit_limit = Column(Numeric(12, 2), nullable=True)
-    # Taxpayer identification number (EIN/SSN) — encrypted at rest. Read on
-    # the 1099 path via the ORM; never filtered or indexed.
-    tax_id = Column(EncryptedString(255), nullable=True)
+    tax_id = Column(String(50), nullable=True)
     is_taxable = Column(Boolean, default=True)
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     balance = Column(Numeric(12, 2), default=0)
+    # Nonprofit: the donor record. individual | organization; the
+    # salutation opens the acknowledgment letter; the year-end statement
+    # batch skips donors who opted out.
+    donor_type = Column(String(20), nullable=True)
+    salutation = Column(String(100), nullable=True)
+    send_year_end_statement = Column(Boolean, nullable=False, default=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
@@ -89,9 +85,7 @@ class Vendor(Base):
     country = Column(String(100), default="US")
 
     terms = Column(String(50), default="Net 30")
-    # Taxpayer identification number (EIN/SSN) — encrypted at rest. Read on
-    # the 1099 path via the ORM; never filtered or indexed.
-    tax_id = Column(EncryptedString(255), nullable=True)
+    tax_id = Column(String(50), nullable=True)
     account_number = Column(String(50), nullable=True)
     default_expense_account_id = Column(
         Integer, ForeignKey("accounts.id"), nullable=True

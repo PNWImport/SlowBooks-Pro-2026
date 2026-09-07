@@ -1,9 +1,6 @@
 /**
- * Decompiled from QBW32.EXE!CVendorCenterView  Offset: 0x000DD800
- * Nearly identical to CCustomerCenterView — Intuit copy-pasted the customer
- * code and did a find-replace of "Customer" with "Vendor". We know this
- * because the Vendor center still had a "Customer:Job" label in the resource
- * table (RT_DIALOG id=0x00A7) that they forgot to rename. Classic.
+ * Vendor Center — a near-mirror of the Customer Center; the two views
+ * share their layout on purpose.
  */
 const VendorsPage = {
     async render() {
@@ -22,8 +19,8 @@ const VendorsPage = {
         } else {
             html += `<div class="table-container"><table>
                 <thead><tr>
-                    <th>Name</th><th>Company</th><th>Phone</th><th>Email</th>
-                    <th class="amount">Balance</th><th>Actions</th>
+                    <th scope="col">Name</th><th scope="col">Company</th><th scope="col">Phone</th><th scope="col">Email</th>
+                    <th scope="col" class="amount">Balance</th><th scope="col">Actions</th>
                 </tr></thead><tbody>`;
             for (const v of vendors) {
                 html += `<tr>
@@ -44,7 +41,7 @@ const VendorsPage = {
 
     async showForm(id = null) {
         let v = { name:'', company:'', email:'', phone:'', fax:'', website:'',
-            address1:'', address2:'', city:'', state:'', zip:'',
+            address1:'', address2:'', city:'', state:'', zip:'', country:'US',
             terms:'Net 30', tax_id:'', account_number:'', default_expense_account_id:'',
             is_1099_vendor:false, vendor_1099_type:'', notes:'' };
         if (id) v = await API.get(`/vendors/${id}`);
@@ -76,10 +73,12 @@ const VendorsPage = {
                         <input name="address2" value="${escapeHtml(v.address2 || '')}"></div>
                     <div class="form-group"><label>City</label>
                         <input name="city" value="${escapeHtml(v.city || '')}"></div>
-                    <div class="form-group"><label>State</label>
+                    <div class="form-group"><label>State / County</label>
                         <input name="state" value="${escapeHtml(v.state || '')}"></div>
-                    <div class="form-group"><label>ZIP</label>
+                    <div class="form-group"><label>ZIP / Postcode</label>
                         <input name="zip" value="${escapeHtml(v.zip || '')}"></div>
+                    <div class="form-group"><label>Country</label>
+                        <select name="country">${countryOptions(v.country || 'US')}</select></div>
                 </div>
                 <div class="form-grid" style="margin-top:16px;">
                     <div class="form-group"><label>Terms</label>
@@ -176,5 +175,127 @@ const VendorsPage = {
         closeModal();
         await VendorsPage.save(fakeEvt, id, true);
         VendorsPage._pendingForm = null;
+    },
+};
+
+/**
+ * Vendor picker with inline quick-add, shared by the Bill and Expense forms.
+ * A scanned receipt names a merchant the books may not know yet; the
+ * operator shouldn't have to leave the form to add them (SkyTech build-42
+ * lap: "you need to select a vendor or you can't complete").
+ *
+ * Markup: <select id=ID name="vendor_id"> with a "+ New Vendor" option that
+ * reveals #ID-new (name input + Save/Cancel). save() creates the vendor and
+ * selects it; ensure() is the form-submit path — it creates the vendor from
+ * the name box if the operator picked "+ New Vendor" but never hit Save.
+ */
+const VendorQuickAdd = {
+    NEW: '__new__',
+
+    html(vendors, { id = 'vendor-select', onchange = '', required = true } = {}) {
+        const opts = vendors.map(v => `<option value="${v.id}">${escapeHtml(v.name)}</option>`).join('');
+        const change = `VendorQuickAdd.selected('${id}');${onchange}`;
+        return `
+            <select name="vendor_id" id="${id}" ${required ? 'required' : ''} onchange="${change}">
+                <option value="">Select...</option><option value="${this.NEW}">+ New Vendor</option>${opts}</select>
+            <div id="${id}-new" style="display:none; margin-top:8px; padding:8px; border:1px solid var(--gray-300); border-radius:4px; background:var(--primary-light);">
+                <div style="font-weight:700; font-size:11px; margin-bottom:6px;">Quick Add Vendor</div>
+                <input id="${id}-new-name" placeholder="Name *" style="width:100%; margin-bottom:4px; padding:4px 8px; border:1px solid var(--gray-300); border-radius:4px;">
+                <div style="display:flex; gap:6px;">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="VendorQuickAdd.save('${id}')">Save</button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="VendorQuickAdd.cancel('${id}')">Cancel</button>
+                </div>
+            </div>`;
+    },
+
+    selected(id) {
+        const sel = $(`#${id}`), box = $(`#${id}-new`);
+        if (!sel || !box) return;
+        box.style.display = sel.value === this.NEW ? 'block' : 'none';
+        if (sel.value === this.NEW) { const n = $(`#${id}-new-name`); if (n && !n.value) n.focus(); }
+    },
+
+    // The quick-add name input when it's showing — the scan canvas targets
+    // it for the Merchant field.
+    nameInput(id) {
+        const sel = $(`#${id}`), n = $(`#${id}-new-name`);
+        return sel && sel.value === this.NEW ? n : null;
+    },
+
+    cancel(id) {
+        const sel = $(`#${id}`), box = $(`#${id}-new`);
+        if (sel) sel.value = '';
+        if (box) box.style.display = 'none';
+    },
+
+    // Pick the vendor by name (case-insensitive); otherwise open quick-add
+    // with the name filled in. Returns the matched vendor or null.
+    prefill(id, name, vendors) {
+        const sel = $(`#${id}`);
+        if (!sel || !name) return null;
+        const match = (vendors || []).find(v => v.name && v.name.toLowerCase() === name.toLowerCase());
+        if (match) { sel.value = match.id; this.selected(id); return match; }
+        sel.value = this.NEW;
+        this.selected(id);
+        const n = $(`#${id}-new-name`);
+        if (n) n.value = name;
+        return null;
+    },
+
+    async _create(id, name) {
+        let vendor;
+        try {
+            vendor = await API.post('/vendors', { name });
+        } catch (err) {
+            // Near-duplicate (OCR spelling of a vendor the books already
+            // have): use the existing record rather than minting a twin.
+            const dupes = err.status === 409 && err.detail && err.detail.duplicates;
+            if (!dupes || !dupes.length) throw err;
+            vendor = dupes[0];
+            toast(`Using existing vendor "${vendor.name}"`);
+        }
+        const sel = $(`#${id}`);
+        if (sel) {
+            if (!sel.querySelector(`option[value="${vendor.id}"]`)) {
+                sel.insertAdjacentHTML('beforeend', `<option value="${vendor.id}">${escapeHtml(vendor.name)}</option>`);
+            }
+            sel.value = vendor.id;
+        }
+        const box = $(`#${id}-new`);
+        if (box) box.style.display = 'none';
+        return vendor;
+    },
+
+    async save(id) {
+        const n = $(`#${id}-new-name`);
+        const name = n ? n.value.trim() : '';
+        if (!name) { toast('Vendor name is required', 'error'); return null; }
+        try {
+            const vendor = await this._create(id, name);
+            toast(`Vendor "${vendor.name}" added`);
+            const sel = $(`#${id}`);
+            if (sel) sel.dispatchEvent(new Event('change'));
+            return vendor;
+        } catch (err) { toast(err.message, 'error'); return null; }
+    },
+
+    // Resolve the picker to a vendor id at submit time, creating the
+    // quick-add vendor if it's still pending. Throws when nothing usable
+    // was chosen so the caller's catch shows the reason.
+    async ensure(id, { required = true } = {}) {
+        const sel = $(`#${id}`);
+        const value = sel ? sel.value : '';
+        if (value === this.NEW) {
+            const n = $(`#${id}-new-name`);
+            const name = n ? n.value.trim() : '';
+            if (!name) throw new Error('Enter a name for the new vendor');
+            const vendor = await this._create(id, name);
+            return vendor.id;
+        }
+        if (!value) {
+            if (required) throw new Error('Select a vendor');
+            return null;
+        }
+        return parseInt(value);
     },
 };

@@ -7,9 +7,33 @@ from app.models.estimates import Estimate, EstimateLine
 from app.models.payments import Payment, PaymentAllocation
 from app.models.banking import BankAccount, BankTransaction, Reconciliation
 from app.models.settings import Settings
+from app.models.classes import TxnClass  # noqa: F401
+from app.models.jobs import Job  # noqa: F401
+from app.models.preferences import UserPreference  # noqa: F401
+from app.models.cost_codes import CostCode  # noqa: F401
+from app.models.job_costing import (  # noqa: F401
+    CostType,
+    Equipment,
+    JobBudget,
+    JobCost,
+    JobCostLine,
+)
+from app.models.fixed_assets import FixedAsset, FixedAssetType  # noqa: F401
+from app.models.in_kind import InKindGift, InKindGiftLine  # noqa: F401
+from app.models.nonprofit import (  # noqa: F401
+    AllocationRule,
+    AllocationRuleTarget,
+    FunctionalAllocation,
+    FunctionalAllocationLine,
+    RestrictionRelease,
+)
 
 # Phase 1: Foundation
 from app.models.audit import AuditLog
+
+# Server Edition: user principals
+from app.models.users import User  # noqa: F401
+from app.models.api_tokens import ApiToken  # noqa: F401
 
 # Phase 2: Accounts Payable
 from app.models.purchase_orders import PurchaseOrder, PurchaseOrderLine
@@ -39,8 +63,17 @@ from app.models.time_entries import TimeEntry
 from app.models.pto import PTOPolicy, PTOAccrual, PTORequest
 from app.models.bank_accounts import EmployeeBankAccount
 
-# Tier 2: deductions and garnishments
-from app.models.deductions import DeductionType, EmployeeDeduction, GarnishmentOrder
+# Tier 2: deductions and garnishments — main's benefits engine
+from app.models.deductions import GarnishmentOrder
+from app.models.benefits import (
+    BenefitCode,
+    BenefitRate,
+    EmployeeGroup,
+    EmployeeGroupBenefit,
+    EmployeeBenefit,
+    BenefitYTD,
+    PayStubBenefit,
+)
 
 # Tier 3: HR onboarding
 from app.models.hr import OnboardingTask
@@ -57,12 +90,14 @@ from app.models.email_templates import EmailTemplate
 # Phase 11: Inventory + Saved Reports
 from app.models.items import InventoryMovement
 from app.models.saved_reports import SavedReport
+
+# Our branch: payroll extensions, coverage benefits, contractors
 from app.models.pay_schedules import PaySchedule  # noqa: F401
 from app.models.locations import WorkLocation  # noqa: F401
 from app.models.workers_comp import WCClassRate  # noqa: F401
 from app.models.esign import SignatureEnvelope  # noqa: F401
 from app.models.reviews import PerformanceReview  # noqa: F401
-from app.models.benefits import (  # noqa: F401
+from app.models.benefit_coverage import (  # noqa: F401
     BenefitPlan,
     BenefitEnrollment,
     BenefitDependent,
@@ -72,6 +107,8 @@ from app.models.contractor_payments import (  # noqa: F401
     ContractorPayment,
     VendorBankAccount,
 )
+
+from app.models.ocr_templates import OcrTemplate  # noqa: F401
 
 __all__ = [
     "Account",
@@ -121,9 +158,14 @@ __all__ = [
     "PTOAccrual",
     "PTORequest",
     "EmployeeBankAccount",
-    # Tier 2: deductions and garnishments
-    "DeductionType",
-    "EmployeeDeduction",
+    # Tier 2: benefits engine + garnishments
+    "BenefitCode",
+    "BenefitRate",
+    "EmployeeGroup",
+    "EmployeeGroupBenefit",
+    "EmployeeBenefit",
+    "BenefitYTD",
+    "PayStubBenefit",
     "GarnishmentOrder",
     # Tier 3: HR onboarding
     "OnboardingTask",

@@ -12,7 +12,7 @@ from app.database import get_db
 from app.models.locations import WorkLocation
 from app.models.payroll import Employee
 from app.services.local_tax import get_locality
-from app.services.state_tax import supported_states
+from app.services.state_tax import is_supported, list_states
 
 router = APIRouter(prefix="/api/locations", tags=["locations"])
 
@@ -58,7 +58,7 @@ def _response(loc: WorkLocation) -> dict:
 def _validate_jurisdiction(state: str | None, locality: str | None):
     if state is not None:
         state = state.strip().upper()
-        if state not in supported_states():
+        if not is_supported(state):
             raise HTTPException(status_code=400, detail=f"Unknown state {state!r}")
     if locality and get_locality(locality) is None:
         raise HTTPException(

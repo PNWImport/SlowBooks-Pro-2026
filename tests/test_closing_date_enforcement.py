@@ -17,6 +17,8 @@ is intentionally NOT covered — its JE date is always `date.today()`,
 which cannot be backdated by definition.
 """
 
+from decimal import Decimal
+
 import pytest
 
 
@@ -95,12 +97,12 @@ def test_payroll_process_respects_closing_date(client, db_session):
         json={
             "first_name": "T",
             "last_name": "E",
-            "ssn": "111-11-1111",
+            "ssn_last_four": "1111",
             "filing_status": "single",
             "pay_rate": 25,
             "pay_frequency": "biweekly",
             "state": "WA",
-            "date_of_hire": "2026-01-01",
+            "hire_date": "2026-01-01",
         },
     ).json()
 
@@ -323,6 +325,142 @@ def test_create_deposit_respects_closing_date(client, db_session, seed_accounts)
         },
     )
     assert r.status_code == 403, r.text
+
+
+# ---------------------------------------------------------------------------
+# Service-layer enforcement — create_journal_entry() itself is the choke point.
+# These pin the guard at the shared accounting layer so non-route posting paths
+# (recurring invoices, IIF/QBO imports, inventory hooks) cannot side-step it.
+# ---------------------------------------------------------------------------
+
+
+def _set_closing_date_db(db_session, iso: str):
+    from app.models.settings import Settings
+
+    db_session.add(Settings(key="closing_date", value=iso))
+    db_session.commit()
+
+
+def test_create_journal_entry_service_rejects_backdated(db_session, seed_accounts):
+    """Direct create_journal_entry() call with a date on/before the closing
+    date must raise, even though no route-level check ran."""
+    from datetime import date
+
+    from fastapi import HTTPException
+
+    from app.services.accounting import create_journal_entry
+
+    _set_closing_date_db(db_session, _CLOSING_DATE)
+
+    cash_id = seed_accounts["1000"].id
+    rev_id = seed_accounts["4000"].id
+
+    with pytest.raises(HTTPException) as exc:
+        create_journal_entry(
+            db_session,
+            date(2025, 6, 15),  # inside the closed period
+            "Backdated service-layer JE",
+            [
+                {"account_id": cash_id, "debit": Decimal("10"), "credit": Decimal("0")},
+                {"account_id": rev_id, "debit": Decimal("0"), "credit": Decimal("10")},
+            ],
+        )
+    assert exc.value.status_code == 403
+    assert "closing" in str(exc.value.detail).lower()
+
+
+def test_create_journal_entry_on_closing_date_rejected(db_session, seed_accounts):
+    """The boundary case: a JE dated exactly on the closing date is rejected
+    (closed period is inclusive of the closing date)."""
+    from datetime import date
+
+    from fastapi import HTTPException
+
+    from app.services.accounting import create_journal_entry
+
+    _set_closing_date_db(db_session, _CLOSING_DATE)
+
+    cash_id = seed_accounts["1000"].id
+    rev_id = seed_accounts["4000"].id
+
+    with pytest.raises(HTTPException) as exc:
+        create_journal_entry(
+            db_session,
+            date(2025, 12, 31),  # exactly the closing date
+            "On-closing-date JE",
+            [
+                {"account_id": cash_id, "debit": Decimal("5"), "credit": Decimal("0")},
+                {"account_id": rev_id, "debit": Decimal("0"), "credit": Decimal("5")},
+            ],
+        )
+    assert exc.value.status_code == 403
+
+
+def test_create_journal_entry_after_closing_date_ok(db_session, seed_accounts):
+    """A JE dated after the closing date posts normally — the guard does not
+    over-block open periods."""
+    from datetime import date
+
+    from app.services.accounting import create_journal_entry
+
+    _set_closing_date_db(db_session, _CLOSING_DATE)
+
+    cash_id = seed_accounts["1000"].id
+    rev_id = seed_accounts["4000"].id
+
+    txn = create_journal_entry(
+        db_session,
+        date(2026, 1, 1),  # day after the closing date
+        "Open-period JE",
+        [
+            {"account_id": cash_id, "debit": Decimal("7"), "credit": Decimal("0")},
+            {"account_id": rev_id, "debit": Decimal("0"), "credit": Decimal("7")},
+        ],
+    )
+    db_session.flush()
+    assert txn.id is not None
+
+
+def test_recurring_service_respects_closing_date(
+    db_session, seed_accounts, seed_customer
+):
+    """The recurring-invoice generator posts JEs via create_journal_entry with
+    a date of rec.next_due. If that date is in a closed period, generation must
+    be blocked by the shared guard — this path has no route-level check."""
+    from datetime import date
+
+    from fastapi import HTTPException
+
+    from app.models.recurring import RecurringInvoice, RecurringInvoiceLine
+    from app.services.recurring_service import generate_due_invoices
+
+    rec = RecurringInvoice(
+        customer_id=seed_customer.id,
+        frequency="monthly",
+        start_date=date(2025, 6, 1),
+        next_due=date(2025, 6, 1),  # inside the soon-to-be-closed period
+        is_active=True,
+        terms="Net 30",
+        tax_rate=Decimal("0"),
+    )
+    db_session.add(rec)
+    db_session.flush()
+    db_session.add(
+        RecurringInvoiceLine(
+            recurring_invoice_id=rec.id,
+            quantity=Decimal("1"),
+            rate=Decimal("100.00"),
+            description="Service",
+            line_order=0,
+        )
+    )
+    db_session.commit()
+
+    _set_closing_date_db(db_session, _CLOSING_DATE)
+
+    with pytest.raises(HTTPException) as exc:
+        generate_due_invoices(db_session, as_of=date(2025, 7, 1))
+    assert exc.value.status_code == 403
 
 
 def test_create_batch_payment_respects_closing_date(

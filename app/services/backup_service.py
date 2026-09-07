@@ -1,11 +1,19 @@
 # ============================================================================
-# Backup/Restore Service — pg_dump/pg_restore subprocess wrapper
-# Feature 11: Database backup and restore accessible from settings
+# Backup/Restore Service — accessible from settings
+# Feature 11: Database backup and restore
+#
+# PostgreSQL (Docker / server installs): pg_dump/pg_restore subprocess.
+# SQLite (native desktop installs): a snapshot copy of the company's .db
+# file via sqlite3's online backup API (consistent even with the app's own
+# connections open).
 # ============================================================================
 
+import logging
 import os
 import re
+import sqlite3
 import subprocess
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
@@ -13,17 +21,20 @@ from sqlalchemy.orm import Session
 
 from app.config import DATABASE_URL
 from app.models.backups import Backup
+from app.services import storage
 
-BACKUP_DIR = Path(__file__).parent.parent.parent / "backups"
+logger = logging.getLogger(__name__)
+
+BACKUP_DIR = storage.backups_root()
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
 # Strict filename allow-list. Backup files we create are named
-# "slowbooks_YYYYMMDD_HHMMSS.sql"; we accept any safe basename matching
-# this character class with a known backup extension. NO path separators,
-# NO ".." components -- this is the trust boundary that CodeQL needs to
-# see at the start of restore_backup() before BACKUP_DIR / filename is
-# constructed.
-_BACKUP_FILENAME_RE = re.compile(r"^[A-Za-z0-9_.-]+\.(sql|dump|backup)$")
+# "slowbooks_YYYYMMDD_HHMMSS.sql" (Postgres) or ".db" (SQLite); we accept
+# any safe basename matching this character class with a known backup
+# extension. NO path separators, NO ".." components -- this is the trust
+# boundary that CodeQL needs to see at the start of restore_backup()
+# before BACKUP_DIR / filename is constructed.
+_BACKUP_FILENAME_RE = re.compile(r"^[A-Za-z0-9_.-]+\.(sql|dump|backup|db)$")
 
 
 def _safe_backup_filename(filename: str) -> str | None:
@@ -50,6 +61,21 @@ def _safe_backup_filename(filename: str) -> str | None:
     return base
 
 
+def _is_sqlite() -> bool:
+    return DATABASE_URL.startswith("sqlite")
+
+
+def _sqlite_db_path() -> Path | None:
+    """Filesystem path of the active SQLite database, or None when the URL
+    isn't a file-backed SQLite database (e.g. sqlite:///:memory:)."""
+    if not DATABASE_URL.startswith("sqlite:///"):
+        return None
+    raw = DATABASE_URL[len("sqlite:///") :]
+    if not raw or raw == ":memory:":
+        return None
+    return Path(raw)
+
+
 def _parse_db_url(url: str) -> dict:
     """Parse PostgreSQL connection URL into components."""
     # postgresql://user:pass@host:port/dbname
@@ -65,8 +91,80 @@ def _parse_db_url(url: str) -> dict:
     }
 
 
+def _create_sqlite_backup(db: Session, notes: str, backup_type: str) -> dict:
+    """Snapshot the active company's .db file into BACKUP_DIR."""
+    src = _sqlite_db_path()
+    if src is None or not src.exists():
+        return {
+            "success": False,
+            "error": "Active database is not a file-backed SQLite database",
+        }
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"slowbooks_{timestamp}.db"
+    filepath = BACKUP_DIR / filename
+
+    try:
+        # sqlite3's online backup API gives a consistent snapshot even if
+        # the app holds open connections (unlike a raw file copy).
+        with closing(sqlite3.connect(src)) as source, closing(
+            sqlite3.connect(filepath)
+        ) as dest:
+            source.backup(dest)
+    except sqlite3.Error:
+        # Exception text can leak paths/internals into the HTTP response
+        # (routes surface this error string) — log it, say something generic.
+        logger.exception("SQLite backup failed")
+        filepath.unlink(missing_ok=True)
+        return {"success": False, "error": "SQLite backup failed. Check logs."}
+
+    file_size = filepath.stat().st_size
+    backup = Backup(
+        filename=filename,
+        file_size=file_size,
+        backup_type=backup_type,
+        notes=notes,
+    )
+    db.add(backup)
+    db.commit()
+
+    return {"success": True, "filename": filename, "file_size": file_size}
+
+
+def _restore_sqlite_backup(filepath: Path, safe_name: str) -> dict:
+    """Copy a backup .db over the active company's database file."""
+    dest = _sqlite_db_path()
+    if dest is None:
+        return {
+            "success": False,
+            "error": "Active database is not a file-backed SQLite database",
+        }
+
+    # Close the app's pooled connections first so the live file can be
+    # rewritten (SQLite locking; also matters for Windows file semantics).
+    import app.database as db_module
+
+    db_module.engine.dispose()
+
+    try:
+        with closing(sqlite3.connect(filepath)) as source, closing(
+            sqlite3.connect(dest)
+        ) as target:
+            source.backup(target)
+    except sqlite3.Error:
+        # Same shape as _create_sqlite_backup: no exception text in the
+        # user-facing error (py/stack-trace-exposure) — details go to logs.
+        logger.exception("SQLite restore failed")
+        return {"success": False, "error": "SQLite restore failed. Check logs."}
+
+    return {"success": True, "message": f"Restored from {safe_name}"}
+
+
 def create_backup(db: Session, notes: str = None, backup_type: str = "manual") -> dict:
-    """Create a database backup using pg_dump."""
+    """Create a database backup (pg_dump on Postgres, file snapshot on SQLite)."""
+    if _is_sqlite():
+        return _create_sqlite_backup(db, notes, backup_type)
+
     params = _parse_db_url(DATABASE_URL)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"slowbooks_{timestamp}.sql"
@@ -129,12 +227,18 @@ def restore_backup(db: Session, filename: str) -> dict:
     if safe_name is None:
         return {"success": False, "error": "Invalid filename"}
 
-    backup_root = BACKUP_DIR.resolve()
-    filepath = (backup_root / safe_name).resolve()
-    if not filepath.is_relative_to(backup_root):
+    # normpath + startswith is the containment guard CodeQL recognizes for
+    # py/path-injection (is_relative_to on Path objects is not).
+    backup_root = os.path.normpath(str(BACKUP_DIR))
+    candidate = os.path.normpath(os.path.join(backup_root, safe_name))
+    if not candidate.startswith(backup_root + os.sep):
         return {"success": False, "error": "Invalid filename"}
+    filepath = Path(candidate)
     if not filepath.exists():
         return {"success": False, "error": f"Backup file not found: {safe_name}"}
+
+    if _is_sqlite():
+        return _restore_sqlite_backup(filepath, safe_name)
 
     params = _parse_db_url(DATABASE_URL)
     env = {"PGPASSWORD": params["password"]}
@@ -175,7 +279,11 @@ def restore_backup(db: Session, filename: str) -> dict:
 def list_backup_files() -> list[dict]:
     """List all backup files in the backup directory."""
     files = []
-    for f in sorted(BACKUP_DIR.glob("slowbooks_*.sql"), reverse=True):
+    candidates = [
+        *BACKUP_DIR.glob("slowbooks_*.sql"),
+        *BACKUP_DIR.glob("slowbooks_*.db"),
+    ]
+    for f in sorted(candidates, key=lambda p: p.name, reverse=True):
         files.append(
             {
                 "filename": f.name,

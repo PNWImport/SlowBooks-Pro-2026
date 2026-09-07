@@ -1,0 +1,49 @@
+{
+  "2.9.1": {
+    "title": "Post-release tidy",
+    "items": [
+      "AI Insights: a stored provider key can be removed (Remove beside the saved mark; the API clears on an explicit empty string)",
+      "Windows releases ship SHA256SUMS.windows beside the installer and zip",
+      "Nonprofit mode: the Contributions by Donor card and the analytics aging header speak donor, not sales and customer",
+      "Migrations create every table on their own; the install guide's counts are current"
+    ]
+  },
+  "2.9.0": {
+    "title": "Nonprofit mode",
+    "items": [
+      "Company Type → Nonprofit: donors, pledges, donations, funds and grants on every screen; the data never changes name",
+      "Funds with donor restrictions, a Release from Restriction document, Statement of Activities and Statement of Financial Position, fund balances",
+      "Program / management / fundraising on every expense, allocation rules with Split and month-end runs, Statement of Functional Expenses (Form 990 Part IX)",
+      "Donation receipts and acknowledgment letters with the IRS language; in-kind gifts; year-end giving statements",
+      "Pledge report over recurring pledges; write-offs to Bad Debt Expense; credit memos can be voided",
+      "P&L by Class groups on the line's class; voids carry every dimension",
+      "Save PDF lands in Documents → SlowBooks Pro → Reports and says so; saved reports are a compact list; statements compare to the prior year",
+      "Agents: unknown request fields are rejected (422), tax_rate is documented as a fraction and bounded, DELETE on a posted document names the void route, PTO enums in the spec",
+      "Desktop: Save PDF explains a refused Documents folder and says where the file went; macOS app stapled before the DMG; a fresh company can run depreciation",
+      "macOS: Save PDF, print preview, Save backup and Show in folder work again (the desktop bridge was blocked by the app's security policy since 2.1.0); Save CSV lands next to Save PDF with a Show-in-folder notice",
+      "First-run setup on a file that already has books names the company and prefills it; the company name in Settings and the picker can no longer disagree",
+      "AI Insights: a Custom (OpenAI-compatible) provider for any endpoint you name; the self-hosted Cloudflare Worker gateway's replies come through again"
+    ]
+  },
+  "2.8.0": {
+    "title": "Benefits, all-state payroll, and an overview you can arrange",
+    "items": [
+      "Benefits engine: benefit codes with rules, effective-dated rates, employer matching, employee groups, per-code GL and remittance bills",
+      "State withholding for all 50 states + DC with verified 2026 figures; state W-4 fields on the employee",
+      "PTO banks carry dollars and post a liability; actual payroll burden can flow to jobs by hours",
+      "Company Snapshot: pick, hide and reorder the cards per user, with five new cards",
+      "Sales tax per line: untaxed labor and taxed parts on one invoice",
+      "IIF and CSV export now carry classes, jobs, bills, deposits and sales receipts (#70)",
+      "Accessibility pass: real dialogs, table headers, contrast, tagged PDFs",
+      "Employee portal link opens in the employee's browser with a full address"
+    ]
+  },
+  "2.7.0": {
+    "title": "Jobs, job costing, and receipt intake",
+    "items": [
+      "Jobs under customers with cost codes, budgets and a drill-down cost tree",
+      "Job Cost Entry, time-to-job labor at loaded rates, allocations",
+      "Receipt intake: scan a receipt into a bill or expense"
+    ]
+  }
+}

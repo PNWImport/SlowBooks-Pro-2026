@@ -2,9 +2,9 @@ name: "CodeQL"
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/v2.8]
   pull_request:
-    branches: [main]
+    branches: [main, server-edition, feat/v2.8]
   schedule:
     - cron: "0 6 * * 1"  # Weekly on Monday at 6am UTC
 

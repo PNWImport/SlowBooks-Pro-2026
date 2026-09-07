@@ -62,7 +62,7 @@ const DepositCalendarPage = {
                 </div>
             </div>
             <div class="table-container"><table>
-                <thead><tr><th>Lookback Quarter</th><th class="amount">941 Tax</th></tr></thead>
+                <thead><tr><th scope="col">Lookback Quarter</th><th scope="col" class="amount">941 Tax</th></tr></thead>
                 <tbody>${quarters}</tbody>
             </table></div>
             <p style="font-size:10px; color:var(--text-muted); margin-top:6px;">
@@ -93,8 +93,8 @@ const DepositCalendarPage = {
             <h3 style="margin-top:18px;">Liability Calendar — ${c.year}</h3>
             ${warnings}
             <div class="table-container"><table>
-                <thead><tr><th>Due Date</th><th>Period</th><th>Description</th>
-                <th class="amount">Amount</th><th>Rule</th></tr></thead>
+                <thead><tr><th scope="col">Due Date</th><th scope="col">Period</th><th scope="col">Description</th>
+                <th scope="col" class="amount">Amount</th><th scope="col">Rule</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table></div>`;
     },

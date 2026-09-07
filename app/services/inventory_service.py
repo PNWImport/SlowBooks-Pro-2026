@@ -21,24 +21,16 @@
 #       Sale (via invoice):   DR COGS              CR Inventory Asset
 # ============================================================================
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.items import Item, InventoryMovement, MovementType
 from app.models.accounts import Account, AccountType
-from app.services.accounting import create_journal_entry
+from app.services.accounting import _q, create_journal_entry, quantize_to
 
-QTY_Q = Decimal("0.0001")
 COST_Q = Decimal("0.0001")
-MONEY_Q = Decimal("0.01")
-
-
-def _q(value, exp=MONEY_Q) -> Decimal:
-    if not isinstance(value, Decimal):
-        value = Decimal(str(value))
-    return value.quantize(exp, rounding=ROUND_HALF_UP)
 
 
 def get_inventory_asset_account_id(db: Session, item: Item) -> Optional[int]:
@@ -91,7 +83,7 @@ def _append_movement(
     # Sales, returns-out, and adjustments-out leave avg_cost unchanged —
     # you don't revalue remaining stock when you ship it.
     if quantity > 0 and new_qty > 0:
-        new_avg = _q(
+        new_avg = quantize_to(
             ((old_qty * old_avg) + (quantity * unit_cost)) / new_qty,
             COST_Q,
         )

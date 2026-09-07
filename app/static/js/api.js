@@ -1,9 +1,6 @@
 /**
- * Decompiled from QBW32.EXE!CQBNetworkLayer  Offset: 0x002A1000
- * Original used named pipes (\\.\pipe\QuickBooks) for IPC to the
- * QBDBMgrN.exe database server process. This is the modern equivalent
- * rebuilt on top of fetch(). The named pipe protocol was a nightmare to
- * reverse — 47 different message types, all packed structs with no padding.
+ * API wrapper — every page talks to the backend through this thin
+ * fetch() layer.
  */
 const API = {
     async request(method, path, body = null) {
@@ -15,7 +12,14 @@ const API = {
         const companyId = localStorage.getItem('slowbooks_company');
         if (companyId) opts.headers['X-Company-Id'] = companyId;
         if (body) opts.body = JSON.stringify(body);
-        const res = await fetch(`/api${path}`, opts);
+        let res;
+        try {
+            res = await fetch(`/api${path}`, opts);
+        } catch (err) {
+            // The browser's bare "Failed to fetch" means the local server is
+            // gone (desktop shell still showing the page). Say so.
+            throw new Error("SlowBooks isn't responding (network error) — if this keeps happening, close and relaunch SlowBooks Pro.");
+        }
         if (res.status === 401 && window.SlowbooksAuth) {
             // Session expired, never authed, or fresh install -- let auth.js
             // re-check status and pick setup vs. login. Hardcoding promptLogin
@@ -28,13 +32,24 @@ const API = {
         }
         if (!res.ok) {
             const body = await res.json().catch(() => ({ detail: res.statusText }));
-            // FastAPI HTTPException(detail=str) → string; HTTPException(detail=dict) → object.
+            // FastAPI HTTPException(detail=str) → string; HTTPException(detail=dict) → object;
+            // pydantic validation (422) → array of {loc, msg} entries.
             // Carry both the human message and the structured body so callers can
             // introspect 409s, 422s, etc. without losing information.
             const detail = body && body.detail !== undefined ? body.detail : body;
-            const message = typeof detail === 'string'
-                ? detail
-                : (detail && detail.message) || res.statusText || 'Request failed';
+            let message;
+            if (typeof detail === 'string') {
+                message = detail;
+            } else if (Array.isArray(detail)) {
+                // Name the field(s): "email: String should match pattern ..."
+                // — a bare "Unprocessable Entity" left users guessing (#64).
+                message = detail.map(d => {
+                    const field = (d.loc || []).filter(p => p !== 'body').join('.');
+                    return field ? `${field}: ${d.msg}` : d.msg;
+                }).filter(Boolean).join('; ') || res.statusText || 'Request failed';
+            } else {
+                message = (detail && detail.message) || res.statusText || 'Request failed';
+            }
             const err = new Error(message);
             err.status = res.status;
             err.detail = detail;

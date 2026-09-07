@@ -30,9 +30,9 @@ from app.models.bank_accounts import (
     DepositType,
     PrenoteStatus,
 )
+from app.services.accounting import _q
 from app.services.encryption import decrypt
 
-CENT = Decimal("0.01")
 RECORD_LENGTH = 94
 BLOCKING_FACTOR = 10
 
@@ -67,13 +67,6 @@ def _alpha(value, width: int) -> str:
     return s.ljust(width, " ")
 
 
-def _q(value) -> Decimal:
-    """Quantize a money value to 2 decimal places."""
-    if not isinstance(value, Decimal):
-        value = Decimal(str(value or 0))
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
-
-
 def _cents(value: Decimal) -> int:
     """Convert a Decimal dollar amount to whole cents."""
     return int((_q(value) * 100).to_integral_value(rounding=ROUND_HALF_UP))
@@ -89,6 +82,21 @@ def _check_digit(routing: str | None) -> str:
     """The 9th digit of the routing number (ABA check digit)."""
     digits = "".join(ch for ch in (routing or "") if ch.isdigit())
     return digits[8] if len(digits) >= 9 else "0"
+
+
+def validate_routing_number(routing: str | None) -> bool:
+    """True if `routing` is a structurally valid 9-digit ABA routing number.
+
+    Beyond the bare 9-digit check, this enforces the ABA checksum: weighting
+    the digits 3,7,1,3,7,1,3,7,1 and summing must be a multiple of 10. The
+    9th digit is the check digit chosen to satisfy that relation, so a typo'd
+    routing number is rejected before it ever reaches an ACH file.
+    """
+    digits = (routing or "").strip()
+    if not (digits.isdigit() and len(digits) == 9):
+        return False
+    weights = (3, 7, 1, 3, 7, 1, 3, 7, 1)
+    return sum(int(d) * w for d, w in zip(digits, weights)) % 10 == 0
 
 
 # --- credit allocation ------------------------------------------------------
@@ -133,6 +141,18 @@ def _split_net_pay(net_pay: Decimal, accounts: list) -> list[tuple]:
 
     if remainder_acct is not None and remaining > 0:
         allocations.append((remainder_acct, remaining))
+        remaining = Decimal("0")
+
+    # Never emit a file that silently underpays: if FIXED/PERCENT splits don't
+    # cover net pay and there's no REMAINDER/FULL account to absorb the rest,
+    # fail loudly instead of dropping the difference.
+    if remaining > 0:
+        raise ValueError(
+            f"Direct-deposit allocations leave ${remaining} of net pay "
+            "unallocated and no remainder account is configured. Add a "
+            "'remainder' deposit account for the employee or adjust the "
+            "fixed/percent splits."
+        )
 
     return allocations
 

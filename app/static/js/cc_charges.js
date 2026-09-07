@@ -15,8 +15,8 @@ const CCChargesPage = {
             html += '<div class="empty-state"><p>No credit card charges recorded yet</p></div>';
         } else {
             html += `<div class="table-container"><table>
-                <thead><tr><th>Date</th><th>Payee</th><th>Account</th><th>Reference</th>
-                <th class="amount">Amount</th></tr></thead><tbody>`;
+                <thead><tr><th scope="col">Date</th><th scope="col">Payee</th><th scope="col">Account</th><th scope="col">Reference</th>
+                <th scope="col" class="amount">Amount</th></tr></thead><tbody>`;
             for (const c of charges) {
                 html += `<tr>
                     <td>${formatDate(c.date)}</td>
@@ -33,6 +33,8 @@ const CCChargesPage = {
 
     async showForm() {
         const accounts = await API.get('/accounts?account_type=expense');
+        const classGroup = await classFormGroupHtml();
+        const jobGroup = await jobFormGroupHtml(null);
         const acctOpts = accounts.map(a =>
             `<option value="${a.id}">${escapeHtml(a.account_number)} - ${escapeHtml(a.name)}</option>`
         ).join('');
@@ -50,6 +52,7 @@ const CCChargesPage = {
                         <input name="amount" type="number" step="0.01" required></div>
                     <div class="form-group"><label>Reference</label>
                         <input name="reference"></div>
+                    ${classGroup}${Nonprofit.functionFormGroupHtml()}${jobGroup}
                     <div class="form-group full-width"><label>Memo</label>
                         <textarea name="memo"></textarea></div>
                 </div>
@@ -71,6 +74,9 @@ const CCChargesPage = {
                 amount: parseFloat(form.amount.value),
                 reference: form.reference.value || null,
                 memo: form.memo.value || null,
+                class_id: classIdFromForm(form),
+                ...Nonprofit.formPayload(form),
+                job_id: jobIdFromForm(form),
             });
             toast('Credit card charge recorded');
             closeModal();

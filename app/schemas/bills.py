@@ -3,12 +3,17 @@ from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.schemas.common import validate_non_negative_line
+from app.schemas.common import StrictModel, TaxRateFloat, validate_non_negative_line
 
 
-class BillLineCreate(BaseModel):
+class BillLineCreate(StrictModel):
     item_id: Optional[int] = None
     account_id: Optional[int] = None
+    job_id: Optional[int] = None
+    class_id: Optional[int] = None
+    cost_code_id: Optional[int] = None
+    function: Optional[str] = None
+    is_billable: bool = False
     description: Optional[str] = None
     quantity: float = 1
     rate: float = 0
@@ -24,6 +29,11 @@ class BillLineResponse(BaseModel):
     id: int
     item_id: Optional[int] = None
     account_id: Optional[int] = None
+    job_id: Optional[int] = None
+    class_id: Optional[int] = None
+    cost_code_id: Optional[int] = None
+    function: Optional[str] = None
+    is_billable: bool = False
     description: Optional[str] = None
     quantity: Decimal = Decimal("0")
     rate: Decimal = Decimal("0")
@@ -32,16 +42,21 @@ class BillLineResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class BillCreate(BaseModel):
+class BillCreate(StrictModel):
     vendor_id: int
-    bill_number: str
+    # The vendor's invoice number; blank → generated (date + vendor initials).
+    bill_number: Optional[str] = None
     date: dt_date
     due_date: Optional[dt_date] = None
     terms: str = "Net 30"
     ref_number: Optional[str] = None
     po_id: Optional[int] = None
-    tax_rate: float = 0
+    tax_rate: TaxRateFloat = 0
     notes: Optional[str] = None
+    class_id: Optional[int] = None
+    job_id: Optional[int] = None
+    currency: Optional[str] = None
+    exchange_rate: Optional[Decimal] = None
     lines: list[BillLineCreate] = []
 
     @field_validator("lines")
@@ -58,8 +73,12 @@ class BillUpdate(BaseModel):
     due_date: Optional[dt_date] = None
     terms: Optional[str] = None
     ref_number: Optional[str] = None
-    tax_rate: Optional[float] = None
+    tax_rate: Optional[TaxRateFloat] = None
     notes: Optional[str] = None
+    class_id: Optional[int] = None
+    job_id: Optional[int] = None
+    currency: Optional[str] = None
+    exchange_rate: Optional[Decimal] = None
     lines: Optional[list[BillLineCreate]] = None
 
 
@@ -81,17 +100,21 @@ class BillResponse(BaseModel):
     amount_paid: Decimal = Decimal("0")
     balance_due: Decimal = Decimal("0")
     notes: Optional[str] = None
+    class_id: Optional[int] = None
+    job_id: Optional[int] = None
+    currency: Optional[str] = None
+    exchange_rate: Optional[Decimal] = None
     lines: list[BillLineResponse] = []
     created_at: Optional[datetime] = None
     model_config = {"from_attributes": True}
 
 
-class BillPaymentAllocationCreate(BaseModel):
+class BillPaymentAllocationCreate(StrictModel):
     bill_id: int
     amount: float
 
 
-class BillPaymentCreate(BaseModel):
+class BillPaymentCreate(StrictModel):
     vendor_id: int
     date: dt_date
     amount: float
@@ -99,6 +122,10 @@ class BillPaymentCreate(BaseModel):
     check_number: Optional[str] = None
     pay_from_account_id: Optional[int] = None
     notes: Optional[str] = None
+    class_id: Optional[int] = None
+    job_id: Optional[int] = None
+    currency: Optional[str] = None
+    exchange_rate: Optional[Decimal] = None
     allocations: list[BillPaymentAllocationCreate] = []
 
 
@@ -111,6 +138,10 @@ class BillPaymentResponse(BaseModel):
     method: Optional[str] = None
     check_number: Optional[str] = None
     notes: Optional[str] = None
+    class_id: Optional[int] = None
+    job_id: Optional[int] = None
+    currency: Optional[str] = None
+    exchange_rate: Optional[Decimal] = None
     is_voided: bool = False
     created_at: Optional[datetime] = None
     model_config = {"from_attributes": True}

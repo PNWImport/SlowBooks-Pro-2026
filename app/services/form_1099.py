@@ -14,27 +14,18 @@
 # ============================================================================
 
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.contacts import Vendor
 from app.models.bills import BillPayment
-from app.services.pdf_service import _jinja_env, _safe_url_fetcher
-from weasyprint import HTML
-
-CENT = Decimal("0.01")
+from app.services.accounting import _q
+from app.services.pdf_service import _jinja_env, render_pdf
 
 # IRS 1099-NEC reporting threshold for nonemployee compensation.
 NEC_THRESHOLD = Decimal("600.00")
-
-
-def _q(value) -> Decimal:
-    """Quantize a money value to 2 decimal places."""
-    if not isinstance(value, Decimal):
-        value = Decimal(str(value or 0))
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 def _vendor_address(vendor: Vendor) -> str:
@@ -166,7 +157,7 @@ def generate_1099_nec_pdf(db: Session, year: int, vendor_id: int, payer: dict) -
 
     template = _jinja_env.get_template("form_1099nec.html")
     html_str = template.render(rec=record, payer=payer, year=year)
-    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    return render_pdf(html_str)
 
 
 def generate_1096_pdf(db: Session, year: int, payer: dict) -> bytes:
@@ -181,4 +172,4 @@ def generate_1096_pdf(db: Session, year: int, payer: dict) -> bytes:
         payer=payer,
         year=year,
     )
-    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    return render_pdf(html_str)

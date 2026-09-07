@@ -11,16 +11,11 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.accounts import Account
 from app.schemas.cc_charges import CCChargeCreate
-from app.services.accounting import create_journal_entry
+from app.services.accounting import create_journal_entry, get_cc_account_id
 from app.services.closing_date import check_closing_date
 from app.models.transactions import Transaction
 
 router = APIRouter(prefix="/api/cc-charges", tags=["cc-charges"])
-
-
-def _get_cc_account_id(db):
-    acct = db.query(Account).filter(Account.account_number == "2100").first()
-    return acct.id if acct else None
 
 
 @router.get("")
@@ -62,7 +57,7 @@ def list_cc_charges(db: Session = Depends(get_db)):
 def create_cc_charge(data: CCChargeCreate, db: Session = Depends(get_db)):
     check_closing_date(db, data.date)
 
-    cc_account_id = _get_cc_account_id(db)
+    cc_account_id = get_cc_account_id(db)
     if not cc_account_id:
         raise HTTPException(
             status_code=400, detail="Credit Card account (2100) not found"
@@ -82,6 +77,11 @@ def create_cc_charge(data: CCChargeCreate, db: Session = Depends(get_db)):
             "debit": amount,
             "credit": Decimal("0"),
             "description": data.memo or data.payee or "",
+            **(
+                {"function": data.function}
+                if "function" in data.model_fields_set
+                else {}
+            ),
         },
         {
             "account_id": cc_account_id,
@@ -99,6 +99,8 @@ def create_cc_charge(data: CCChargeCreate, db: Session = Depends(get_db)):
         journal_lines,
         source_type="cc_charge",
         reference=data.reference or "",
+        class_id=data.class_id,
+        job_id=data.job_id,
     )
 
     db.commit()

@@ -403,11 +403,11 @@ def test_cobra_and_esign_use_the_same_ledger(client, db_session, seed_accounts):
     emp = _create_employee(client)
 
     plan = client.post(
-        "/api/benefits/plans",
+        "/api/benefit-coverage/plans",
         json={"name": "Med", "kind": "medical", "monthly_premium_employer": 400},
     ).json()
     enr = client.post(
-        "/api/benefits/enrollments",
+        "/api/benefit-coverage/enrollments",
         json={
             "employee_id": emp["id"],
             "plan_id": plan["id"],
@@ -415,11 +415,11 @@ def test_cobra_and_esign_use_the_same_ledger(client, db_session, seed_accounts):
         },
     ).json()
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-06-30"},
     )
     assert (
-        client.post(f"/api/benefits/enrollments/{enr['id']}/cobra-notice").status_code
+        client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice").status_code
         == 200
     )
 

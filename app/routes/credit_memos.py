@@ -7,9 +7,11 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload, selectinload
-from sqlalchemy import func as sqlfunc
+from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
+from app.models.transactions import Transaction
+from app.routes._helpers import clamp_pagination
 from app.models.credit_memos import (
     CreditMemo,
     CreditMemoLine,
@@ -33,16 +35,9 @@ from app.services.accounting import (
     _q,
 )
 from app.services.closing_date import check_closing_date
+from app.services.numbering import next_credit_memo_number
 
 router = APIRouter(prefix="/api/credit-memos", tags=["credit_memos"])
-
-
-def _next_cm_number(db: Session) -> str:
-    last = db.query(sqlfunc.max(CreditMemo.memo_number)).scalar()
-    if last and last.replace("CM-", "").isdigit():
-        num = int(last.replace("CM-", "")) + 1
-        return f"CM-{num:04d}"
-    return "CM-0001"
 
 
 @router.get("", response_model=list[CreditMemoResponse])
@@ -53,8 +48,7 @@ def list_credit_memos(
     limit: int = 500,
     db: Session = Depends(get_db),
 ):
-    limit = max(1, min(limit, 1000))
-    skip = max(0, skip)
+    skip, limit = clamp_pagination(skip, limit)
     # Eager-load .customer and .lines to avoid N+1 during model_validate.
     q = db.query(CreditMemo).options(
         joinedload(CreditMemo.customer),
@@ -93,24 +87,43 @@ def create_credit_memo(data: CreditMemoCreate, db: Session = Depends(get_db)):
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
-    memo_number = _next_cm_number(db)
     subtotal, tax_amount, total = compute_line_totals(data.lines, data.tax_rate)
 
-    cm = CreditMemo(
-        memo_number=memo_number,
-        customer_id=data.customer_id,
-        date=data.date,
-        original_invoice_id=data.original_invoice_id,
-        subtotal=subtotal,
-        tax_rate=data.tax_rate,
-        tax_amount=tax_amount,
-        total=total,
-        balance_remaining=total,
-        notes=data.notes,
-        status=CreditMemoStatus.ISSUED,
-    )
-    db.add(cm)
-    db.flush()
+    cm = None
+    # Retry the number assignment a few times — next_credit_memo_number is just
+    # MAX+1 (no row-level lock), so two concurrent creates can both compute
+    # the same number and one will hit the credit_memos.memo_number UNIQUE
+    # constraint at flush (mirrors the invoice-number retry).
+    for _ in range(10):
+        cm = CreditMemo(
+            memo_number=next_credit_memo_number(db),
+            customer_id=data.customer_id,
+            date=data.date,
+            original_invoice_id=data.original_invoice_id,
+            subtotal=subtotal,
+            tax_rate=data.tax_rate,
+            tax_amount=tax_amount,
+            total=total,
+            balance_remaining=total,
+            notes=data.notes,
+            class_id=data.class_id,
+            job_id=data.job_id,
+            status=CreditMemoStatus.ISSUED,
+        )
+        db.add(cm)
+        try:
+            db.flush()
+            break
+        except IntegrityError as e:
+            if "memo_number" not in str(e.orig).lower():
+                raise
+            db.rollback()
+            cm = None
+    if cm is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not assign a credit memo number — please retry.",
+        )
 
     ar_id = get_ar_account_id(db)
     default_income_id = get_default_income_account_id(db)
@@ -167,16 +180,17 @@ def create_credit_memo(data: CreditMemoCreate, db: Session = Depends(get_db)):
                 "account_id": ar_id,
                 "debit": Decimal("0"),
                 "credit": total,
-                "description": f"Credit Memo {memo_number}",
+                "description": f"Credit Memo {cm.memo_number}",
             }
         )
         txn = create_journal_entry(
             db,
             data.date,
-            f"Credit Memo {memo_number} - {customer.name}",
+            f"Credit Memo {cm.memo_number} - {customer.name}",
             journal_lines,
             source_type="credit_memo",
             source_id=cm.id,
+            class_id=cm.class_id,
         )
         cm.transaction_id = txn.id
 
@@ -251,3 +265,76 @@ def apply_credit(
 
     db.commit()
     return {"message": f"Applied {data.amount} to invoice {invoice.invoice_number}"}
+
+
+@router.post("/{cm_id}/void", response_model=CreditMemoResponse)
+def void_credit_memo(cm_id: int, db: Session = Depends(get_db)):
+    """Reverse a credit memo: put every application back on its invoice,
+    post the mirror-image entry, return any inventory the memo took back,
+    and mark it void. This is also how a mistaken write-off is undone."""
+    from app.models.items import MovementType
+    from app.services.accounting import reversing_lines
+    from app.services.inventory_service import _append_movement
+
+    cm = db.query(CreditMemo).filter(CreditMemo.id == cm_id).with_for_update().first()
+    if not cm:
+        raise HTTPException(status_code=404, detail="Credit memo not found")
+    if cm.status == CreditMemoStatus.VOID:
+        raise HTTPException(status_code=400, detail="Credit memo is already void")
+    check_closing_date(db, cm.date)
+
+    for app_row in list(cm.applications):
+        invoice = (
+            db.query(Invoice)
+            .filter(Invoice.id == app_row.invoice_id)
+            .with_for_update()
+            .first()
+        )
+        if invoice:
+            amt = Decimal(str(app_row.amount))
+            invoice.amount_paid = Decimal(str(invoice.amount_paid or 0)) - amt
+            invoice.balance_due = Decimal(str(invoice.balance_due or 0)) + amt
+            if invoice.amount_paid > 0:
+                invoice.status = InvoiceStatus.PARTIAL
+            else:
+                invoice.status = InvoiceStatus.SENT
+        db.delete(app_row)
+
+    if cm.transaction_id:
+        txn = db.query(Transaction).filter(Transaction.id == cm.transaction_id).first()
+        if txn is not None:
+            create_journal_entry(
+                db,
+                cm.date,
+                f"VOID Credit Memo {cm.memo_number}",
+                reversing_lines(txn.lines),
+                source_type="credit_memo_void",
+                source_id=cm.id,
+                class_id=cm.class_id,
+                job_id=cm.job_id,
+            )
+
+    for line in cm.lines:
+        if not line.item_id:
+            continue
+        item = db.query(Item).filter(Item.id == line.item_id).first()
+        if item and item.track_inventory and line.quantity > 0:
+            _append_movement(
+                db,
+                item,
+                MovementType.VOID,
+                quantity=-Decimal(str(line.quantity)),
+                unit_cost=Decimal(str(item.avg_cost or 0)),
+                source_type="credit_memo_void",
+                source_id=cm.id,
+                memo=f"VOID Credit Memo {cm.memo_number}",
+            )
+
+    cm.amount_applied = Decimal("0")
+    cm.balance_remaining = Decimal("0")
+    cm.status = CreditMemoStatus.VOID
+    db.commit()
+    db.refresh(cm)
+    resp = CreditMemoResponse.model_validate(cm)
+    resp.customer_name = cm.customer.name if cm.customer else None
+    return resp

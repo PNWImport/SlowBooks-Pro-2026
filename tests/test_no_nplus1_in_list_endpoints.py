@@ -134,3 +134,159 @@ def test_list_bills_query_count_constant(client, db_session, db_engine, seed_acc
     assert (
         len(stmts) < MAX_QUERIES + N_ROWS
     ), f"got {len(stmts)} SELECTs for {N_ROWS} bills"
+
+
+def _seed_employee(db_session):
+    from app.models.payroll import Employee
+
+    emp = Employee(
+        first_name="N1",
+        last_name="Worker",
+        ssn_last_four="0000",
+        pay_type="hourly",
+        pay_rate=Decimal("25"),
+        pay_frequency="biweekly",
+        filing_status="single",
+        is_active=True,
+    )
+    db_session.add(emp)
+    db_session.commit()
+    return emp
+
+
+def _seed_time_entries(db_session, employee_id, n):
+    from app.models.time_entries import TimeEntry
+
+    for i in range(n):
+        db_session.add(
+            TimeEntry(
+                employee_id=employee_id,
+                date=date(2026, 5, 1),
+                hours_regular=Decimal("8"),
+                hours_overtime=Decimal("0"),
+                hours_doubletime=Decimal("0"),
+            )
+        )
+    db_session.commit()
+
+
+def test_list_time_entries_query_count_constant(client, db_session, db_engine):
+    emp = _seed_employee(db_session)
+    _seed_time_entries(db_session, emp.id, N_ROWS)
+
+    with _count_selects(db_engine) as stmts:
+        r = client.get("/api/time-entries")
+
+    assert r.status_code == 200, r.text
+    assert len(r.json()) == N_ROWS
+    # Pre-fix _resp() read entry.employee per row -> 1 + N SELECTs. With
+    # joinedload(TimeEntry.employee) the employee comes back in the parent
+    # SELECT, so the count stays bounded regardless of N_ROWS.
+    assert (
+        len(stmts) < MAX_QUERIES + N_ROWS
+    ), f"got {len(stmts)} SELECTs for {N_ROWS} time entries"
+
+
+def _seed_pto_requests(db_session, employee_id, n):
+    from app.models.pto import PTORequest, PTOType
+
+    for i in range(n):
+        db_session.add(
+            PTORequest(
+                employee_id=employee_id,
+                start_date=date(2026, 5, 1),
+                end_date=date(2026, 5, 2),
+                hours=Decimal("8"),
+                pto_type=PTOType.VACATION,
+            )
+        )
+    db_session.commit()
+
+
+def test_list_pto_requests_query_count_constant(client, db_session, db_engine):
+    emp = _seed_employee(db_session)
+    _seed_pto_requests(db_session, emp.id, N_ROWS)
+
+    with _count_selects(db_engine) as stmts:
+        r = client.get("/api/pto/requests")
+
+    assert r.status_code == 200, r.text
+    assert len(r.json()) == N_ROWS
+    # Pre-fix list_requests read req.employee.full_name per row -> 1 + N
+    # SELECTs. joinedload(PTORequest.employee) collapses that to the parent
+    # SELECT, keeping the count bounded regardless of N_ROWS.
+    assert (
+        len(stmts) < MAX_QUERIES + N_ROWS
+    ), f"got {len(stmts)} SELECTs for {N_ROWS} pto requests"
+
+
+# ── Nonprofit documents ───────────────────────────────────────────────────
+
+
+def _seed_nonprofit_docs(client, n):
+    funds = [
+        client.post(
+            "/api/classes",
+            json={"name": f"Fund {i}", "restriction": "temporarily_restricted"},
+        ).json()
+        for i in range(n)
+    ]
+    for i, f in enumerate(funds):
+        r = client.post(
+            "/api/nonprofit/allocation-rules",
+            json={
+                "name": f"Rule {i}",
+                "targets": [
+                    {"class_id": f["id"], "function": "program", "weight": 70},
+                    {"function": "management", "weight": 30},
+                ],
+            },
+        )
+        assert r.status_code == 201, r.text
+        r = client.post(
+            "/api/nonprofit/releases",
+            json={"date": "2026-06-30", "class_id": f["id"], "amount": "10"},
+        )
+        assert r.status_code == 201, r.text
+
+
+def test_list_nonprofit_documents_query_count_constant(
+    client, db_session, db_engine, seed_accounts
+):
+    _seed_nonprofit_docs(client, N_ROWS)
+    for path, cap in (
+        ("/api/nonprofit/allocation-rules", MAX_QUERIES),
+        ("/api/nonprofit/releases", MAX_QUERIES),
+        ("/api/nonprofit/allocations", MAX_QUERIES),
+    ):
+        with _count_selects(db_engine) as stmts:
+            r = client.get(path)
+        assert r.status_code == 200, r.text
+        assert len(stmts) <= cap, f"{path}: {len(stmts)} SELECTs\n" + "\n".join(stmts)
+
+
+def test_list_in_kind_gifts_query_count_constant(
+    client, db_session, db_engine, seed_accounts, seed_customer
+):
+    checking = seed_accounts["1010"].id
+    for i in range(N_ROWS):
+        r = client.post(
+            "/api/in-kind-gifts",
+            json={
+                "customer_id": seed_customer.id,
+                "date": "2026-04-20",
+                "lines": [
+                    {
+                        "description": f"Item {i}",
+                        "quantity": 1,
+                        "fair_value": "10",
+                        "debit_account_id": checking,
+                    }
+                ],
+            },
+        )
+        assert r.status_code == 201, r.text
+    with _count_selects(db_engine) as stmts:
+        r = client.get("/api/in-kind-gifts")
+    assert r.status_code == 200
+    assert len(stmts) <= MAX_QUERIES, "\n".join(stmts)

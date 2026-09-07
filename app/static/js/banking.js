@@ -1,15 +1,14 @@
 /**
- * Decompiled from QBW32.EXE!CBankRegisterView + CReconcileWizard
- * Offset: 0x001E8400 (Register) / 0x001F1200 (Reconcile)
- * The bank register was one of the oldest views in QuickBooks, dating back
- * to the original Quicken codebase (circa 1993). You could tell because it
- * used CEditView instead of CFormView and had hardcoded column widths in
- * pixels (80, 120, 200, 80, 80, 80) that didn't scale on high-DPI displays.
- * The checkbook-style layout is preserved here for nostalgia.
+ * Bank register + reconcile wizard. The register is one of the oldest
+ * ideas in QuickBooks, going back to the Quicken era — the
+ * checkbook-style layout is preserved here for nostalgia.
  */
 const BankingPage = {
     async render() {
-        const accounts = await API.get('/banking/accounts');
+        const [accounts, feed] = await Promise.all([
+            API.get('/banking/accounts'),
+            API.get('/simplefin/status'),
+        ]);
         let html = `
             <div class="page-header">
                 <h2>Bank Accounts</h2>
@@ -31,7 +30,102 @@ const BankingPage = {
             }
             html += `</div>`;
         }
+        html += BankingPage._renderFeedSection(feed, accounts);
         return html;
+    },
+
+    // ------------------------------------------------------------------
+    // SimpleFIN bank feeds — the user brings their own bridge credential
+    // (bridge.simplefin.org); we claim the token once, then sync on click.
+    // ------------------------------------------------------------------
+    _renderFeedSection(feed, accounts) {
+        let body;
+        if (!feed.connected) {
+            body = `
+                <p style="font-size:12px; margin-bottom:8px;">
+                    Pull transactions straight from your bank — no file exports.
+                    Sign up at <a href="https://bridge.simplefin.org" target="_blank" rel="noopener">bridge.simplefin.org</a>,
+                    connect your bank there, then paste your <strong>setup token</strong> below.
+                    Your credential stays on this machine; SlowBooks has no middleman server.
+                </p>
+                <form onsubmit="BankingPage.connectSimpleFIN(event)">
+                    <div class="form-group">
+                        <label>SimpleFIN setup token</label>
+                        <input type="password" id="simplefin-token" required autocomplete="off"
+                               placeholder="Paste the one-time setup token">
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Connect</button>
+                    </div>
+                </form>`;
+        } else {
+            const options = (sfId) => {
+                const mapped = feed.account_map[sfId] || '';
+                return ['<option value="">— not imported —</option>']
+                    .concat(accounts.map(ba =>
+                        `<option value="${ba.id}" ${ba.id === mapped ? 'selected' : ''}>${escapeHtml(ba.name)}</option>`))
+                    .join('');
+            };
+            const rows = feed.accounts.map(a => `<tr>
+                    <td>${escapeHtml(a.name)}<div style="font-size:10px; color:var(--gray-400);">${escapeHtml(a.org || '')}</div></td>
+                    <td class="amount">${escapeHtml(a.balance)} ${escapeHtml(a.currency)}</td>
+                    <td><select data-sfid="${escapeHtml(a.id)}" class="simplefin-map">${options(a.id)}</select></td>
+                </tr>`).join('');
+            body = `
+                <p style="font-size:12px; margin-bottom:8px;">
+                    Connected. Choose which SlowBooks bank account each feed lands in,
+                    then sync — duplicates are skipped automatically and bank rules apply.
+                    ${feed.last_sync ? `Last sync: ${escapeHtml(feed.last_sync.replace('T', ' '))}` : 'Not synced yet.'}
+                </p>
+                <div class="table-container"><table>
+                    <thead><tr><th scope="col">Bank feed</th><th scope="col" class="amount">Balance</th><th scope="col">Imports into</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table></div>
+                <div class="form-actions" style="margin-top:12px;">
+                    <button class="btn btn-primary" onclick="BankingPage.syncSimpleFIN()">Sync Now</button>
+                    <button class="btn btn-secondary" onclick="BankingPage.disconnectSimpleFIN()">Disconnect</button>
+                </div>`;
+        }
+        return `<div class="card" style="margin-top:16px;">
+            <div class="card-header">Bank Feeds (SimpleFIN)</div>${body}</div>`;
+    },
+
+    async connectSimpleFIN(e) {
+        e.preventDefault();
+        const token = $('#simplefin-token').value.trim();
+        if (!token) return;
+        try {
+            const data = await API.post('/simplefin/claim', { setup_token: token });
+            toast(`Connected — found ${data.accounts.length} account(s). Now map them below.`);
+            App.navigate('#/banking');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async saveSimpleFINMap() {
+        const mapping = {};
+        document.querySelectorAll('.simplefin-map').forEach(sel => {
+            mapping[sel.dataset.sfid] = sel.value ? parseInt(sel.value, 10) : 0;
+        });
+        await API.post('/simplefin/map', { mapping });
+    },
+
+    async syncSimpleFIN() {
+        try {
+            await BankingPage.saveSimpleFINMap();
+            const r = await API.post('/simplefin/sync');
+            toast(`Synced: ${r.imported} new, ${r.skipped} duplicates skipped`);
+            if (r.warnings.length) toast(r.warnings[0], 'error');
+            App.navigate('#/banking');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async disconnectSimpleFIN() {
+        if (!confirm('Disconnect the SimpleFIN bank feed? Imported transactions are kept.')) return;
+        try {
+            await API.post('/simplefin/disconnect');
+            toast('Bank feed disconnected');
+            App.navigate('#/banking');
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     async viewRegister(bankAccountId) {
@@ -46,7 +140,7 @@ const BankingPage = {
                 <div class="btn-group">
                     <button class="btn btn-secondary" onclick="App.navigate('#/banking')">Back</button>
                     <button class="btn btn-primary" onclick="BankingPage.showTxnForm(${bankAccountId})">+ Transaction</button>
-                    <button class="btn btn-secondary" onclick="BankingPage.showOFXImport(${bankAccountId})">Import OFX/QFX</button>
+                    <button class="btn btn-secondary" onclick="BankingPage.showOFXImport(${bankAccountId})">Import OFX/QFX/CSV</button>
                     <button class="btn btn-secondary" onclick="BankingPage.startReconcile(${bankAccountId})">Reconcile</button>
                 </div>
             </div>
@@ -60,8 +154,8 @@ const BankingPage = {
         } else {
             html += `<div class="table-container"><table>
                 <thead><tr>
-                    <th>Date</th><th>Payee</th><th>Description</th><th>Check #</th>
-                    <th class="amount">Amount</th><th>Reconciled</th>
+                    <th scope="col">Date</th><th scope="col">Payee</th><th scope="col">Description</th><th scope="col">Check #</th>
+                    <th scope="col" class="amount">Amount</th><th scope="col">Reconciled</th>
                 </tr></thead><tbody>`;
             for (const t of txns) {
                 const cls = t.amount >= 0 ? 'color:var(--success)' : 'color:var(--danger)';
@@ -172,7 +266,7 @@ const BankingPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
-    // Reconciliation — CReconcileWizard @ 0x001F1200
+    // Reconciliation
     async startReconcile(bankAccountId) {
         openModal('Begin Reconciliation', `
             <form onsubmit="BankingPage.createReconciliation(event, ${bankAccountId})">
@@ -238,10 +332,11 @@ const BankingPage = {
                 <div class="card"><div class="card-header">Cleared Balance</div>
                     <div class="card-value" id="recon-cleared">${formatCurrency(data.cleared_total)}</div></div>
                 <div class="card"><div class="card-header">Difference</div>
-                    <div class="card-value" id="recon-diff" style="color:${diffColor}">${formatCurrency(data.difference)}</div></div>
+                    <div class="card-value" id="recon-diff" style="color:${diffColor}">${formatCurrency(data.difference)}</div>
+                    <div style="font-size:11px; font-weight:600;" role="status">${Math.abs(data.difference) < 0.01 ? '\u2713 Balanced' : '\u26a0 Out of balance'}</div></div>
             </div>
             <div class="table-container"><table>
-                <thead><tr><th style="width:30px;"></th><th>Date</th><th>Payee / Description</th><th>Check #</th><th class="amount">Amount</th></tr></thead>
+                <thead><tr><th scope="col" style="width:30px;"></th><th scope="col">Date</th><th scope="col">Payee / Description</th><th scope="col">Check #</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>${rows || '<tr><td colspan="5" style="text-align:center;">No transactions</td></tr>'}</tbody>
             </table></div>`;
     },
@@ -266,13 +361,13 @@ const BankingPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
-    // Feature 18: OFX/QFX Import
+    // Feature 18: OFX/QFX Import (+ CSV: Chase checking/credit, PayPal)
     async showOFXImport(bankAccountId) {
-        openModal('Import OFX/QFX File', `
+        openModal('Import Bank File', `
             <form onsubmit="BankingPage.previewOFX(event, ${bankAccountId})">
                 <div class="form-group">
-                    <label>Select OFX or QFX file from your bank</label>
-                    <input type="file" name="file" accept=".ofx,.qfx" required id="ofx-file">
+                    <label>Select an OFX/QFX file, or a CSV export (Chase checking, Chase credit, PayPal)</label>
+                    <input type="file" name="file" accept=".ofx,.qfx,.csv" required id="ofx-file">
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -282,30 +377,38 @@ const BankingPage = {
             <div id="ofx-preview" style="margin-top:12px;"></div>`);
     },
 
+    _isCsvFile(file) {
+        return /\.csv$/i.test(file.name || '');
+    },
+
     async previewOFX(e, bankAccountId) {
         e.preventDefault();
         const file = $('#ofx-file').files[0];
         if (!file) return;
+        const isCsv = BankingPage._isCsvFile(file);
         const formData = new FormData();
         formData.append('file', file);
         try {
-            const resp = await fetch('/api/bank-import/preview', { method: 'POST', body: formData });
+            const endpoint = isCsv ? '/api/bank-import/preview-csv' : '/api/bank-import/preview';
+            const resp = await fetch(endpoint, { method: 'POST', body: formData });
             const data = await resp.json();
             if (!resp.ok) throw new Error(data.detail || 'Parse failed');
+            if (isCsv && data.error) throw new Error(data.error);
             BankingPage._ofxData = data;
             let rows = data.transactions.map((t, i) => `<tr>
                 <td>${escapeHtml(t.date || '')}</td>
                 <td>${escapeHtml(t.payee || '')}</td>
                 <td class="amount" style="${t.amount >= 0 ? 'color:var(--success)' : 'color:var(--danger)'}">${formatCurrency(t.amount)}</td>
-                <td>${escapeHtml(t.fitid || '')}</td>
+                <td>${escapeHtml(isCsv ? (t.description || '') : (t.fitid || ''))}</td>
             </tr>`).join('');
             $('#ofx-preview').innerHTML = `
                 <div style="margin-bottom:8px; font-size:11px;">
                     <strong>${data.transactions.length}</strong> transactions found.
+                    ${isCsv && data.format ? `Format: ${escapeHtml(data.format)}` : ''}
                     ${data.account_id ? `Account: ${escapeHtml(data.account_id)}` : ''}
                 </div>
                 <div class="table-container" style="max-height:300px; overflow-y:auto;"><table>
-                    <thead><tr><th>Date</th><th>Payee</th><th class="amount">Amount</th><th>FITID</th></tr></thead>
+                    <thead><tr><th scope="col">Date</th><th scope="col">Payee</th><th scope="col" class="amount">Amount</th><th scope="col">${isCsv ? 'Description' : 'FITID'}</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table></div>
                 <div class="form-actions" style="margin-top:12px;">
@@ -318,12 +421,17 @@ const BankingPage = {
 
     async confirmOFXImport(bankAccountId) {
         try {
+            const file = $('#ofx-file').files[0];
+            const isCsv = BankingPage._isCsvFile(file);
             const formData = new FormData();
-            formData.append('file', $('#ofx-file').files[0]);
-            const resp = await fetch(`/api/bank-import/import/${bankAccountId}`, { method: 'POST', body: formData });
+            formData.append('file', file);
+            const endpoint = isCsv
+                ? `/api/bank-import/import-csv/${bankAccountId}`
+                : `/api/bank-import/import/${bankAccountId}`;
+            const resp = await fetch(endpoint, { method: 'POST', body: formData });
             const data = await resp.json();
             if (!resp.ok) throw new Error(data.detail || 'Import failed');
-            toast(`Imported ${data.imported} transactions (${data.skipped_duplicates} duplicates skipped)`);
+            toast(`Imported ${data.imported} transactions (${data.skipped} duplicates skipped)`);
             closeModal();
             BankingPage.viewRegister(bankAccountId);
         } catch (err) { toast(err.message, 'error'); }

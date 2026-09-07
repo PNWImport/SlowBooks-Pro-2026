@@ -95,11 +95,11 @@ const PayrollReportsPage = {
                     Run #${run.pay_run_id} — paid ${formatDate(run.pay_date)}
                     ${run.transaction_id ? `(JE ${run.transaction_id})` : ''}</h4>
                 <div class="table-container"><table>
-                <thead><tr><th>Employee</th><th class="amount">Gross</th>
-                <th class="amount">Fed</th><th class="amount">State</th>
-                <th class="amount">SS</th><th class="amount">Medicare</th>
-                <th class="amount">Pre-tax</th><th class="amount">Garnish</th>
-                <th class="amount">Net</th><th class="amount">Employer</th></tr></thead>
+                <thead><tr><th scope="col">Employee</th><th scope="col" class="amount">Gross</th>
+                <th scope="col" class="amount">Fed</th><th scope="col" class="amount">State</th>
+                <th scope="col" class="amount">SS</th><th scope="col" class="amount">Medicare</th>
+                <th scope="col" class="amount">Pre-tax</th><th scope="col" class="amount">Garnish</th>
+                <th scope="col" class="amount">Net</th><th scope="col" class="amount">Employer</th></tr></thead>
                 <tbody>${rows}</tbody></table></div>`;
         }
         const t = data.totals;
@@ -124,9 +124,9 @@ const PayrollReportsPage = {
         const t = data.totals;
         return `<h3>Deduction Register — ${data.year}</h3>
             <div class="table-container"><table>
-            <thead><tr><th>Employee</th><th class="amount">Pre-tax</th>
-            <th class="amount">Post-tax</th><th class="amount">Garnishments</th>
-            <th class="amount">Stubs</th></tr></thead>
+            <thead><tr><th scope="col">Employee</th><th scope="col" class="amount">Pre-tax</th>
+            <th scope="col" class="amount">Post-tax</th><th scope="col" class="amount">Garnishments</th>
+            <th scope="col" class="amount">Stubs</th></tr></thead>
             <tbody>${rows}</tbody></table></div>
             <div style="font-size:12px; font-weight:700; margin-top:8px;">
                 Totals — pre-tax ${formatCurrency(t.pretax_deductions)},
@@ -147,10 +147,10 @@ const PayrollReportsPage = {
         </tr>`).join('');
         return `<h3>Contractor Payments — ${data.year}</h3>
             <div class="table-container"><table>
-            <thead><tr><th>Vendor</th><th>1099</th>
-            <th class="amount">AP Bill Payments</th>
-            <th class="amount">Contractor Runs</th>
-            <th class="amount">Total</th></tr></thead>
+            <thead><tr><th scope="col">Vendor</th><th scope="col">1099</th>
+            <th scope="col" class="amount">AP Bill Payments</th>
+            <th scope="col" class="amount">Contractor Runs</th>
+            <th scope="col" class="amount">Total</th></tr></thead>
             <tbody>${rows}</tbody></table></div>
             <div style="font-size:12px; font-weight:700; margin-top:8px;">
                 Total: ${formatCurrency(data.total)}</div>`;

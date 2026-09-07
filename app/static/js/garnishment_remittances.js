@@ -51,9 +51,9 @@ const GarnishmentRemittancesPage = {
         }
         let html = `<div class="table-container"><table>
             <thead><tr>
-                <th>Employee</th><th>Type</th><th>Agency</th><th>Case #</th>
-                <th class="amount">Amount</th><th>Withheld</th>
-                <th>Status</th><th>Reference</th><th>Actions</th>
+                <th scope="col">Employee</th><th scope="col">Type</th><th scope="col">Agency</th><th scope="col">Case #</th>
+                <th scope="col" class="amount">Amount</th><th scope="col">Withheld</th>
+                <th scope="col">Status</th><th scope="col">Reference</th><th scope="col">Actions</th>
             </tr></thead><tbody>`;
         for (const r of rows) {
             const isPending = !r.remitted_at;

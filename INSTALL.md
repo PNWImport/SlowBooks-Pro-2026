@@ -1,12 +1,119 @@
 # Installation Guide
 
-Three ways to run Slowbooks Pro 2026.
+Ways to run Slowbooks Pro 2026.
+
+---
+
+## Option 0: Windows installer
+
+**Recommended for Windows users.** No Docker, no WSL2, no command line —
+Slowbooks Pro runs as a normal desktop app in its own window (no browser
+tab). The installer is digitally signed, so Windows shows a verified
+publisher instead of a SmartScreen warning.
+
+### Steps
+
+1. Download **`SlowBooksPro-Setup-x64.exe`** from the
+   [latest release](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases/latest)
+   (or from [slowbookspro.com](https://www.slowbookspro.com)).
+2. Double-click it and follow the wizard. Everything installs into
+   `Program Files`; a Start Menu entry (and optional Desktop shortcut) is
+   created.
+3. Launch **SlowBooks Pro 2026** — you'll be asked to create your first
+   company, and the app opens in its own window.
+
+The app is fully self-contained — **no Docker, no WSL2, no database server,
+no Python install**. Your books are stored in ordinary files on your own
+machine, under `%LOCALAPPDATA%\SlowBooksPro`, which upgrades and even
+uninstalls leave untouched.
+
+When a new version is released, the footer of the app shows an
+**Update available** notice — download the new installer and run it over
+the old install; your companies and settings are kept.
+
+### Working with multiple companies
+
+This install manages companies the way QuickBooks Desktop does: each company
+is its own file, stored under `%LOCALAPPDATA%\SlowBooksPro\data\companies\`.
+Every time you open SlowBooks Pro you're asked which company to open (or to
+create a new one). To switch companies, close the app and open it again.
+
+### Stopping the app
+
+Just close the window — the server shuts down with it. If something ever gets
+stuck, end the **SlowBooksPro** process from Task Manager.
+
+### Troubleshooting
+
+The app runs with no console window — quietly in the background like any
+other desktop app. If something goes wrong before the app window can open, a
+small popup explains it, and full details are written to
+`%LOCALAPPDATA%\SlowBooksPro\data\launcher.log`.
+
+### Windows Defender "Controlled folder access"
+
+Off by default on Windows 11, but some people (and most managed PCs) turn it
+on. When it is on, Defender blocks any app it does not know from writing
+into Documents, Downloads and the other protected folders — including a
+OneDrive-redirected Documents — and a code signature earns no exception.
+SlowBooks writes there in two places: **Save PDF / Save CSV** on reports go
+to `Documents\SlowBooks Pro\Reports`, and **Save backup** copies the backup
+to `Downloads`. If the write is refused, the app does not fail silently: the
+PDF or CSV lands in `%LOCALAPPDATA%\SlowBooksPro\data\Reports` instead and
+the notice says so (with a *Show in folder* button), and the backup notice
+tells you it is still in the app's own `backups` folder. Defender's own toast
+may or may not appear.
+
+To let SlowBooks use your Documents and Downloads folders directly:
+**Windows Security → Virus & threat protection → Ransomware protection →
+Manage Controlled folder access → Allow an app through Controlled folder
+access → Add an allowed app → Recently blocked apps**, and pick
+`SlowBooksPro.exe` (or browse to `C:\Program Files\SlowBooks Pro 2026\`).
+
+### Backups
+
+Backups created from the Settings UI are simply snapshots of the open
+company's `.db` file (stored in the app's `backups` folder). You can also copy
+the company files in `%LOCALAPPDATA%\SlowBooksPro\data\companies\` anywhere
+you like while the app is closed — each file is a complete, self-contained
+company.
+
+### Tradeoffs versus Option 1 (Docker + PostgreSQL)
+
+This path is **single-user, single-machine**: no multi-user client portal
+serving other people, no concurrent access. In exchange, there's nothing to
+administer — no `pg_dump`, no containers, no background services.
+
+---
+
+## Option 0A: macOS desktop app
+
+**Recommended for Apple Silicon Macs running macOS 14 or newer.** No Docker,
+Python, or database server is required.
+
+1. Download `SlowBooksPro-<version>-macos-arm64.dmg` from the
+   [latest release](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases/latest).
+2. Open the disk image and drag **SlowBooks Pro** to Applications.
+3. Eject the image, then launch **SlowBooks Pro** from Applications.
+
+The app is signed with an Apple Developer ID and notarized by Apple. Each
+company is an ordinary SQLite file under
+`~/Library/Application Support/SlowBooksPro/data/companies/`. Settings,
+backups, uploads, and `launcher.log` live under the same `data` directory and
+remain outside the app bundle during upgrades.
+
+This path has the same single-user tradeoffs as the Windows desktop app. Intel
+Macs should use Docker or the developer-oriented native install below until a
+separately tested Intel build is available.
 
 ---
 
 ## Option 1: Docker (Windows, macOS, Linux)
 
-**Recommended for Windows and macOS.** One command, no dependency headaches.
+**Recommended for Linux servers and Intel Macs.** One command, no
+dependency headaches. Note: multi-user over the LAN does **not** require
+Docker — Server Edition runs from the signed Windows installer (see
+[docs/server-edition.md](docs/server-edition.md)).
 
 ### Prerequisites
 
@@ -17,17 +124,36 @@ Three ways to run Slowbooks Pro 2026.
 ```bash
 git clone https://github.com/VonHoltenCodes/SlowBooks-Pro-2026.git
 cd SlowBooks-Pro-2026
-cp .env.example .env        # optional — defaults work out of the box
+cp .env.example .env
+
+# Set a strong encryption secret for employee bank PII. The app refuses to
+# start against Postgres with the shipped dev default, so this is required:
+#   Linux/macOS:  openssl rand -base64 32
+#   any OS:       python -c "import secrets; print(secrets.token_urlsafe(32))"
+# Put the result on the PAYROLL_ENCRYPTION_SECRET= line in .env.
+
 docker compose up
 ```
 
 Open **http://localhost:3001** in your browser.
 
+> The compose stack is a **single-host** install: Postgres lives on the
+> compose-internal network and the app serves plain HTTP on localhost, so
+> `docker-compose.yml` sets `SLOWBOOKS_PRIVATE_NETWORK=1` to relax the two
+> production transport guards (database TLS, HTTPS redirect). Before you
+> expose it beyond the host, put a TLS proxy in front
+> ([docs/tls-proxy-setup.md](docs/tls-proxy-setup.md)), set `FORCE_HTTPS=true`,
+> add `?sslmode=require` to `DATABASE_URL`, and unset that flag.
+
+> On Windows, **Option 0** avoids all of this (no Docker at all, secret
+> generated for you, opens a desktop window) — prefer it unless you
+> specifically want a multi-user Docker + PostgreSQL server.
+
 ### What happens on first run
 
 1. PostgreSQL 17 starts and creates the `bookkeeper` database
-2. Alembic runs all migrations (creates 55 tables)
-3. Chart of Accounts is seeded (50 accounts — Contractor template, includes the payroll-liability accounts needed for pay-run processing)
+2. Alembic runs all migrations (the complete schema — no table depends on app startup)
+3. Chart of Accounts is seeded (57 accounts — Contractor template, includes the payroll-liability accounts and 6810 Depreciation Expense) and a default Equipment asset type
 4. Uvicorn starts serving the app on port 3001
 5. On first visit, you'll be prompted to set an operator password (min 8 characters)
 
@@ -81,7 +207,7 @@ docker compose cp slowbooks:/app/backups ./my-backups
 
 ### Prerequisites
 
-- Python 3.13 (CI gates against 3.13; older 3.12 may work but isn't tested)
+- Python 3.13 (CI gates against 3.13; 3.12 is verified working)
 - PostgreSQL 17 (Docker image ships 17-alpine; older 16 still works for native installs)
 - System libraries for WeasyPrint
 
@@ -89,21 +215,45 @@ docker compose cp slowbooks:/app/backups ./my-backups
 
 ```bash
 # Install system dependencies (Ubuntu/Debian/Pop!_OS)
-sudo apt install -y postgresql libcairo2-dev libpango-1.0-0 \
+sudo apt install -y postgresql python3-venv libcairo2-dev libpango-1.0-0 \
     libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libffi-dev
+
+# Optional — receipt scanning (Tier 2 OCR). The feature degrades
+# gracefully without these; the Scan Receipt button just stays disabled.
+sudo apt install -y tesseract-ocr poppler-utils
+# Only if you want the desktop window (python3 desktop_launcher.py) rather
+# than a browser: pywebview renders through WebKitGTK and needs the
+# GObject-introspection typelib, which is a separate package from the
+# library itself.
+sudo apt install -y gir1.2-webkit2-4.1
 
 # Create database
 sudo -u postgres createuser bookkeeper -P    # password: bookkeeper
 sudo -u postgres createdb bookkeeper -O bookkeeper
 
-# Clone and install
+# Clone
 git clone https://github.com/VonHoltenCodes/SlowBooks-Pro-2026.git
 cd SlowBooks-Pro-2026
+
+# Create a virtual environment and install into it.
+# This is REQUIRED, not optional: Ubuntu 23.04+, Debian 12+, Pop!_OS 24.04
+# and Fedora 38+ implement PEP 668, so a bare `pip install` into the system
+# interpreter fails with "error: externally-managed-environment".
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 
 # Set up environment
 cp .env.example .env
-# Edit .env if your database credentials differ
+# Edit .env if your database credentials differ.
+#
+# For a local development install, also set:
+#     APP_DEBUG=true
+# Leaving APP_DEBUG=false (the production default) turns on FORCE_HTTPS,
+# which 307-redirects http://localhost:3001 to https://localhost:3001 —
+# and a native install serves no TLS on that port, so the browser gets a
+# connection error. Production deployments should keep APP_DEBUG=false and
+# terminate TLS at a reverse proxy in front of the app.
 
 # Run migrations and seed
 alembic upgrade head
@@ -114,6 +264,10 @@ python run.py
 ```
 
 Open **http://localhost:3001**.
+
+> Every command above assumes the virtualenv is active (`source .venv/bin/activate`).
+> Without activating it, use the explicit paths instead: `.venv/bin/alembic`,
+> `.venv/bin/python`.
 
 ### Optional: Load demo data
 

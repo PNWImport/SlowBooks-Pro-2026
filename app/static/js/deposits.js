@@ -4,10 +4,14 @@
  */
 const DepositsPage = {
     async render() {
-        const [pending, accounts] = await Promise.all([
+        const [pending, accounts, classes] = await Promise.all([
             API.get('/deposits/pending'),
             API.get('/accounts'),
+            API.get('/classes').catch(() => []),
         ]);
+        const classOpts = classes.map(c =>
+            `<option value="${c.id}" ${c.is_system_default ? 'selected' : ''}>${escapeHtml(c.name)}</option>`
+        ).join('');
 
         const bankAccts = accounts.filter(a => a.account_type === 'asset');
         const bankOpts = bankAccts.map(a => `<option value="${a.id}">${escapeHtml(a.name)} (${formatCurrency(a.balance)})</option>`).join('');
@@ -26,6 +30,8 @@ const DepositsPage = {
                 <input type="date" id="deposit-date" value="${todayISO()}">
                 <label style="font-size:10px;font-weight:700;">Reference:</label>
                 <input type="text" id="deposit-ref" placeholder="Deposit slip #" style="width:120px;">
+                ${classOpts ? `<label style="font-size:10px;font-weight:700;">${T('Class')}:</label>
+                <select id="deposit-class">${classOpts}</select>` : ''}
             </div>`;
 
         if (pending.length === 0) {
@@ -33,9 +39,9 @@ const DepositsPage = {
         } else {
             html += `<div class="table-container"><table>
                 <thead><tr>
-                    <th style="width:30px;"><input type="checkbox" id="dep-select-all" onchange="DepositsPage.toggleAll()"></th>
-                    <th>Date</th><th>Description</th><th>Reference</th><th>Source</th>
-                    <th class="amount">Amount</th>
+                    <th scope="col" style="width:30px;"><input type="checkbox" id="dep-select-all" onchange="DepositsPage.toggleAll()"></th>
+                    <th scope="col">Date</th><th scope="col">Description</th><th scope="col">Reference</th><th scope="col">Source</th>
+                    <th scope="col" class="amount">Amount</th>
                 </tr></thead><tbody>`;
             for (const p of pending) {
                 html += `<tr>
@@ -97,6 +103,7 @@ const DepositsPage = {
                 date: $('#deposit-date').value,
                 total: total,
                 reference: $('#deposit-ref')?.value || null,
+                class_id: $('#deposit-class')?.value ? parseInt($('#deposit-class').value) : null,
                 line_ids: lineIds,
             });
             toast(`Deposited ${formatCurrency(total)}`);

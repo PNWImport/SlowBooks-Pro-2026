@@ -43,8 +43,8 @@ const ContractorRunsPage = {
         }
         let html = `<div class="table-container"><table>
             <thead><tr>
-                <th>ID</th><th>Pay Date</th><th>Memo</th><th>Payees</th>
-                <th class="amount">Total</th><th>Status</th><th>JE</th><th>Actions</th>
+                <th scope="col">ID</th><th scope="col">Pay Date</th><th scope="col">Memo</th><th scope="col">Payees</th>
+                <th scope="col" class="amount">Total</th><th scope="col">Status</th><th scope="col">JE</th><th scope="col">Actions</th>
             </tr></thead><tbody>`;
         for (const r of runs) {
             const actions = [];
@@ -198,7 +198,7 @@ const ContractorRunsPage = {
                    ${run.memo ? ` &nbsp; Memo: ${escapeHtml(run.memo)}` : ''}
                    ${run.transaction_id ? ` &nbsp; JE #${run.transaction_id}` : ''}</p>
                 <div class="table-container"><table>
-                    <thead><tr><th>Vendor</th><th class="amount">Amount</th><th>Description</th></tr></thead>
+                    <thead><tr><th scope="col">Vendor</th><th scope="col" class="amount">Amount</th><th scope="col">Description</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table></div>
                 <div class="form-actions">

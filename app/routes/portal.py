@@ -31,7 +31,9 @@ from app.models.payroll import Employee, FilingStatus
 from app.models.portal_access import PortalAccess
 from app.models.pto import PTOAccrual, PTOPolicy, PTORequest, PTOType
 from app.services.encryption import encrypt
+from app.services.nacha_export import validate_routing_number
 from app.services.rate_limit import limiter
+from app.services.request_utils import client_ip as _client_ip
 from app.services.settings_service import get_all_settings
 
 router = APIRouter(tags=["portal"])
@@ -149,19 +151,6 @@ def _claim(
     return response
 
 
-def _client_ip(request: Request) -> str:
-    """Client IP, capped at 45 chars for IPv6. Honors X-Forwarded-For only
-    behind a declared trusted proxy (TRUST_PROXY_HEADERS) — otherwise XFF is
-    client-spoofable and would poison the portal access audit trail."""
-    from app.config import TRUST_PROXY_HEADERS
-
-    fwd = request.headers.get("x-forwarded-for", "") if TRUST_PROXY_HEADERS else ""
-    if fwd:
-        return fwd.split(",")[0].strip()[:45]
-    client = request.client
-    return (client.host if client else "")[:45]
-
-
 def _redact_portal_path(path: str) -> str:
     """Strip the portal token out of a path before it's persisted.
 
@@ -230,6 +219,136 @@ def _processed_stub_count(emp: Employee) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Shared mutation bodies. Both the cookie-based handlers and the token-in-URL
+# claim handlers funnel through these so the validation + persistence logic
+# lives in exactly one place. The route wrappers differ only in how they
+# resolve the employee and how they render success/error (cookie stamping is
+# only needed on the token-URL path).
+# ---------------------------------------------------------------------------
+
+
+def _save_profile(
+    emp: Employee,
+    *,
+    filing_status: str,
+    multiple_jobs: bool,
+    dependents_amount: float,
+    other_income_annual: float,
+    deductions_annual: float,
+    extra_withholding: float,
+    address1: str,
+    address2: str,
+    city: str,
+    state: str,
+    zip: str,
+    db: Session,
+) -> None:
+    """Persist W-4 / address edits. Raises HTTPException(400) on a bad filing
+    status — both route variants surface that identically."""
+    try:
+        emp.filing_status = FilingStatus(filing_status)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid filing status")
+    emp.multiple_jobs = bool(multiple_jobs)
+    emp.dependents_amount = dependents_amount
+    emp.other_income_annual = other_income_annual
+    emp.deductions_annual = deductions_annual
+    emp.extra_withholding = extra_withholding
+    emp.address1 = address1 or None
+    emp.address2 = address2 or None
+    emp.city = city or None
+    emp.state = state or None
+    emp.zip = zip or None
+    db.commit()
+
+
+def _add_bank(
+    emp: Employee,
+    *,
+    nickname: str,
+    account_kind: str,
+    routing_number: str,
+    account_number: str,
+    deposit_type: str,
+    db: Session,
+) -> str | None:
+    """Validate + persist a new direct-deposit account.
+
+    Returns an error message (for the ?error= redirect) when validation
+    fails, or None on success. Routing numbers must pass the full ABA
+    checksum, not just a 9-digit shape check, so a transposed digit is
+    caught before the account can ever land in an ACH file.
+    """
+    routing = routing_number.strip()
+    account = account_number.strip()
+    if not validate_routing_number(routing):
+        return "Invalid routing number"
+    if not account.isdigit():
+        return "Account number must be numeric"
+    try:
+        kind = BankAccountKind(account_kind)
+        dtype = DepositType(deposit_type)
+    except ValueError:
+        return "Invalid selection"
+
+    db.add(
+        EmployeeBankAccount(
+            employee_id=emp.id,
+            nickname=nickname or None,
+            account_kind=kind,
+            routing_number_enc=encrypt(routing),
+            account_number_enc=encrypt(account),
+            account_last_four=account[-4:],
+            deposit_type=dtype,
+            is_active=True,
+        )
+    )
+    db.commit()
+    return None
+
+
+def _bank_error_url(message: str) -> str:
+    """Build the /portal/bank?error=... redirect target for a validation
+    failure message (spaces become '+')."""
+    return "/portal/bank?error=" + message.replace(" ", "+")
+
+
+def _request_pto(
+    emp: Employee,
+    *,
+    start_date: str,
+    end_date: str,
+    hours: float,
+    pto_type: str,
+    notes: str,
+    db: Session,
+) -> None:
+    """Persist a PTO request. Raises HTTPException(400) on a bad type or
+    unparseable dates — both route variants surface that identically."""
+    try:
+        ptype = PTOType(pto_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid PTO type")
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be YYYY-MM-DD")
+
+    db.add(
+        PTORequest(
+            employee_id=emp.id,
+            start_date=start,
+            end_date=end,
+            hours=hours,
+            pto_type=ptype,
+            notes=notes or None,
+        )
+    )
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
 # Cookieless handlers — the real implementations.
 # Registered BEFORE the catch-all `/portal/{token}` so literal paths
 # (`/portal/`, `/portal/paystubs`, etc.) win the routing match.
@@ -292,21 +411,21 @@ def portal_profile_save(
     db: Session = Depends(get_db),
 ):
     emp = _employee_from_cookie(request, db)
-    try:
-        emp.filing_status = FilingStatus(filing_status)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid filing status")
-    emp.multiple_jobs = bool(multiple_jobs)
-    emp.dependents_amount = dependents_amount
-    emp.other_income_annual = other_income_annual
-    emp.deductions_annual = deductions_annual
-    emp.extra_withholding = extra_withholding
-    emp.address1 = address1 or None
-    emp.address2 = address2 or None
-    emp.city = city or None
-    emp.state = state or None
-    emp.zip = zip or None
-    db.commit()
+    _save_profile(
+        emp,
+        filing_status=filing_status,
+        multiple_jobs=multiple_jobs,
+        dependents_amount=dependents_amount,
+        other_income_annual=other_income_annual,
+        deductions_annual=deductions_annual,
+        extra_withholding=extra_withholding,
+        address1=address1,
+        address2=address2,
+        city=city,
+        state=state,
+        zip=zip,
+        db=db,
+    )
     return _portal_redirect("/portal/profile?saved=1")
 
 
@@ -349,31 +468,17 @@ def portal_bank_add(
     db: Session = Depends(get_db),
 ):
     emp = _employee_from_cookie(request, db)
-    routing = routing_number.strip()
-    account = account_number.strip()
-    if not (routing.isdigit() and len(routing) == 9):
-        return _portal_redirect("/portal/bank?error=Routing+number+must+be+9+digits")
-    if not account.isdigit():
-        return _portal_redirect("/portal/bank?error=Account+number+must+be+numeric")
-    try:
-        kind = BankAccountKind(account_kind)
-        dtype = DepositType(deposit_type)
-    except ValueError:
-        return _portal_redirect("/portal/bank?error=Invalid+selection")
-
-    db.add(
-        EmployeeBankAccount(
-            employee_id=emp.id,
-            nickname=nickname or None,
-            account_kind=kind,
-            routing_number_enc=encrypt(routing),
-            account_number_enc=encrypt(account),
-            account_last_four=account[-4:],
-            deposit_type=dtype,
-            is_active=True,
-        )
+    error = _add_bank(
+        emp,
+        nickname=nickname,
+        account_kind=account_kind,
+        routing_number=routing_number,
+        account_number=account_number,
+        deposit_type=deposit_type,
+        db=db,
     )
-    db.commit()
+    if error:
+        return _portal_redirect(_bank_error_url(error))
     return _portal_redirect("/portal/bank?saved=1")
 
 
@@ -417,27 +522,15 @@ def portal_pto_request(
     db: Session = Depends(get_db),
 ):
     emp = _employee_from_cookie(request, db)
-    try:
-        ptype = PTOType(pto_type)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid PTO type")
-    try:
-        start = date.fromisoformat(start_date)
-        end = date.fromisoformat(end_date)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Dates must be YYYY-MM-DD")
-
-    db.add(
-        PTORequest(
-            employee_id=emp.id,
-            start_date=start,
-            end_date=end,
-            hours=hours,
-            pto_type=ptype,
-            notes=notes or None,
-        )
+    _request_pto(
+        emp,
+        start_date=start_date,
+        end_date=end_date,
+        hours=hours,
+        pto_type=pto_type,
+        notes=notes,
+        db=db,
     )
-    db.commit()
     return _portal_redirect("/portal/pto?saved=1")
 
 
@@ -519,6 +612,21 @@ def portal_claim_pto(request: Request, token: str, db: Session = Depends(get_db)
 # POST routes with token in the URL — process inline, stamp the cookie, then
 # redirect to the cookieless URL. Browsers can't redirect a POST across paths
 # cleanly, so we do the work first and 303 to the GET equivalent.
+def _employee_from_token(request: Request, token: str, db: Session) -> Employee:
+    """_get_employee + portal_accesses audit row, mirroring the cookie path.
+
+    The token-URL POST handlers mutate the most sensitive data the portal
+    holds (W-4 elections, direct-deposit accounts) — they must show up in
+    the audit trail exactly like their cookie-based twins."""
+    try:
+        emp = _get_employee(token, db)
+    except HTTPException:
+        _record_portal_access(db, request, employee_id=None, success=False)
+        raise
+    _record_portal_access(db, request, employee_id=emp.id, success=True)
+    return emp
+
+
 def _set_cookie_on(response, emp: Employee):
     # Cookie value is read from the validated Employee row, not the URL
     # param. Same string by construction, but DB-sourced gives static
@@ -546,22 +654,22 @@ def portal_claim_profile_save(
     zip: str = Form(""),
     db: Session = Depends(get_db),
 ):
-    emp = _get_employee(token, db)
-    try:
-        emp.filing_status = FilingStatus(filing_status)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid filing status")
-    emp.multiple_jobs = bool(multiple_jobs)
-    emp.dependents_amount = dependents_amount
-    emp.other_income_annual = other_income_annual
-    emp.deductions_annual = deductions_annual
-    emp.extra_withholding = extra_withholding
-    emp.address1 = address1 or None
-    emp.address2 = address2 or None
-    emp.city = city or None
-    emp.state = state or None
-    emp.zip = zip or None
-    db.commit()
+    emp = _employee_from_token(request, token, db)
+    _save_profile(
+        emp,
+        filing_status=filing_status,
+        multiple_jobs=multiple_jobs,
+        dependents_amount=dependents_amount,
+        other_income_annual=other_income_annual,
+        deductions_annual=deductions_annual,
+        extra_withholding=extra_withholding,
+        address1=address1,
+        address2=address2,
+        city=city,
+        state=state,
+        zip=zip,
+        db=db,
+    )
     return _set_cookie_on(_portal_redirect("/portal/profile?saved=1"), emp)
 
 
@@ -577,40 +685,18 @@ def portal_claim_bank_add(
     deposit_type: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    emp = _get_employee(token, db)
-    routing = routing_number.strip()
-    account = account_number.strip()
-    if not (routing.isdigit() and len(routing) == 9):
-        return _set_cookie_on(
-            _portal_redirect("/portal/bank?error=Routing+number+must+be+9+digits"),
-            emp,
-        )
-    if not account.isdigit():
-        return _set_cookie_on(
-            _portal_redirect("/portal/bank?error=Account+number+must+be+numeric"),
-            emp,
-        )
-    try:
-        kind = BankAccountKind(account_kind)
-        dtype = DepositType(deposit_type)
-    except ValueError:
-        return _set_cookie_on(
-            _portal_redirect("/portal/bank?error=Invalid+selection"), emp
-        )
-
-    db.add(
-        EmployeeBankAccount(
-            employee_id=emp.id,
-            nickname=nickname or None,
-            account_kind=kind,
-            routing_number_enc=encrypt(routing),
-            account_number_enc=encrypt(account),
-            account_last_four=account[-4:],
-            deposit_type=dtype,
-            is_active=True,
-        )
+    emp = _employee_from_token(request, token, db)
+    error = _add_bank(
+        emp,
+        nickname=nickname,
+        account_kind=account_kind,
+        routing_number=routing_number,
+        account_number=account_number,
+        deposit_type=deposit_type,
+        db=db,
     )
-    db.commit()
+    if error:
+        return _set_cookie_on(_portal_redirect(_bank_error_url(error)), emp)
     return _set_cookie_on(_portal_redirect("/portal/bank?saved=1"), emp)
 
 
@@ -626,28 +712,16 @@ def portal_claim_pto_request(
     notes: str = Form(""),
     db: Session = Depends(get_db),
 ):
-    emp = _get_employee(token, db)
-    try:
-        ptype = PTOType(pto_type)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid PTO type")
-    try:
-        start = date.fromisoformat(start_date)
-        end = date.fromisoformat(end_date)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Dates must be YYYY-MM-DD")
-
-    db.add(
-        PTORequest(
-            employee_id=emp.id,
-            start_date=start,
-            end_date=end,
-            hours=hours,
-            pto_type=ptype,
-            notes=notes or None,
-        )
+    emp = _employee_from_token(request, token, db)
+    _request_pto(
+        emp,
+        start_date=start_date,
+        end_date=end_date,
+        hours=hours,
+        pto_type=pto_type,
+        notes=notes,
+        db=db,
     )
-    db.commit()
     return _set_cookie_on(_portal_redirect("/portal/pto?saved=1"), emp)
 
 

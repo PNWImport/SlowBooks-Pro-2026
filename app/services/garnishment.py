@@ -16,9 +16,9 @@
 # ============================================================================
 
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
-CENT = Decimal("0.01")
+from app.services.accounting import _q
 
 # Order in which garnishment types are satisfied from disposable earnings.
 # Lower number = higher priority (processed first).
@@ -41,12 +41,6 @@ _STUDENT_LOAN_CAP_PERCENT = Decimal("0.15")
 
 # CCPA 25% aggregate cap for everything other than child support.
 _NON_SUPPORT_AGGREGATE_PERCENT = Decimal("0.25")
-
-
-def _q(value) -> Decimal:
-    if not isinstance(value, Decimal):
-        value = Decimal(str(value))
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 def _non_negative(value: Decimal) -> Decimal:

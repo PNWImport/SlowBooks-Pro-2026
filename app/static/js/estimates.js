@@ -1,33 +1,20 @@
 /**
- * Decompiled from QBW32.EXE!CCreateEstimatesView  Offset: 0x00195200
- * Same form as invoices (see invoices.js) but with a green tint instead of
- * yellow (RT_BITMAP id=0x012D). The "Create Invoice" button called
- * CEstimate::ConvertToInvoice() at 0x001944A0 which deep-copied every field
- * and line item, then set EstimateStatus to CONVERTED. Our version does the
- * same thing but through an API call instead of a COM QueryInterface.
+ * Estimates — same form as invoices (see invoices.js), green tint
+ * instead of yellow. "Create Invoice" deep-copies every field and line
+ * item, then marks the estimate CONVERTED.
  */
 const EstimatesPage = {
     async render() {
         const estimates = await API.get('/estimates');
-        let html = `
-            <div class="page-header">
-                <h2>Estimates</h2>
-                <button class="btn btn-primary" onclick="EstimatesPage.showForm()">+ New Estimate</button>
-            </div>`;
-
-        if (estimates.length === 0) {
-            html += `<div class="empty-state">
-                <p>No estimates yet.</p>
-                <button class="btn btn-primary" onclick="EstimatesPage.showForm()" style="margin-top:10px;">+ Create your first estimate</button>
-            </div>`;
-        } else {
-            html += `<div class="table-container"><table>
-                <thead><tr>
-                    <th>#</th><th>Customer</th><th>Date</th><th>Expires</th>
-                    <th>Status</th><th class="amount">Total</th><th>Actions</th>
-                </tr></thead><tbody>`;
-            for (const est of estimates) {
-                html += `<tr>
+        return renderListPage({
+            title: 'Estimates',
+            headerHtml: `<button class="btn btn-primary" onclick="EstimatesPage.showForm()">+ New Estimate</button>`,
+            empty: `<p>No estimates yet.</p>
+                <button class="btn btn-primary" onclick="EstimatesPage.showForm()" style="margin-top:10px;">+ Create your first estimate</button>`,
+            columns: ['#', T('Customer'), 'Date', 'Expires', 'Status',
+                { label: 'Total', cls: 'amount' }, 'Actions'],
+            items: estimates,
+            row: est => `<tr>
                     <td><strong>${escapeHtml(est.estimate_number)}</strong></td>
                     <td>${escapeHtml(est.customer_name || '')}</td>
                     <td>${formatDate(est.date)}</td>
@@ -39,11 +26,8 @@ const EstimatesPage = {
                         <button class="btn btn-sm btn-secondary" onclick="EstimatesPage.showForm(${est.id})">Edit</button>
                         ${est.status !== 'converted' ? `<button class="btn btn-sm btn-primary" onclick="EstimatesPage.convert(${est.id})">Convert</button>` : ''}
                     </td>
-                </tr>`;
-            }
-            html += `</tbody></table></div>`;
-        }
-        return html;
+                </tr>`,
+        });
     },
 
     async view(id) {
@@ -55,13 +39,13 @@ const EstimatesPage = {
 
         openModal(`Estimate #${est.estimate_number}`, `
             <div style="margin-bottom:12px;">
-                <strong>Customer:</strong> ${escapeHtml(est.customer_name || '')}<br>
+                <strong>${T('Customer')}:</strong> ${escapeHtml(est.customer_name || '')}<br>
                 <strong>Date:</strong> ${formatDate(est.date)}<br>
                 ${est.expiration_date ? `<strong>Expires:</strong> ${formatDate(est.expiration_date)}<br>` : ''}
                 <strong>Status:</strong> ${statusBadge(est.status)}
             </div>
             <div class="table-container"><table>
-                <thead><tr><th>Description</th><th class="amount">Qty</th><th class="amount">Rate</th><th class="amount">Amount</th></tr></thead>
+                <thead><tr><th scope="col">Description</th><th scope="col" class="amount">Qty</th><th scope="col" class="amount">Rate</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>${linesHtml}</tbody>
             </table></div>
             <div class="invoice-totals">
@@ -73,7 +57,7 @@ const EstimatesPage = {
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="window.open('/api/estimates/${est.id}/pdf','_blank')">Save PDF</button>
                 <button class="btn btn-secondary" onclick="window.open('/api/estimates/${est.id}/print-preview','_blank')">Print</button>
-                ${est.status !== 'converted' ? `<button class="btn btn-primary" onclick="EstimatesPage.convert(${est.id})">Convert to Invoice</button>` : ''}
+                ${est.status !== 'converted' ? `<button class="btn btn-primary" onclick="EstimatesPage.convert(${est.id})">Convert to ${T('Invoice')}</button>` : ''}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
     },
@@ -82,7 +66,7 @@ const EstimatesPage = {
         if (!confirm('Convert this estimate to an invoice?')) return;
         try {
             const inv = await API.post(`/estimates/${id}/convert`);
-            toast(`Created Invoice #${inv.invoice_number}`);
+            toast(`Created ${T('Invoice')} #${inv.invoice_number}`);
             closeModal();
             App.navigate('#/invoices');
         } catch (err) { toast(err.message, 'error'); }
@@ -104,7 +88,7 @@ const EstimatesPage = {
 
     async saveNewCustomer() {
         const name = $('#est-new-cust-name').value.trim();
-        if (!name) { toast('Customer name is required', 'error'); return; }
+        if (!name) { toast(`${T('Customer')} name is required`, 'error'); return; }
         try {
             const cust = await API.post('/customers', {
                 name, email: $('#est-new-cust-email').value.trim() || null,
@@ -116,7 +100,7 @@ const EstimatesPage = {
             opt.value = cust.id; opt.textContent = cust.name; opt.selected = true;
             sel.appendChild(opt);
             $('#est-new-customer-form').style.display = 'none';
-            toast(`Customer "${cust.name}" created`);
+            toast(`${T('Customer')} "${cust.name}" created`);
         } catch (err) { toast(err.message, 'error'); }
     },
 
@@ -141,6 +125,9 @@ const EstimatesPage = {
             lines: [],
         };
         if (id) est = await API.get(`/estimates/${id}`);
+        const classGroup = await classFormGroupHtml(est.class_id);
+        const jobGroup = await jobFormGroupHtml(est.job_id, 'est-customer-select');
+        await CostCodes.load();
         if (est.lines.length === 0) est.lines = [{ item_id: '', description: '', quantity: 1, rate: 0 }];
 
         EstimatesPage.lineCount = est.lines.length;
@@ -152,10 +139,10 @@ const EstimatesPage = {
         openModal(id ? 'Edit Estimate' : 'New Estimate', `
             <form id="est-form" onsubmit="EstimatesPage.save(event, ${id})">
                 <div class="form-grid">
-                    <div class="form-group"><label>Customer *</label>
-                        <select name="customer_id" id="est-customer-select" required onchange="EstimatesPage.customerSelected(this.value)"><option value="">Select...</option><option value="__new__">+ New Customer</option>${custOpts}</select>
+                    <div class="form-group"><label>${T('Customer')} *</label>
+                        <select name="customer_id" id="est-customer-select" required onchange="EstimatesPage.customerSelected(this.value)"><option value="">Select...</option><option value="__new__">+ ${T('New Customer')}</option>${custOpts}</select>
                         <div id="est-new-customer-form" style="display:none; margin-top:8px; padding:8px; border:1px solid var(--gray-300); border-radius:4px; background:var(--primary-light);">
-                            <div style="font-weight:700; font-size:11px; margin-bottom:6px;">Quick Add Customer</div>
+                            <div style="font-weight:700; font-size:11px; margin-bottom:6px;">Quick Add ${T('Customer')}</div>
                             <input id="est-new-cust-name" placeholder="Name *" style="width:100%; margin-bottom:4px; padding:4px 8px; border:1px solid var(--gray-300); border-radius:4px;">
                             <input id="est-new-cust-email" placeholder="Email" style="width:100%; margin-bottom:4px; padding:4px 8px; border:1px solid var(--gray-300); border-radius:4px;">
                             <input id="est-new-cust-phone" placeholder="Phone" style="width:100%; margin-bottom:4px; padding:4px 8px; border:1px solid var(--gray-300); border-radius:4px;">
@@ -171,12 +158,13 @@ const EstimatesPage = {
                     <div class="form-group"><label>Tax Rate (%)</label>
                         <input name="tax_rate" type="number" step="0.01" value="${(est.tax_rate * 100) || 0}"
                             oninput="EstimatesPage.recalc()"></div>
+                    ${classGroup}${jobGroup}
                 </div>
                 <h3 style="margin:16px 0 8px; font-size:14px; color:var(--gray-600);">Line Items</h3>
                 <table class="line-items-table">
                     <thead><tr>
-                        <th>Item</th><th>Description</th><th class="col-qty">Qty</th>
-                        <th class="col-rate">Rate</th><th class="col-amount">Amount</th><th class="col-actions"></th>
+                        <th scope="col">Item</th><th scope="col">Description</th>${CostCodes.headHtml()}<th scope="col" title='Unit cost (budget side)'>Cost</th><th scope="col" class="col-qty">Qty</th>
+                        <th scope="col" class="col-rate">Rate</th><th scope="col" title="Sales tax applies to this line">Tax</th><th scope="col" class="col-amount">Amount</th><th scope="col" class="col-actions"></th>
                     </tr></thead>
                     <tbody id="est-lines">
                         ${est.lines.map((l, i) => EstimatesPage.lineRowHtml(i, l, items)).join('')}
@@ -205,9 +193,12 @@ const EstimatesPage = {
                 <option value="">--</option>${itemOpts}</select></td>
             <td><input class="line-desc" value="${escapeHtml(line.description || '')}"></td>
             <td><input class="line-qty" type="number" step="0.01" value="${line.quantity || 1}" oninput="EstimatesPage.recalc()"></td>
+            ${CostCodes.cellHtml('line-cost-code', line.cost_code_id || null)}
+            <td><input class="line-unit-cost" type="number" step="0.01" value="${line.unit_cost ?? ''}" placeholder="cost" title="Unit cost (budget side); rate is what you charge"></td>
             <td><input class="line-rate" type="number" step="0.01" value="${line.rate || 0}" oninput="EstimatesPage.recalc()"></td>
+            <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" ${line.is_taxable === false ? '' : 'checked'} onchange="EstimatesPage.recalc()"></td>
             <td class="col-amount line-amount">${formatCurrency((line.quantity||1) * (line.rate||0))}</td>
-            <td><button type="button" class="btn btn-sm btn-danger" onclick="EstimatesPage.removeLine(${idx})">X</button></td>
+            <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="EstimatesPage.removeLine(${idx})">X</button></td>
         </tr>`;
     },
 
@@ -230,17 +221,20 @@ const EstimatesPage = {
         if (item) {
             row.querySelector('.line-desc').value = item.description || item.name;
             row.querySelector('.line-rate').value = item.rate;
+            const tax = row.querySelector('.line-taxable');
+            if (tax) tax.checked = item.is_taxable !== false;
             EstimatesPage.recalc();
         }
     },
 
     recalc() {
-        let subtotal = 0;
+        let subtotal = 0, taxable = 0;
         $$('#est-lines tr').forEach(row => {
             const qty = parseFloat(row.querySelector('.line-qty')?.value) || 0;
             const rate = parseFloat(row.querySelector('.line-rate')?.value) || 0;
             const amount = qty * rate;
             subtotal += amount;
+            if (row.querySelector('.line-taxable')?.checked !== false) taxable += amount;
             const amountCell = row.querySelector('.line-amount');
             if (amountCell) amountCell.textContent = formatCurrency(amount);
         });
@@ -262,6 +256,9 @@ const EstimatesPage = {
                 description: row.querySelector('.line-desc')?.value || '',
                 quantity: parseFloat(row.querySelector('.line-qty')?.value) || 1,
                 rate: parseFloat(row.querySelector('.line-rate')?.value) || 0,
+                is_taxable: row.querySelector('.line-taxable') ? row.querySelector('.line-taxable').checked : null,
+                cost_code_id: CostCodes.fromRow(row, 'line-cost-code'),
+                unit_cost: row.querySelector('.line-unit-cost')?.value ? parseFloat(row.querySelector('.line-unit-cost').value) : null,
                 line_order: i,
             });
         });
@@ -272,6 +269,8 @@ const EstimatesPage = {
             expiration_date: form.expiration_date.value || null,
             tax_rate: (parseFloat(form.tax_rate.value) || 0) / 100,
             notes: form.notes.value || null,
+            class_id: classIdFromForm(form),
+            job_id: jobIdFromForm(form),
             lines,
         };
 

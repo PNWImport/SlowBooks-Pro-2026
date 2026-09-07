@@ -12,11 +12,11 @@
 # relying on these for actual tax filing.
 # ============================================================================
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
+from app.services.accounting import _q
 from app.services.state_tax.base import StateEngine, StateTaxResult
 
-CENT = Decimal("0.01")
 WEEKS_PER_YEAR = Decimal("52")
 
 # --- NY State Disability Insurance ------------------------------------------
@@ -61,10 +61,6 @@ _BRACKETS = {
 }
 
 
-def _q(value: Decimal) -> Decimal:
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
-
-
 def _tax_from_brackets(wage: Decimal, brackets) -> Decimal:
     """Progressive tax on `wage` given ascending (lower_bound, rate) brackets."""
     if wage <= 0:
@@ -83,7 +79,7 @@ def _tax_from_brackets(wage: Decimal, brackets) -> Decimal:
 
 class NYEngine(StateEngine):
     state_code: str = "NY"
-    suta_wage_base: Decimal = Decimal("12800")
+    suta_wage_base: Decimal = Decimal("13000")
 
     def calculate(
         self,
@@ -94,7 +90,8 @@ class NYEngine(StateEngine):
         pay_periods: int,
         hours: Decimal,
         filing_status: str,
-        wc_class_code: str | None
+        wc_class_code: str | None,
+        **_extra,
     ) -> StateTaxResult:
         if gross <= 0 or taxable <= 0:
             return StateTaxResult()

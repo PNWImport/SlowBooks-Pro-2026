@@ -7,7 +7,16 @@ import secrets
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    File,
+    Form,
+)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel as _BaseModel
 from sqlalchemy.orm import Session
@@ -39,7 +48,9 @@ from app.schemas.payroll import (
     YTDResponse,
 )
 from app.services.encryption import encrypt
+from app.services.nacha_export import validate_routing_number
 from app.services.onboarding import seed_onboarding_tasks
+from app.services.upload_limits import read_limited
 
 # Portal tokens get a 1-year hard expiry on top of the 90-day idle window
 # enforced in app/routes/portal.py. Hard expiry forces periodic re-issuance
@@ -111,8 +122,17 @@ def update_employee(emp_id: int, data: EmployeeUpdate, db: Session = Depends(get
 
 
 # --- Self-service portal access -------------------------------------------
+def _portal_url(request: Request, token: str) -> str:
+    """Absolute portal link. The employee opens this in THEIR browser (or
+    their phone), so it must carry the host the server is reachable on —
+    127.0.0.1 on a desktop install, the LAN address on Server Edition, the
+    public name behind a reverse proxy (X-Forwarded-* is honoured through
+    request.base_url when the proxy is trusted)."""
+    return f"{str(request.base_url).rstrip('/')}/portal/{token}"
+
+
 @router.get("/{emp_id}/portal-token")
-def get_portal_token(emp_id: int, db: Session = Depends(get_db)):
+def get_portal_token(request: Request, emp_id: int, db: Session = Depends(get_db)):
     """Return the employee's self-service portal token, minting one if absent."""
     emp = db.query(Employee).filter(Employee.id == emp_id).first()
     if not emp:
@@ -123,7 +143,7 @@ def get_portal_token(emp_id: int, db: Session = Depends(get_db)):
     return {
         "employee_id": emp.id,
         "portal_token": emp.portal_token,
-        "portal_url": f"/portal/{emp.portal_token}",
+        "portal_url": _portal_url(request, emp.portal_token),
         "expires_at": _iso_utc(emp.portal_token_expires_at),
         "last_used_at": _iso_utc(emp.portal_token_last_used),
     }
@@ -238,7 +258,9 @@ def list_portal_access(
 
 
 @router.post("/{emp_id}/portal-token")
-def regenerate_portal_token(emp_id: int, db: Session = Depends(get_db)):
+def regenerate_portal_token(
+    request: Request, emp_id: int, db: Session = Depends(get_db)
+):
     """Rotate the portal token (invalidates the previous self-service link)."""
     emp = db.query(Employee).filter(Employee.id == emp_id).first()
     if not emp:
@@ -248,7 +270,7 @@ def regenerate_portal_token(emp_id: int, db: Session = Depends(get_db)):
     return {
         "employee_id": emp.id,
         "portal_token": emp.portal_token,
-        "portal_url": f"/portal/{emp.portal_token}",
+        "portal_url": _portal_url(request, emp.portal_token),
         "expires_at": _iso_utc(emp.portal_token_expires_at),
     }
 
@@ -310,8 +332,10 @@ def add_bank_account(
 
     routing = (data.routing_number or "").strip()
     account = (data.account_number or "").strip()
-    if not routing.isdigit() or len(routing) != 9:
-        raise HTTPException(status_code=400, detail="Routing number must be 9 digits")
+    # ABA checksum, not just 9-digits — same validation the portal and the
+    # NACHA exporter use, so a typo'd routing number is caught at entry.
+    if not validate_routing_number(routing):
+        raise HTTPException(status_code=400, detail="Invalid routing number")
     if not account.isdigit():
         raise HTTPException(status_code=400, detail="Account number must be numeric")
 
@@ -386,7 +410,7 @@ async def upload_employee_document(
             status_code=400, detail=f"MIME type '{file.content_type}' not allowed"
         )
 
-    content = await file.read()
+    content = await read_limited(file, label="Import file")
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 50MB)")
 

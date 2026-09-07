@@ -1,10 +1,7 @@
 # ============================================================================
-# Decompiled from qbw32.exe!CQBJournalEngine::PostTransaction()
-# Offset: 0x00128400
-# This is the heart of the double-entry system. Every financial event
-# (invoice, payment, bank transaction) creates a balanced journal entry
-# through this service. The original validated sum(debits) == sum(credits)
-# with a tolerance of 0.004 (BCD rounding). We use exact Decimal math.
+# The heart of the double-entry system. Every financial event (invoice,
+# payment, bank transaction) creates a balanced journal entry through this
+# service — sum(debits) == sum(credits), exact Decimal math.
 # ============================================================================
 
 from datetime import date, timedelta
@@ -13,16 +10,33 @@ from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy.orm import Session
 
 from app.models.transactions import Transaction, TransactionLine
-from app.models.accounts import Account
+from app.models.accounts import Account, AccountType
 
 CENT = Decimal("0.01")
 
 
-def _q(value) -> Decimal:
-    """Coerce to Decimal rounded to two places (half-up, matches PostgreSQL default)."""
+def quantize_to(value, exp: Decimal, rounding=ROUND_HALF_UP) -> Decimal:
+    """Coerce to Decimal quantized to an arbitrary exponent (half-up).
+
+    For non-money precisions (4-decimal unit costs, quantities). None/falsy
+    coerce to 0 so callers can quantize optional/nullable amounts directly.
+    """
     if not isinstance(value, Decimal):
-        value = Decimal(str(value))
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
+        value = Decimal(str(value or 0))
+    return value.quantize(exp, rounding=rounding)
+
+
+def _q(value) -> Decimal:
+    """Coerce to Decimal rounded to two places (half-up, matches PostgreSQL default).
+
+    This is the single canonical money-quantize helper for the app. None/falsy
+    coerce to 0.00 so callers can quantize optional/nullable amounts directly.
+    """
+    return quantize_to(value, CENT)
+
+
+# Public alias — reads more clearly at call sites that prefer a descriptive name.
+quantize_cents = _q
 
 
 def compute_line_totals(lines, tax_rate) -> tuple[Decimal, Decimal, Decimal]:
@@ -33,6 +47,7 @@ def compute_line_totals(lines, tax_rate) -> tuple[Decimal, Decimal, Decimal]:
     sum (prevents drift between stored invoice.total and DB-rounded journal
     lines).
     """
+    lines = list(lines)
     subtotal = _q(
         sum(
             (
@@ -42,9 +57,26 @@ def compute_line_totals(lines, tax_rate) -> tuple[Decimal, Decimal, Decimal]:
             Decimal("0"),
         )
     )
-    tax_amount = _q(subtotal * Decimal(str(tax_rate or 0)))
+    tax_amount = _q(taxable_subtotal(lines) * Decimal(str(tax_rate or 0)))
     total = _q(subtotal + tax_amount)
     return subtotal, tax_amount, total
+
+
+def taxable_subtotal(lines) -> Decimal:
+    """Sum of the lines the tax rate applies to. A line without an
+    is_taxable attribute (or with it None) counts as taxable — the pre-
+    per-line behaviour — so every caller that never heard of the flag keeps
+    its numbers."""
+    return _q(
+        sum(
+            (
+                _q(Decimal(str(line.quantity)) * Decimal(str(line.rate)))
+                for line in lines
+                if getattr(line, "is_taxable", None) is not False
+            ),
+            Decimal("0"),
+        )
+    )
 
 
 def due_date_from_terms(
@@ -60,6 +92,39 @@ def due_date_from_terms(
     return txn_date + timedelta(days=days)
 
 
+def _cost_type_of(db: Session, cost_code_id) -> str | None:
+    """The cost type a coded line belongs to, so job roll-ups by type never
+    have to re-join the code table."""
+    if not cost_code_id:
+        return None
+    from app.models.cost_codes import CostCode
+
+    code = db.get(CostCode, cost_code_id)
+    return code.cost_type if code else None
+
+
+def reversing_lines(lines) -> list[dict]:
+    """Mirror-image line dicts for a void: debit and credit swapped, the
+    description prefixed VOID:, and every dimension (job, class, cost code,
+    cost type, function) carried over so the by-class, by-job and
+    functional reports net to zero for the voided document instead of
+    leaving the tag on one side."""
+    return [
+        {
+            "account_id": ol.account_id,
+            "debit": ol.credit,
+            "credit": ol.debit,
+            "description": f"VOID: {ol.description or ''}",
+            "job_id": ol.job_id,
+            "class_id": ol.class_id,
+            "cost_code_id": ol.cost_code_id,
+            "cost_type": ol.cost_type,
+            "function": ol.function,
+        }
+        for ol in lines
+    ]
+
+
 def create_journal_entry(
     db: Session,
     txn_date: date,
@@ -68,13 +133,34 @@ def create_journal_entry(
     source_type: str = None,
     source_id: int = None,
     reference: str = None,
+    bypass_closing_date: bool = False,
+    class_id: int = None,
+    job_id: int = None,
 ) -> Transaction:
     """Create a balanced journal entry.
 
     lines: [{"account_id": int, "debit": Decimal, "credit": Decimal}, ...]
-    Each line must have debit > 0 OR credit > 0, not both.
+    Each line must have debit > 0 OR credit > 0, not both. A line may carry
+    its own "job_id" / "class_id"; otherwise it inherits the header values,
+    so job and class reports can always group on the line. A line's
+    "function" (nonprofit: program / management / fundraising) is taken as
+    given when the key is present — including an explicit None — and
+    otherwise defaulted from the class it lands in.
     Total debits must equal total credits.
+
+    Closing-date enforcement runs here so every JE-posting path inherits it
+    (recurring invoices, IIF/QBO imports, inventory hooks, and all route
+    handlers). Route handlers also call check_closing_date earlier for better
+    UX; the redundancy is intentional. `bypass_closing_date` is an escape
+    hatch for operators with no current caller — do not set it in app code.
     """
+    if not bypass_closing_date:
+        # Local import: closing_date imports the settings model, so importing
+        # it at module scope risks a circular import as the model layer grows.
+        from app.services.closing_date import check_closing_date
+
+        check_closing_date(db, txn_date)
+
     # Validate individual lines before summing
     for i, line in enumerate(lines):
         debit = Decimal(str(line.get("debit", 0)))
@@ -98,15 +184,26 @@ def create_journal_entry(
         source_type=source_type,
         source_id=source_id,
         reference=reference,
+        class_id=class_id,
+        job_id=job_id,
     )
     db.add(txn)
     db.flush()
 
+    from app.services.classes_service import default_function_of
+
+    fn_cache: dict = {}
     for line_data in lines:
         debit = Decimal(str(line_data.get("debit", 0)))
         credit = Decimal(str(line_data.get("credit", 0)))
         if debit == 0 and credit == 0:
             continue
+
+        line_class_id = line_data.get("class_id") or class_id
+        if "function" in line_data:
+            function = line_data["function"]
+        else:
+            function = default_function_of(db, line_class_id, fn_cache)
 
         txn_line = TransactionLine(
             transaction_id=txn.id,
@@ -114,6 +211,13 @@ def create_journal_entry(
             debit=debit,
             credit=credit,
             description=line_data.get("description", ""),
+            job_id=line_data.get("job_id") or job_id,
+            class_id=line_class_id,
+            function=function,
+            cost_code_id=line_data.get("cost_code_id"),
+            cost_type=line_data.get("cost_type")
+            or _cost_type_of(db, line_data.get("cost_code_id")),
+            is_billable=bool(line_data.get("is_billable", False)),
         )
         db.add(txn_line)
 
@@ -158,3 +262,68 @@ def get_ap_account_id(db: Session) -> int:
     """Get Accounts Payable account ID (2000)."""
     acct = db.query(Account).filter(Account.account_number == "2000").first()
     return acct.id if acct else None
+
+
+def get_cc_account_id(db: Session) -> int:
+    """Get Credit Card Payable account ID (2100)."""
+    acct = db.query(Account).filter(Account.account_number == "2100").first()
+    return acct.id if acct else None
+
+
+def ensure_account(
+    db: Session, number: str, name: str, account_type: AccountType
+) -> Account:
+    """Find-or-create a system account by name, keeping the suggested
+    number only if the chart hasn't used it (account_number is unique and
+    an imported chart may already own 3300 or 6960). Flushes; the caller
+    commits. Pattern shared with the job-costing offset accounts."""
+    acct = db.query(Account).filter(Account.name == name).first()
+    if acct:
+        return acct
+    taken = db.query(Account.id).filter(Account.account_number == number).first()
+    acct = Account(
+        name=name,
+        account_type=account_type,
+        account_number=None if taken else number,
+        is_system=True,
+        balance=Decimal("0"),
+    )
+    db.add(acct)
+    db.flush()
+    return acct
+
+
+# Nonprofit accounts, created on demand (Settings -> Company Type, or the
+# first document that needs them). Numbers follow the seed chart's blocks;
+# 4300 is already Labor Income, so in-kind income sits at 4400.
+NONPROFIT_ACCOUNTS = (
+    ("3300", "Net Assets Without Donor Restrictions", AccountType.EQUITY),
+    ("3400", "Net Assets With Donor Restrictions", AccountType.EQUITY),
+    ("4400", "In-Kind Contributions", AccountType.INCOME),
+    ("6960", "Bad Debt Expense", AccountType.EXPENSE),
+)
+
+
+def ensure_nonprofit_accounts(db: Session) -> dict[str, Account]:
+    """Create every nonprofit account that is missing; returns them keyed by
+    their suggested number. Idempotent."""
+    return {
+        number: ensure_account(db, number, name, atype)
+        for number, name, atype in NONPROFIT_ACCOUNTS
+    }
+
+
+def get_net_assets_without_restriction_id(db: Session) -> int:
+    return ensure_nonprofit_accounts(db)["3300"].id
+
+
+def get_net_assets_with_restriction_id(db: Session) -> int:
+    return ensure_nonprofit_accounts(db)["3400"].id
+
+
+def get_in_kind_income_account_id(db: Session) -> int:
+    return ensure_nonprofit_accounts(db)["4400"].id
+
+
+def get_bad_debt_account_id(db: Session) -> int:
+    return ensure_nonprofit_accounts(db)["6960"].id

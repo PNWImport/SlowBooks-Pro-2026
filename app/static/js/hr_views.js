@@ -104,8 +104,8 @@ const HRViewsPage = {
                 return;
             }
             let html = `<div class="table-container"><table>
-                <thead><tr><th>Employee</th><th>Type</th><th>From</th><th>To</th>
-                <th class="amount">Hours</th><th>Status</th></tr></thead><tbody>`;
+                <thead><tr><th scope="col">Employee</th><th scope="col">Type</th><th scope="col">From</th><th scope="col">To</th>
+                <th scope="col" class="amount">Hours</th><th scope="col">Status</th></tr></thead><tbody>`;
             for (const e of data.entries) {
                 html += `<tr>
                     <td>${escapeHtml(e.employee_name || '')}</td>
@@ -135,8 +135,8 @@ const HRViewsPage = {
             return html + '<div class="empty-state"><p>No performance reviews yet.</p></div>';
         }
         html += `<div class="table-container"><table>
-            <thead><tr><th>Employee</th><th>Reviewer</th><th>Period</th>
-            <th>Rating</th><th>Status</th><th>Actions</th></tr></thead><tbody>`;
+            <thead><tr><th scope="col">Employee</th><th scope="col">Reviewer</th><th scope="col">Period</th>
+            <th scope="col">Rating</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead><tbody>`;
         for (const r of reviews) {
             const status = r.status === 'acknowledged'
                 ? '<span class="badge badge-paid">acknowledged</span>'

@@ -6,7 +6,7 @@
 # and collects per-row errors instead of aborting the entire import.
 #
 # Import order mirrors dependency chain:
-#   accounts -> customers -> vendors -> items -> transactions
+#   classes -> accounts -> customers -> vendors -> items -> transactions
 #
 # Duplicate detection: matches on name (accounts, customers, vendors, items)
 # or document number (invoices, payments) to prevent re-import collisions.
@@ -19,11 +19,16 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy.orm import Session
 
 from app.models.accounts import Account, AccountType
+from app.models.classes import TxnClass
 from app.models.contacts import Customer, Vendor
 from app.models.items import Item, ItemType
 from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
 from app.models.payments import Payment, PaymentAllocation
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
+from app.models.bills import Bill, BillLine, BillStatus
+from app.models.transactions import Transaction
+from app.services.iif_common import IIF_TO_ACCOUNT_TYPE, IIF_TO_ITEM_TYPE
+from app.services.jobs_service import resolve_customer_and_job, split_customer_job
 from app.services.accounting import (
     _q,
     create_journal_entry,
@@ -41,14 +46,20 @@ logger = logging.getLogger(__name__)
 def parse_iif(content: str) -> dict:
     """Parse IIF file content into structured sections.
 
-    Returns dict with keys like "ACCNT", "CUST", "VEND", "INVITEM",
-    and "TRNS" (list of transaction blocks).
+    Returns dict with keys like "ACCNT", "CLASS", "CUST", "VEND",
+    "INVITEM", and "TRNS" (list of transaction blocks).
 
     Each list/row section contains dicts keyed by header field names.
     Transaction blocks group TRNS + SPL lines until ENDTRNS.
     """
     result = {
         "ACCNT": [],
+        # QuickBooks exports the class list separately from transactions
+        # (File > Utilities > Export > Lists > Class List). A transaction
+        # IIF only ever carries CLASS as a column on SPL rows, never the
+        # definitions — so without this section there is nothing for
+        # _resolve_block_class to find.
+        "CLASS": [],
         "CUST": [],
         "VEND": [],
         "INVITEM": [],
@@ -101,7 +112,7 @@ def parse_iif(content: str) -> dict:
                 current_txn["spl"].append(row_dict)
             continue
 
-        # List rows: ACCNT, CUST, VEND, INVITEM
+        # List rows: ACCNT, CLASS, CUST, VEND, INVITEM
         if row_type in result and row_type != "TRNS":
             hdr = headers.get(row_type, [])
             row_dict = _fields_to_dict(hdr, fields)
@@ -210,40 +221,76 @@ def _find_account(db: Session, name: str) -> Account:
 
 
 # ============================================================================
-# Reverse type mappings (IIF -> Slowbooks)
-# ============================================================================
-
-_IIF_TO_ACCOUNT_TYPE = {
-    "BANK": AccountType.ASSET,
-    "AR": AccountType.ASSET,
-    "OCASSET": AccountType.ASSET,
-    "OASSET": AccountType.ASSET,
-    "FIXASSET": AccountType.ASSET,
-    "AP": AccountType.LIABILITY,
-    "OCLIAB": AccountType.LIABILITY,
-    "LTLIAB": AccountType.LIABILITY,
-    "EQUITY": AccountType.EQUITY,
-    "INC": AccountType.INCOME,
-    "EXP": AccountType.EXPENSE,
-    "COGS": AccountType.COGS,
-    # Additional QB types mapped to closest Slowbooks equivalent
-    "EXINC": AccountType.INCOME,
-    "EXEXP": AccountType.EXPENSE,
-    "NONPOSTING": AccountType.ASSET,
-}
-
-_IIF_TO_ITEM_TYPE = {
-    "SERV": ItemType.SERVICE,
-    "PART": ItemType.PRODUCT,
-    "OTHC": ItemType.LABOR,
-    "INVENTORY": ItemType.PRODUCT,
-    "NON-INVENTORY": ItemType.MATERIAL,
-}
-
-
-# ============================================================================
 # Import Functions
 # ============================================================================
+
+
+# Read off the column rather than hardcoding 100, so the two can't drift.
+_CLASS_NAME_MAX = TxnClass.__table__.c.name.type.length
+
+
+def import_classes(db: Session, rows: list) -> dict:
+    """Import class-list rows (!CLASS) from IIF.
+
+    Names are stored verbatim, including QuickBooks' "Parent:Child"
+    subclass path. Classes are flat here, but the SPL CLASS column uses
+    that same full path, so keeping it intact is exactly what makes the
+    two match at transaction time.
+    """
+    imported = 0
+    errors = []
+
+    for i, row in enumerate(rows):
+        sp = db.begin_nested()
+        try:
+            name = row.get("NAME", "").strip()
+            if not name:
+                errors.append({"row": i + 1, "message": "Missing class NAME"})
+                sp.rollback()
+                continue
+
+            # Deliberately NOT truncated the way vendor/customer names are.
+            # A shortened class still imports but then matches no SPL CLASS
+            # value, so the problem resurfaces as a puzzling "class not
+            # found" on every transaction that cites it. Refuse the one row
+            # and name the limit instead.
+            if len(name) > _CLASS_NAME_MAX:
+                errors.append(
+                    {
+                        "row": i + 1,
+                        "message": (
+                            f"Class '{name[:40]}...' is {len(name)} characters, "
+                            f"over the {_CLASS_NAME_MAX}-character limit — "
+                            f"shorten it in QuickBooks and re-export"
+                        ),
+                    }
+                )
+                sp.rollback()
+                continue
+
+            # Case-insensitive dedup, matching both resolve_class_id's lookup
+            # and POST /api/classes' conflict check, so re-importing the same
+            # list is a no-op rather than a unique-constraint failure.
+            existing = db.query(TxnClass).filter(TxnClass.name.ilike(name)).first()
+            if existing:
+                sp.rollback()
+                continue
+
+            # QuickBooks flags inactive list entries with HIDDEN=Y, which is
+            # what archived means here: kept on historical rows, absent from
+            # entry-form dropdowns. Missing column -> "" -> active.
+            hidden = row.get("HIDDEN", "").strip().upper() in ("Y", "YES", "TRUE")
+
+            db.add(TxnClass(name=name, is_archived=hidden))
+            db.flush()
+            sp.commit()
+            imported += 1
+
+        except Exception as e:
+            sp.rollback()
+            errors.append({"row": i + 1, "message": str(e)})
+
+    return {"imported": imported, "errors": errors}
 
 
 def import_accounts(db: Session, rows: list) -> dict:
@@ -282,7 +329,7 @@ def import_accounts(db: Session, rows: list) -> dict:
                 continue
 
             iif_type = row.get("ACCNTTYPE", "").strip().upper()
-            acct_type = _IIF_TO_ACCOUNT_TYPE.get(iif_type, AccountType.EXPENSE)
+            acct_type = IIF_TO_ACCOUNT_TYPE.get(iif_type, AccountType.EXPENSE)
             acct_num = row.get("ACCNUM", "").strip() or None
 
             # Handle parent:child names
@@ -468,7 +515,7 @@ def import_customers(db: Session, rows: list) -> dict:
     for i, row in enumerate(rows):
         sp = db.begin_nested()
         try:
-            name = row.get("NAME", "").strip()
+            name = row.get("NAME", "").strip()[:200]
             if not name:
                 errors.append({"row": i + 1, "message": "Missing customer NAME"})
                 sp.rollback()
@@ -477,6 +524,16 @@ def import_customers(db: Session, rows: list) -> dict:
             existing = db.query(Customer).filter(Customer.name == name).first()
             if existing:
                 sp.rollback()
+                continue
+
+            # A "Customer:Job" list row is a job, not a customer: create the
+            # parent if the list didn't (QuickBooks exports parents first,
+            # but a partial export may not) and the job under it.
+            parent_name, job_name = split_customer_job(name)
+            if job_name:
+                _customer, _job = resolve_customer_and_job(db, name)
+                sp.commit()
+                imported += 1
                 continue
 
             # Parse ADDR4 "City, State ZIP" pattern
@@ -521,7 +578,7 @@ def import_vendors(db: Session, rows: list) -> dict:
     for i, row in enumerate(rows):
         sp = db.begin_nested()
         try:
-            name = row.get("NAME", "").strip()
+            name = row.get("NAME", "").strip()[:200]
             if not name:
                 errors.append({"row": i + 1, "message": "Missing vendor NAME"})
                 sp.rollback()
@@ -584,7 +641,7 @@ def import_items(db: Session, rows: list) -> dict:
                 continue
 
             iif_type = row.get("INVITEMTYPE", "").strip().upper()
-            item_type = _IIF_TO_ITEM_TYPE.get(iif_type, ItemType.SERVICE)
+            item_type = IIF_TO_ITEM_TYPE.get(iif_type, ItemType.SERVICE)
 
             # Resolve income account by name (with fallback)
             income_account_id = None
@@ -620,9 +677,20 @@ def import_items(db: Session, rows: list) -> dict:
 def import_transactions(db: Session, blocks: list) -> dict:
     """Import transaction blocks (TRNS/SPL/ENDTRNS) from IIF.
 
-    Routes by TRNSTYPE: INVOICE, PAYMENT, ESTIMATE, GENERAL JOURNAL.
+    Routes by TRNSTYPE: INVOICE, PAYMENT, ESTIMATE, BILL, DEPOSIT,
+    CASH SALE (QB's sales receipts). Other types (GENERAL JOURNAL, etc.)
+    are silently skipped — extend the dispatch table here when adding
+    support.
     """
-    counts = {"invoices": 0, "payments": 0, "estimates": 0}
+    counts = {
+        "invoices": 0,
+        "payments": 0,
+        "sales_receipts": 0,
+        "estimates": 0,
+        "bills": 0,
+        "deposits": 0,
+        "duplicates_skipped": 0,
+    }
     errors = []
     warnings = []
 
@@ -650,10 +718,40 @@ def import_transactions(db: Session, blocks: list) -> dict:
                         warnings.append(
                             f"Payment block {i+1}: imported but journal entry could not be created (account mismatch)"
                         )
+            elif trns_type in ("CASH SALE", "CASHSALE", "SALES RECEIPT"):
+                if not trns.get("NAME", "").strip():
+                    warnings.append(
+                        f"Sales receipt block {i + 1}: no customer name; "
+                        f"assigned to '{WALK_IN_CUSTOMER_NAME}'"
+                    )
+                result = _import_cash_sale(db, trns, spls)
+                if result:
+                    counts["sales_receipts"] += 1
+                    if not result.transaction_id:
+                        doc = result.invoice_number or f"block {i+1}"
+                        warnings.append(
+                            f"Sales receipt {doc}: imported but journal entry could not be created (account mismatch)"
+                        )
+                else:
+                    counts["duplicates_skipped"] += 1
             elif trns_type == "ESTIMATE":
                 result = _import_estimate(db, trns, spls)
                 if result:
                     counts["estimates"] += 1
+            elif trns_type == "BILL":
+                result = _import_bill(db, trns, spls)
+                if result:
+                    counts["bills"] += 1
+                else:
+                    # None = (vendor, bill_number) already imported —
+                    # a deliberate dedup hit, not a silent drop.
+                    counts["duplicates_skipped"] += 1
+            elif trns_type == "DEPOSIT":
+                result = _import_deposit(db, trns, spls)
+                if result:
+                    counts["deposits"] += 1
+                else:
+                    counts["duplicates_skipped"] += 1
             # Skip other transaction types (GENERAL JOURNAL, etc.) for now
             sp.commit()
 
@@ -664,6 +762,304 @@ def import_transactions(db: Session, blocks: list) -> dict:
             )
 
     return {"imported": counts, "errors": errors, "warnings": warnings}
+
+
+def _resolve_block_class(db: Session, trns_type: str, doc_ref: str, spls: list):
+    """Collapse SPL.CLASS values to a single class_id at the document level.
+
+    Classes here are header-level (Bill.class_id / Transaction.class_id),
+    so when the IIF supplies a CLASS column on SPL rows:
+      - All CLASS values absent/empty → None (reports group with
+        Uncategorized).
+      - One distinct CLASS across the block → strict lookup; a missing
+        class raises the same way a missing vendor or account does.
+      - Multiple distinct CLASS values → ValueError. Refusing beats
+        silently filing the whole document under the first class.
+    """
+    from app.services.classes_service import resolve_class_id
+
+    names = {(s.get("CLASS") or "").strip() for s in spls}
+    names.discard("")
+    if not names:
+        return None
+    if len(names) > 1:
+        raise ValueError(
+            f"{trns_type} {doc_ref}: multiple CLASS values {sorted(names)} in one "
+            f"block — classes apply per document; split the block or unify the CLASS"
+        )
+    name = names.pop()
+    class_id = resolve_class_id(db, name)
+    if class_id is None:
+        raise ValueError(
+            f"{trns_type} {doc_ref}: class '{name}' not found. Import your "
+            f"QuickBooks class list (File > Utilities > Export > Lists > Class "
+            f"List) or create it under Settings → Classes first, or correct "
+            f"the CLASS in the IIF file."
+        )
+    return class_id
+
+
+def _validate_block_balance(trns_type: str, trns: dict, spls: list) -> Decimal:
+    """Sum-to-zero check shared by BILL and DEPOSIT.
+
+    Returns the parsed TRNS amount (raw, sign-preserving) so callers
+    don't have to parse it twice. Raises ValueError if the block doesn't
+    balance to within 1 cent — an unbalanced block usually means a
+    hand-edited IIF where the user dropped a line.
+    """
+    trns_amt = _parse_decimal(trns.get("AMOUNT", ""))
+    spl_total = sum((_parse_decimal(s.get("AMOUNT", "")) for s in spls), Decimal("0"))
+    residual = trns_amt + spl_total
+    if abs(residual) > Decimal("0.01"):
+        raise ValueError(
+            f"{trns_type} block does not sum to zero "
+            f"(TRNS={trns_amt}, SPL total={spl_total}, residual={residual}). "
+            f"Standard QB convention: TRNS and SPL amounts carry opposite signs."
+        )
+    return trns_amt
+
+
+def _import_bill(db: Session, trns: dict, spls: list) -> Bill:
+    """Create a Bill from IIF TRNS/SPL data.
+
+    QB IIF BILL convention: TRNS.AMOUNT is negative on the AP account,
+    each SPL.AMOUNT is positive on the expense account; together they
+    sum to zero.
+
+    Missing vendors and accounts SURFACE as errors rather than
+    auto-create — re-running the import after fixing the config is
+    preferred over silently creating unmatched-vendor bills the user
+    then has to clean up. (Deliberately stricter than _import_invoice's
+    auto-create-customer behavior: bills post expenses.)
+
+    Returns the created Bill, or None when the (vendor, bill_number)
+    pair was already imported (idempotent re-runs).
+    """
+    trns_amt = _validate_block_balance("BILL", trns, spls)
+
+    vendor_name = trns.get("NAME", "").strip()
+    if not vendor_name:
+        raise ValueError("BILL: missing vendor NAME on TRNS line")
+    vendor = db.query(Vendor).filter(Vendor.name == vendor_name).first()
+    if not vendor:
+        raise ValueError(
+            f"BILL: vendor '{vendor_name}' not found. Add the vendor in "
+            f"Vendors first, or correct the NAME in the IIF file."
+        )
+
+    ap_acct_name = trns.get("ACCNT", "").strip()
+    if not ap_acct_name:
+        raise ValueError(f"BILL ({vendor_name}): missing AP account ACCNT on TRNS line")
+    ap_account = _find_account(db, ap_acct_name)
+    if not ap_account:
+        raise ValueError(
+            f"BILL ({vendor_name}): AP account '{ap_acct_name}' not found. "
+            f"Add the account in the chart of accounts first."
+        )
+
+    doc_num = trns.get("DOCNUM", "").strip()
+    if not doc_num:
+        raise ValueError(
+            f"BILL ({vendor_name}): missing DOCNUM (bill_number is required)"
+        )
+
+    # Idempotent dedup: same (vendor, bill_number) pair.
+    existing = (
+        db.query(Bill)
+        .filter(Bill.vendor_id == vendor.id, Bill.bill_number == doc_num)
+        .first()
+    )
+    if existing:
+        return None
+
+    # Resolve all SPL expense accounts up front. Doing this BEFORE any
+    # db.add() means a partial parse (one of three SPLs has a missing
+    # account) raises cleanly without a half-created Bill row.
+    block_class_id = _resolve_block_class(db, "BILL", doc_num, spls)
+    spl_resolved = []
+    for spl in spls:
+        spl_acct_name = spl.get("ACCNT", "").strip()
+        if not spl_acct_name:
+            raise ValueError(f"BILL {doc_num}: SPL line missing ACCNT")
+        spl_acct = _find_account(db, spl_acct_name)
+        if not spl_acct:
+            raise ValueError(
+                f"BILL {doc_num}: expense account '{spl_acct_name}' not found"
+            )
+        spl_amount = _parse_decimal(spl.get("AMOUNT", ""))
+        spl_resolved.append((spl, spl_acct, spl_amount))
+
+    bill_date = _parse_iif_date(trns.get("DATE", "")) or date.today()
+    due_date = _parse_iif_date(trns.get("DUEDATE", ""))
+    total = _q(abs(trns_amt))
+
+    bill = Bill(
+        bill_number=doc_num,
+        vendor_id=vendor.id,
+        date=bill_date,
+        due_date=due_date,
+        terms=trns.get("TERMS", "").strip() or "Net 30",
+        status=BillStatus.UNPAID,
+        subtotal=total,
+        tax_rate=Decimal("0"),
+        tax_amount=Decimal("0"),
+        total=total,
+        balance_due=total,
+        notes=trns.get("MEMO", "").strip() or None,
+        class_id=block_class_id,
+    )
+    db.add(bill)
+    db.flush()
+
+    journal_lines = []
+    for spl, spl_acct, spl_amount in spl_resolved:
+        amt = _q(abs(spl_amount))
+        memo = spl.get("MEMO", "").strip() or None
+        db.add(
+            BillLine(
+                bill_id=bill.id,
+                account_id=spl_acct.id,
+                description=memo,
+                quantity=Decimal("1"),
+                rate=amt,
+                amount=amt,
+            )
+        )
+        if amt > 0:
+            journal_lines.append(
+                {
+                    "account_id": spl_acct.id,
+                    "debit": amt,
+                    "credit": Decimal("0"),
+                    "description": memo or f"Bill {doc_num}",
+                }
+            )
+
+    if journal_lines and total > 0:
+        journal_lines.append(
+            {
+                "account_id": ap_account.id,
+                "debit": Decimal("0"),
+                "credit": total,
+                "description": f"Bill {doc_num} - {vendor_name}",
+            }
+        )
+        txn = create_journal_entry(
+            db,
+            bill_date,
+            f"IIF Import — Bill {doc_num} - {vendor_name}",
+            journal_lines,
+            source_type="bill",
+            source_id=bill.id,
+            class_id=block_class_id,
+        )
+        bill.transaction_id = txn.id
+
+    db.flush()
+    return bill
+
+
+def _import_deposit(db: Session, trns: dict, spls: list) -> Transaction:
+    """Create a deposit (journal-only Transaction) from IIF TRNS/SPL.
+
+    QB IIF DEPOSIT convention: TRNS.AMOUNT positive on the bank account,
+    each SPL.AMOUNT negative on the income/source account; together they
+    sum to zero. Sign convention is the inverse of BILL.
+
+    There is no Deposit model — deposits are journal-only Transactions
+    with source_type='deposit', matching what the manual Make Deposits
+    route produces. The IIF DOCNUM lands in Transaction.reference so
+    re-imports dedupe correctly.
+
+    Returns the created Transaction, or None when an existing deposit
+    with matching (date, reference) already exists.
+    """
+    trns_amt = _validate_block_balance("DEPOSIT", trns, spls)
+
+    bank_acct_name = trns.get("ACCNT", "").strip()
+    if not bank_acct_name:
+        raise ValueError("DEPOSIT: missing bank account ACCNT on TRNS line")
+    bank_acct = _find_account(db, bank_acct_name)
+    if not bank_acct:
+        raise ValueError(
+            f"DEPOSIT: bank account '{bank_acct_name}' not found. "
+            f"Add the account in the chart of accounts first."
+        )
+
+    doc_num = trns.get("DOCNUM", "").strip()
+    deposit_date = _parse_iif_date(trns.get("DATE", "")) or date.today()
+    total = _q(abs(trns_amt))
+
+    # Idempotent dedup keyed on (date, reference) when DOCNUM is set.
+    # Without a DOCNUM, deposits aren't dedupable (you can legitimately
+    # have two deposits of the same amount on the same day from
+    # different sources), so re-runs without DOCNUM will double-import.
+    if doc_num:
+        existing = (
+            db.query(Transaction)
+            .filter(
+                Transaction.source_type == "deposit",
+                Transaction.reference == doc_num,
+                Transaction.date == deposit_date,
+            )
+            .first()
+        )
+        if existing:
+            return None
+
+    spl_resolved = []
+    for spl in spls:
+        spl_acct_name = spl.get("ACCNT", "").strip()
+        if not spl_acct_name:
+            raise ValueError(
+                f"DEPOSIT {doc_num or bank_acct_name}: SPL line missing ACCNT"
+            )
+        spl_acct = _find_account(db, spl_acct_name)
+        if not spl_acct:
+            raise ValueError(
+                f"DEPOSIT {doc_num or bank_acct_name}: source account "
+                f"'{spl_acct_name}' not found"
+            )
+        spl_amount = _parse_decimal(spl.get("AMOUNT", ""))
+        spl_resolved.append((spl, spl_acct, spl_amount))
+
+    block_class_id = _resolve_block_class(
+        db, "DEPOSIT", doc_num or bank_acct_name, spls
+    )
+
+    memo = trns.get("MEMO", "").strip()
+    description = memo or f"Deposit to {bank_acct.name}"
+
+    journal_lines = [
+        {
+            "account_id": bank_acct.id,
+            "debit": total,
+            "credit": Decimal("0"),
+            "description": description,
+        }
+    ]
+    for spl, spl_acct, spl_amount in spl_resolved:
+        spl_memo = spl.get("MEMO", "").strip() or None
+        journal_lines.append(
+            {
+                "account_id": spl_acct.id,
+                "debit": Decimal("0"),
+                "credit": _q(abs(spl_amount)),
+                "description": spl_memo or description,
+            }
+        )
+
+    txn = create_journal_entry(
+        db,
+        deposit_date,
+        f"IIF Import — {description}",
+        journal_lines,
+        source_type="deposit",
+        reference=doc_num or None,
+        class_id=block_class_id,
+    )
+    db.flush()
+    return txn
 
 
 def _import_invoice(db: Session, trns: dict, spls: list) -> Invoice:
@@ -687,19 +1083,24 @@ def _import_invoice(db: Session, trns: dict, spls: list) -> Invoice:
             return None
 
     # Resolve customer
-    cust_name = trns.get("NAME", "").strip()
-    customer = db.query(Customer).filter(Customer.name == cust_name).first()
-    if not customer:
-        # Auto-create customer
-        customer = Customer(name=cust_name, is_active=True)
-        db.add(customer)
-        db.flush()
+    cust_name = trns.get("NAME", "").strip()[:200]
+    if not cust_name:
+        # A TRNS row with no NAME cannot anchor an AR document, and auto-
+        # creating a Customer(name="") plants a record that is invisible in
+        # list views and unsearchable — the API refuses blank names since
+        # 6c82e9a, so the importer must not sneak them in the back door.
+        return None
+    # QuickBooks' NAME is the "Customer:Job" path — the job part becomes a
+    # Job under the customer (created on first sight), and the invoice is
+    # tagged to it so job costing survives the migration.
+    customer, job = resolve_customer_and_job(db, cust_name)
 
     inv_date = _parse_iif_date(trns.get("DATE", ""))
     due_date = _parse_iif_date(trns.get("DUEDATE", ""))
     total = abs(_parse_decimal(trns.get("AMOUNT", "")))
 
     invoice = Invoice(
+        job_id=job.id if job else None,
         invoice_number=doc_num or None,
         customer_id=customer.id,
         date=inv_date or date.today(),
@@ -808,6 +1209,7 @@ def _import_invoice(db: Session, trns: dict, spls: list) -> Invoice:
                 f"IIF Import — Invoice {doc_num}",
                 journal_lines,
                 source_type="invoice",
+                job_id=invoice.job_id,
                 source_id=invoice.id,
             )
             invoice.transaction_id = txn.id
@@ -830,6 +1232,7 @@ def _import_invoice(db: Session, trns: dict, spls: list) -> Invoice:
                     f"IIF Import — Invoice {doc_num}",
                     journal_lines,
                     source_type="invoice",
+                    job_id=invoice.job_id,
                     source_id=invoice.id,
                 )
                 invoice.transaction_id = txn.id
@@ -867,8 +1270,9 @@ def _import_payment(db: Session, trns: dict, spls: list) -> Payment:
     if existing_q.first():
         return None
 
-    # Resolve customer
-    customer = db.query(Customer).filter(Customer.name == cust_name).first()
+    # Resolve customer ("Customer:Job" resolves to the customer; a payment
+    # is not job-costed — the invoice it pays already is)
+    customer, _job = resolve_customer_and_job(db, cust_name, create=False)
     if not customer:
         return None  # Can't create payment without customer
 
@@ -953,6 +1357,119 @@ def _import_payment(db: Session, trns: dict, spls: list) -> Payment:
     return payment
 
 
+# QB allows sales receipts with a blank Customer:Job (counter sales); an
+# Invoice row can't. Blank-name CASH SALE blocks land on this named bucket
+# customer — a real, visible record, unlike the blank-name auto-creates
+# the importer refuses elsewhere.
+WALK_IN_CUSTOMER_NAME = "Walk-In Customer"
+
+
+def _import_cash_sale(db: Session, trns: dict, spls: list) -> Invoice:
+    """Create a paid invoice + payment from an IIF CASH SALE block.
+
+    QB writes sales receipts as TRNSTYPE "CASH SALE": the TRNS line debits
+    the deposit account (bank / Undeposited Funds) where an INVOICE block
+    would debit A/R, and SPL lines credit income/tax exactly like an
+    invoice. Imported as an invoice flagged is_sales_receipt plus a
+    same-day payment for the full total — the same pair of documents the
+    Enter Sales Receipts screen produces, so void/report behavior matches.
+    """
+    trns = dict(trns)
+    if not trns.get("NAME", "").strip():
+        trns["NAME"] = WALK_IN_CUSTOMER_NAME
+    if not trns.get("TERMS", "").strip():
+        trns["TERMS"] = "Due on Receipt"
+
+    if not trns.get("DOCNUM", "").strip():
+        # POS receipts are often unnumbered. Dedup on customer + date +
+        # amount (the DOCNUM-less analogue of _import_payment's check),
+        # then let the numbering service assign the next number.
+        cust_name = trns.get("NAME", "").strip()[:200]
+        sale_date = _parse_iif_date(trns.get("DATE", "")) or date.today()
+        total = abs(_parse_decimal(trns.get("AMOUNT", "")))
+        existing = (
+            db.query(Invoice)
+            .join(Customer, Invoice.customer_id == Customer.id)
+            .filter(
+                Customer.name == cust_name,
+                Invoice.date == sale_date,
+                Invoice.total == total,
+                Invoice.is_sales_receipt.is_(True),
+            )
+            .first()
+        )
+        if existing:
+            return None
+        from app.services.numbering import next_invoice_number
+
+        trns["DOCNUM"] = next_invoice_number(db)
+
+    invoice = _import_invoice(db, trns, spls)
+    if invoice is None:
+        return None
+    invoice.is_sales_receipt = True
+
+    # Deposit side: TRNS.ACCNT is the bank / Undeposited Funds account the
+    # receipt deposited to. Same fallback chain as _import_payment.
+    deposit_acct = _find_account(db, trns.get("ACCNT", "").strip())
+    if not deposit_acct:
+        from app.services.accounting import get_undeposited_funds_id
+
+        uf_id = get_undeposited_funds_id(db)
+        if uf_id:
+            deposit_acct = db.query(Account).filter(Account.id == uf_id).first()
+
+    total = Decimal(str(invoice.total))
+    payment = Payment(
+        customer_id=invoice.customer_id,
+        date=invoice.date,
+        amount=total,
+        method=trns.get("PAYMETH", "").strip() or None,
+        reference=invoice.invoice_number,
+        deposit_to_account_id=deposit_acct.id if deposit_acct else None,
+    )
+    db.add(payment)
+    db.flush()
+    db.add(
+        PaymentAllocation(payment_id=payment.id, invoice_id=invoice.id, amount=total)
+    )
+    invoice.amount_paid = total
+    invoice.balance_due = Decimal("0")
+    invoice.status = InvoiceStatus.PAID
+
+    # Payment journal: DR deposit account / CR A/R, clearing the A/R debit
+    # _import_invoice posted — the ledger nets to cash + income, matching
+    # the app's own sales-receipt flow.
+    ar_id = get_ar_account_id(db)
+    if ar_id and deposit_acct and total > 0:
+        journal_lines = [
+            {
+                "account_id": deposit_acct.id,
+                "debit": total,
+                "credit": Decimal("0"),
+                "description": f"Sales receipt {invoice.invoice_number}",
+            },
+            {
+                "account_id": ar_id,
+                "debit": Decimal("0"),
+                "credit": total,
+                "description": f"Sales receipt {invoice.invoice_number}",
+            },
+        ]
+        txn = create_journal_entry(
+            db,
+            invoice.date,
+            f"IIF Import — Sales receipt {invoice.invoice_number}",
+            journal_lines,
+            source_type="payment",
+            source_id=payment.id,
+        )
+        payment.transaction_id = txn.id
+
+    db.flush()
+    return invoice
+
+
 def _import_estimate(db: Session, trns: dict, spls: list) -> Estimate:
     """Create an Estimate from IIF TRNS/SPL data."""
     doc_num = trns.get("DOCNUM", "").strip()
@@ -964,17 +1481,20 @@ def _import_estimate(db: Session, trns: dict, spls: list) -> Estimate:
         if existing:
             return None
 
-    cust_name = trns.get("NAME", "").strip()
-    customer = db.query(Customer).filter(Customer.name == cust_name).first()
-    if not customer:
-        customer = Customer(name=cust_name, is_active=True)
-        db.add(customer)
-        db.flush()
+    cust_name = trns.get("NAME", "").strip()[:200]
+    if not cust_name:
+        # A TRNS row with no NAME cannot anchor an AR document, and auto-
+        # creating a Customer(name="") plants a record that is invisible in
+        # list views and unsearchable — the API refuses blank names since
+        # 6c82e9a, so the importer must not sneak them in the back door.
+        return None
+    customer, job = resolve_customer_and_job(db, cust_name)
 
     est_date = _parse_iif_date(trns.get("DATE", ""))
     total = abs(_parse_decimal(trns.get("AMOUNT", "")))
 
     estimate = Estimate(
+        job_id=job.id if job else None,
         estimate_number=doc_num or None,
         customer_id=customer.id,
         date=est_date or date.today(),
@@ -1084,13 +1604,18 @@ def validate_iif(content: str) -> dict:
 
     try:
         parsed = parse_iif(content)
-    except Exception as e:
+    except Exception:
+        # No exception text in the client-facing report (it can leak
+        # internals — py/stack-trace-exposure); details go to the log.
+        logger.exception("Failed to parse IIF file during validation")
         report["valid"] = False
-        report["errors"].append(f"Failed to parse IIF file: {str(e)}")
+        report["errors"].append(
+            "Failed to parse IIF file — it does not look like valid IIF."
+        )
         return report
 
     # Check what sections exist
-    for section in ["ACCNT", "CUST", "VEND", "INVITEM"]:
+    for section in ["ACCNT", "CLASS", "CUST", "VEND", "INVITEM"]:
         count = len(parsed.get(section, []))
         if count > 0:
             report["sections_found"].append(section)
@@ -1113,10 +1638,23 @@ def validate_iif(content: str) -> dict:
             report["errors"].append(f"Account row {i + 1}: missing NAME")
             report["valid"] = False
         atype = row.get("ACCNTTYPE", "").strip().upper()
-        if atype and atype not in _IIF_TO_ACCOUNT_TYPE:
+        if atype and atype not in IIF_TO_ACCOUNT_TYPE:
             report["warnings"].append(
                 f"Account '{name}': unrecognized type '{atype}' (will default to Expense)"
             )
+
+    # Validate classes
+    for i, row in enumerate(parsed.get("CLASS", [])):
+        name = row.get("NAME", "").strip()
+        if not name:
+            report["errors"].append(f"Class row {i + 1}: missing NAME")
+            report["valid"] = False
+        elif len(name) > _CLASS_NAME_MAX:
+            report["errors"].append(
+                f"Class row {i + 1}: name is {len(name)} characters, over the "
+                f"{_CLASS_NAME_MAX}-character limit"
+            )
+            report["valid"] = False
 
     # Validate customers
     for i, row in enumerate(parsed.get("CUST", [])):
@@ -1137,7 +1675,7 @@ def validate_iif(content: str) -> dict:
             report["errors"].append(f"Item row {i + 1}: missing NAME")
             report["valid"] = False
         itype = row.get("INVITEMTYPE", "").strip().upper()
-        if itype and itype not in _IIF_TO_ITEM_TYPE:
+        if itype and itype not in IIF_TO_ITEM_TYPE:
             report["warnings"].append(
                 f"Item '{name}': unrecognized type '{itype}' (will default to Service)"
             )
@@ -1180,10 +1718,12 @@ def validate_iif(content: str) -> dict:
 def import_all(db: Session, content: str) -> dict:
     """Import an entire IIF file into Slowbooks.
 
-    Processes in dependency order: accounts -> customers -> vendors -> items -> transactions.
+    Processes in dependency order: classes -> accounts -> customers ->
+    vendors -> items -> transactions.
     Returns counts of imported records and any errors.
     """
     result = {
+        "classes": 0,
         "accounts": 0,
         "opening_balance_lines": 0,
         "customers": 0,
@@ -1191,7 +1731,10 @@ def import_all(db: Session, content: str) -> dict:
         "items": 0,
         "invoices": 0,
         "payments": 0,
+        "sales_receipts": 0,
         "estimates": 0,
+        "bills": 0,
+        "deposits": 0,
         "errors": [],
         "warnings": [],
     }
@@ -1199,6 +1742,15 @@ def import_all(db: Session, content: str) -> dict:
     parsed = parse_iif(content)
 
     # Import lists first (order matters for FK resolution)
+
+    # Classes have no dependencies of their own, but transactions cite them
+    # by name and _resolve_block_class refuses unknown ones — so the list
+    # lands before anything that can carry a CLASS.
+    if parsed["CLASS"]:
+        r = import_classes(db, parsed["CLASS"])
+        result["classes"] = r["imported"]
+        result["errors"].extend(r["errors"])
+
     if parsed["ACCNT"]:
         r = import_accounts(db, parsed["ACCNT"])
         result["accounts"] = r["imported"]
@@ -1229,7 +1781,11 @@ def import_all(db: Session, content: str) -> dict:
         counts = r["imported"]
         result["invoices"] = counts.get("invoices", 0)
         result["payments"] = counts.get("payments", 0)
+        result["sales_receipts"] = counts.get("sales_receipts", 0)
         result["estimates"] = counts.get("estimates", 0)
+        result["bills"] = counts.get("bills", 0)
+        result["deposits"] = counts.get("deposits", 0)
+        result["duplicates_skipped"] = counts.get("duplicates_skipped", 0)
         result["errors"].extend(r["errors"])
         result["warnings"].extend(r.get("warnings", []))
 

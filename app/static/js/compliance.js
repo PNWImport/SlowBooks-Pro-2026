@@ -128,8 +128,8 @@ const CompliancePage = {
 
         let html = `<div class="table-container"><table>
             <thead><tr>
-                <th>#</th><th>Taken</th><th>Label</th><th>Tip</th><th>Rows</th>
-                <th>Signature</th><th>Actions</th>
+                <th scope="col">#</th><th scope="col">Taken</th><th scope="col">Label</th><th scope="col">Tip</th><th scope="col">Rows</th>
+                <th scope="col">Signature</th><th scope="col">Actions</th>
             </tr></thead><tbody>`;
         for (const c of rows) {
             html += `<tr>
@@ -306,8 +306,8 @@ const CompliancePage = {
         }
         let html = `<div class="table-container"><table>
             <thead><tr>
-                <th>#</th><th>Issued</th><th>Type</th><th>Key</th>
-                <th>Content Hash</th><th>Chained</th>
+                <th scope="col">#</th><th scope="col">Issued</th><th scope="col">Type</th><th scope="col">Key</th>
+                <th scope="col">Content Hash</th><th scope="col">Chained</th>
             </tr></thead><tbody>`;
         for (const a of rows) {
             html += `<tr>

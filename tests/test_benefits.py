@@ -33,14 +33,14 @@ def _create_plan(client, **overrides):
         "monthly_premium_employer": 450,
     }
     body.update(overrides)
-    r = client.post("/api/benefits/plans", json=body)
+    r = client.post("/api/benefit-coverage/plans", json=body)
     assert r.status_code == 201, r.text
     return r.json()
 
 
 def _enroll(client, emp_id, plan_id, start="2026-01-01"):
     r = client.post(
-        "/api/benefits/enrollments",
+        "/api/benefit-coverage/enrollments",
         json={"employee_id": emp_id, "plan_id": plan_id, "coverage_start": start},
     )
     assert r.status_code == 201, r.text
@@ -51,13 +51,13 @@ def test_plan_validation(client):
     _create_plan(client)
     assert (
         client.post(
-            "/api/benefits/plans", json={"name": "Gold PPO", "kind": "medical"}
+            "/api/benefit-coverage/plans", json={"name": "Gold PPO", "kind": "medical"}
         ).status_code
         == 400
     )
     assert (
         client.post(
-            "/api/benefits/plans", json={"name": "X", "kind": "astral"}
+            "/api/benefit-coverage/plans", json={"name": "X", "kind": "astral"}
         ).status_code
         == 400
     )
@@ -71,7 +71,7 @@ def test_enrollment_lifecycle(client):
 
     # Second open enrollment in the same plan rejected.
     r = client.post(
-        "/api/benefits/enrollments",
+        "/api/benefit-coverage/enrollments",
         json={
             "employee_id": emp["id"],
             "plan_id": plan["id"],
@@ -83,20 +83,20 @@ def test_enrollment_lifecycle(client):
     # End before start rejected; proper end works; double-end rejected.
     assert (
         client.post(
-            f"/api/benefits/enrollments/{enr['id']}/end",
+            f"/api/benefit-coverage/enrollments/{enr['id']}/end",
             json={"coverage_end": "2025-12-01"},
         ).status_code
         == 400
     )
     r = client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-06-30"},
     )
     assert r.status_code == 200
     assert r.json()["status"] == "terminated"
     assert (
         client.post(
-            f"/api/benefits/enrollments/{enr['id']}/end",
+            f"/api/benefit-coverage/enrollments/{enr['id']}/end",
             json={"coverage_end": "2026-07-31"},
         ).status_code
         == 400
@@ -108,11 +108,11 @@ def test_dependents(client):
     plan = _create_plan(client)
     enr = _enroll(client, emp["id"], plan["id"])
     r = client.post(
-        f"/api/benefits/enrollments/{enr['id']}/dependents",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/dependents",
         json={"name": "Kid Worker", "relationship_kind": "child"},
     )
     assert r.status_code == 201
-    listed = client.get(f"/api/benefits/enrollments?employee_id={emp['id']}").json()
+    listed = client.get(f"/api/benefit-coverage/enrollments?employee_id={emp['id']}").json()
     assert listed[0]["dependents"][0]["name"] == "Kid Worker"
 
 
@@ -126,7 +126,7 @@ def test_1095_full_year_and_partial(client):
     _enroll(client, full["id"], plan["id"], "2026-01-01")
     enr = _enroll(client, partial["id"], plan["id"], "2026-03-15")
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-08-02"},
     )
 
@@ -156,7 +156,7 @@ def test_1095_self_insured_lists_covered_individuals(client):
     plan = _create_plan(client, name="Self-Funded", self_insured=True)
     enr = _enroll(client, emp["id"], plan["id"])
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/dependents",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/dependents",
         json={"name": "Kid Worker", "relationship_kind": "child"},
     )
     data = client.get("/api/tax-forms/1095?year=2026").json()
@@ -175,15 +175,15 @@ def test_cobra_notice_requires_ended_medical(client):
     enr = _enroll(client, emp["id"], plan["id"])
     # Active enrollment: 400.
     assert (
-        client.post(f"/api/benefits/enrollments/{enr['id']}/cobra-notice").status_code
+        client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice").status_code
         == 400
     )
 
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-06-30"},
     )
-    r = client.post(f"/api/benefits/enrollments/{enr['id']}/cobra-notice")
+    r = client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice")
     assert r.status_code == 200, r.text
     assert r.content[:5] == b"%PDF-"
     audits = client.get("/api/document-audits?doc_type=cobra").json()
@@ -196,10 +196,10 @@ def test_cobra_notice_rejects_dental(client):
     plan = _create_plan(client, name="Dental2", kind="dental")
     enr = _enroll(client, emp["id"], plan["id"])
     client.post(
-        f"/api/benefits/enrollments/{enr['id']}/end",
+        f"/api/benefit-coverage/enrollments/{enr['id']}/end",
         json={"coverage_end": "2026-06-30"},
     )
     assert (
-        client.post(f"/api/benefits/enrollments/{enr['id']}/cobra-notice").status_code
+        client.post(f"/api/benefit-coverage/enrollments/{enr['id']}/cobra-notice").status_code
         == 400
     )

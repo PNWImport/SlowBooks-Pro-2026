@@ -14,6 +14,8 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 
 ## Invoicing & Payments (Accounts Receivable)
 - **Invoices** — Create, edit, duplicate, void, mark as sent, email as PDF. Auto-numbering, auto due-date from terms, dynamic line items with running totals. Print/PDF generation via WeasyPrint. Inline customer creation from invoice form
+- **Sales Receipts** — One-screen invoice + payment for point-of-sale style sales where the customer pays on the spot. Payment method, deposit-to account, and line items on a single form; posts both documents and their journal entries atomically. Imports from QuickBooks Desktop (IIF `CASH SALE`) and QuickBooks Online (SalesReceipt API)
+- **Receipt scanning (Tier 2 OCR)** — A Scan Receipt button on the Sales Receipt and Bill forms uploads a receipt image or PDF and pre-fills the form from local OCR: date, merchant/vendor hint, and the grand total as a single line, with detected tax split out (tax-rate field on sales receipts; noted in Bill Notes). The operator always reviews before saving, and the source file attaches to the document. Tesseract + poppler-utils are user-installed system binaries called via subprocess — zero new Python dependencies, never bundled, graceful "install Tesseract to enable scanning" degrade. Deterministic parsing, no AI. Spec: [docs/design/receipt-intake-spec.md](design/receipt-intake-spec.md)
 - **Estimates** — Full estimate workflow with convert-to-invoice (deep-copies all fields and line items). Inline customer creation from estimate form
 - **Payments** — Record payments with allocation across multiple invoices. Auto-updates invoice balances and status (draft/sent/partial/paid). Void payments with reversing journal entries
 - **Recurring Invoices** — Schedule automatic invoice generation (weekly/monthly/quarterly/yearly) with manual "Generate Now" or cron script
@@ -25,7 +27,7 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 
 ## Accounts Payable
 - **Purchase Orders** — Non-posting documents to vendors with auto-numbering, convert-to-bill workflow
-- **Bills** — Enter vendor bills (AP mirror of invoices). Track payables with status progression (draft/unpaid/partial/paid/void). Vendor default expense account pre-fill (account resolution: explicit → item → vendor default → global fallback)
+- **Bills** — Enter vendor bills (AP mirror of invoices). Track payables with status progression (draft/unpaid/partial/paid/void). Vendor default expense account pre-fill (account resolution: explicit → item → vendor default → global fallback). Scan a vendor receipt to pre-fill the form (see Receipt scanning under Sales Receipts)
 - **Bill Payments** — Pay vendor bills with allocation. Journal: DR AP, CR Bank
 - **AP Aging Report** — Outstanding payables grouped by vendor with 30/60/90 day buckets
 
@@ -60,11 +62,25 @@ Tax calculations are approximate — verify with a tax professional. Full module
 - **Balance Sheet** — Assets, liabilities, and equity as of any date
 - **A/R Aging** — Outstanding receivables grouped by customer with 30/60/90 day buckets
 - **A/P Aging** — Outstanding payables grouped by vendor with 30/60/90 day buckets
-- **Sales Tax** — Tax collected by invoice with taxable/non-taxable breakdowns. Pay Sales Tax feature records payments to government (DR Sales Tax Payable, CR Bank)
+- **Sales Tax** — Per-line taxable flag (defaults from the item and the customer) so untaxed labor and a taxed part share one invoice; the rate lives on the document. Sales Tax report shows the taxable base and tax collected. Pay Sales Tax feature records payments to government (DR Sales Tax Payable, CR Bank)
 - **General Ledger** — All journal entries grouped by account with debit/credit totals
 - **Income by Customer** — Sales totals per customer with invoice counts
 - **Customer Statements** — PDF statement with invoice/payment history and running balance
 - **Schedule C (Tax)** — Generate Schedule C data from P&L with configurable account-to-tax-line mappings. Export as CSV
+
+## Nonprofit mode
+- **One switch** — Settings → Company Type → Nonprofit swaps the vocabulary (Donor, Pledge, Donation, Fund, Grant, Statement of Activities / Financial Position, Net Assets) on screens, report titles, PDF names and the dashboard; the API and database never change name. Printed faces are literal: Donation Receipt / Pledge / Invoice by the document, not the setting
+- **Funds** — a class carries a restriction (without / with donor restrictions, purpose or permanent), a default function, donor and purpose; the untagged bucket is always unrestricted
+- **Release from Restriction** — DR Net Assets With / CR Net Assets Without, tagged to the fund; amount suggested from the fund's unreleased spending; voidable
+- **Function on every posted line** — program / management / fundraising, defaulted from the fund; explicit "Unassigned" for shared costs
+- **Allocation rules** — percent, square feet or hours on grants, across funds and/or functions; Split on a bill or journal line at entry; a period-end Functional Allocation reclasses what is still unassigned (same account, P&L unchanged, idempotent per period, voidable)
+- **Statements** — Statement of Activities (two columns by restriction, releases between), Statement of Financial Position (net assets by restriction, no closing entry needed), Fund Balances, Statement of Functional Expenses (Form 990 Part IX columns + program breakout), Pledge Report — each JSON, PDF and CSV, each reconciling to the P&L / balance sheet to the cent
+- **Donation receipt** — IRS Pub. 1771 block: no goods or services, or the fair value of what was and the deductible portion
+- **Acknowledgment letters** — PDF and email for donations, pledge payments, unapplied gifts and in-kind gifts, worded by the editable `donation_acknowledgment` email template
+- **In-kind gifts** — two-sided document (asset/expense ↔ In-Kind Contributions), acknowledged without a value
+- **Year-end giving statements** — per donor, all donors in one PDF, or batch email honouring each donor's opt-out
+- **Pledges** — recurring pledges and their installments (generated invoices link to their template and carry its grant), one-off pledges, write-off to Bad Debt Expense through a credit memo; credit memo void
+- Guide: [nonprofit-module.md](nonprofit-module.md); design: [design/nonprofit.md](design/nonprofit.md)
 
 ## Dashboard
 - Company Snapshot with Total Receivables, Overdue Invoices, Active Customers, Total Payables
@@ -133,6 +149,7 @@ An optional LLM layer sits on top of the analytics snapshot and produces a compa
 | **Anthropic Claude** | `/v1/messages` | `claude-sonnet-4-6` | Paid only |
 | **OpenAI** | `/v1/chat/completions` | `gpt-5.4-mini` | Paid only |
 | **Google Gemini** | `generateContent` | `gemini-2.5-flash` | Free Flash tier via AI Studio |
+| **Custom (OpenAI-compatible)** | `/v1/chat/completions` | *you supply it* | Any vendor or gateway that speaks the OpenAI wire format, on the public internet — HTTPS only, private/LAN addresses refused (v2.9, contributed by @jarvis4openclaw) |
 
 Each provider's model string is configurable from **Settings → AI Insights** — a curated dropdown per provider with a **Custom…** escape hatch for new model IDs the vendors ship between releases. So renames ("gemini-2.5-flash" → "gemini-3.0-nano") are a Custom-field entry, not a code change. Cloudflare gets an extra field for your account ID since its endpoint is account-scoped. The dedicated **Cloudflare Worker Gateway** provider adds a second field for your Worker URL — see the self-hosted gateway section below.
 
@@ -497,6 +514,20 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 | `/api/reports/income-by-customer` | GET | Sales totals per customer |
 | `/api/tax/schedule-c` | GET | Schedule C data from P&L |
 | `/api/tax/schedule-c/csv` | GET | Schedule C CSV export |
+| `/api/reports/statement-of-activities` (+`/pdf`, `/csv`) | GET | Nonprofit: revenue, releases, expenses by restriction |
+| `/api/reports/statement-of-financial-position` (+`/pdf`, `/csv`) | GET | Nonprofit: net assets with / without donor restrictions |
+| `/api/reports/fund-balances` (+`/pdf`, `/csv`) | GET | Nonprofit: per restricted fund |
+| `/api/reports/functional-expenses` (+`/pdf`, `/csv`) | GET | Nonprofit: Form 990 Part IX columns |
+| `/api/reports/pledges` (+`/pdf`, `/csv`) | GET | Nonprofit: promised / received / written off / outstanding |
+| `/api/nonprofit/setup-accounts` | POST | Create the net-asset, in-kind and bad-debt accounts if missing |
+| `/api/nonprofit/releases` (+`/suggest`, `/{id}/void`) | GET, POST | Release from restriction |
+| `/api/nonprofit/allocation-rules` (+`/{id}/split`, `/{id}/preview`) | GET, POST, PUT, DELETE | Saved shared-cost rules |
+| `/api/nonprofit/allocations` (+`/{id}/void`) | GET, POST | Period-end functional allocation runs |
+| `/api/in-kind-gifts` (+`/{id}/void`) | GET, POST | In-kind gift documents |
+| `/api/donors/gifts/{kind}/{id}/acknowledgment/{preview,pdf,email}` | GET, POST | Acknowledgment letters |
+| `/api/donors/{id}/giving-statement/pdf`, `/api/donors/giving-statements/{pdf,batch-email}` | GET, POST | Year-end giving statements |
+| `/api/invoices/{id}/write-off` | POST | Write an open balance off to Bad Debt Expense |
+| `/api/credit-memos/{id}/void` | POST | Void a credit memo (unwinds applications) |
 
 ### Import/Export
 | Endpoint | Methods | Description |
@@ -576,3 +607,34 @@ All read endpoints accept `?period=month|quarter|year` (or `mtd/qtd/ytd`), or ex
 | `/api/analytics/ai-insights` | POST | Run the dashboard through the configured LLM; `?force=true` bypasses 10-min cache |
 | `/api/analytics/ai-query` | POST | Tool-calling Q&A — LLM autonomously calls 16 read-only tools to answer `?question=...` |
 | `/analytics` | GET | Backwards-compat 307 redirect to the SPA hash route `/#/analytics` |
+
+## Jobs (Customer:Job / Projects)
+
+- A job belongs to one customer; status, number, type, dates, site address,
+  contract amount. Managed on the Jobs page or from the Customer Center.
+- Job (and per-line job/class) on invoices, bills, expenses, card charges,
+  journal entries, sales receipts, estimates, purchase orders and time
+  entries. A line without its own job inherits the document's.
+- Job Profitability report and per-job detail from posted ledger lines;
+  "No job" bucket keeps totals equal to the P&L.
+- IIF `Customer:Job` and QBO sub-customers import as jobs under the customer.
+- Roadmap (cost codes, committed cost, change orders, progress billing,
+  time/burden, WIP): `docs/design/projects.md`.
+- Cost codes (Settings → Cost Codes; CSI MasterFormat loader) with cost
+  types; per-line on bills, expenses, POs, journal entries; job costs by
+  code; billable flag on cost lines; committed cost from open POs.
+- Job cost model: nested cost codes with CSV import, editable cost types with
+  burden and offset accounts, Job Cost Entries (labor, equipment, mileage,
+  burden, allocations), time posted to jobs at loaded cost, budgets per code
+  seeded from estimates, drill-down job page (budget / committed / actual /
+  projected / variance), Job Budget vs Actual report.
+- Customizable overview: show / hide / reorder dashboard cards per user, a
+  catalog of cards (P&L this month vs last, cash position + 30-day forecast,
+  open POs, receipts to review, jobs budget vs actual), reset to standard.
+- Export parity: IIF export covers classes (list + CLASS column), Customer:Job
+  rows, bills, deposits and sales receipts; CSV export adds bills, deposits,
+  sales receipts, classes and jobs. Full export re-imports cleanly.
+- Accessibility: WCAG 2.1 AA posture ("strive to conform") — header scopes,
+  labelled icon buttons, live-region toasts, dialog focus management, AA
+  contrast, and tagged (PDF/UA-1) PDFs. See docs/accessibility.md.
+

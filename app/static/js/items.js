@@ -1,10 +1,6 @@
 /**
- * Decompiled from QBW32.EXE!CItemListView  Offset: 0x000F6200
- * The item list in QB2003 supported a tree hierarchy (parent/sub-items)
- * via a self-referencing ParentRef field in ITEM.DAT. Sub-items inherited
- * the income/expense accounts from their parent unless overridden — this
- * was handled by CItem::GetEffectiveAccount() at 0x000F50C0 which walked
- * up the tree. We skipped the hierarchy. Life is too short.
+ * Item list — QB2003 supported a parent/sub-item tree with inherited
+ * accounts. We skipped the hierarchy. Life is too short.
  */
 const ItemsPage = {
     async render() {
@@ -23,9 +19,9 @@ const ItemsPage = {
         } else {
             html += `<div class="table-container"><table>
                 <thead><tr>
-                    <th>Name</th><th>Type</th><th>Description</th>
-                    <th class="amount">Rate</th><th class="amount">Cost</th>
-                    <th class="amount">Qty on Hand</th><th>Actions</th>
+                    <th scope="col">Name</th><th scope="col">Type</th><th scope="col">Description</th>
+                    <th scope="col" class="amount">Rate</th><th scope="col" class="amount">Cost</th>
+                    <th scope="col" class="amount">Qty on Hand</th><th scope="col">Actions</th>
                 </tr></thead><tbody>`;
             for (const item of items) {
                 const qtyCell = item.track_inventory
@@ -86,7 +82,7 @@ const ItemsPage = {
                         <input name="rate" type="number" step="0.01" value="${item.rate}"></div>
                     <div class="form-group"><label>Cost</label>
                         <input name="cost" type="number" step="0.01" value="${item.cost}"></div>
-                    <div class="form-group"><label>Income Account</label>
+                    <div class="form-group"><label>${T('Income')} Account</label>
                         <select name="income_account_id">
                             <option value="">-- None --</option>
                             ${incomeAccts.map(a => `<option value="${a.id}" ${item.income_account_id==a.id?'selected':''}>${a.account_number} - ${escapeHtml(a.name)}</option>`).join('')}
@@ -255,8 +251,8 @@ const ItemsPage = {
             </div>
             <div class="table-container" style="max-height:60vh;overflow:auto;"><table>
                 <thead><tr>
-                    <th>Date</th><th>Type</th><th class="amount">Qty</th><th class="amount">Unit Cost</th>
-                    <th class="amount">Bal Qty</th><th class="amount">Bal Avg</th><th>Source</th>
+                    <th scope="col">Date</th><th scope="col">Type</th><th scope="col" class="amount">Qty</th><th scope="col" class="amount">Unit Cost</th>
+                    <th scope="col" class="amount">Bal Qty</th><th scope="col" class="amount">Bal Avg</th><th scope="col">Source</th>
                 </tr></thead>
                 <tbody>${rows}</tbody>
             </table></div>

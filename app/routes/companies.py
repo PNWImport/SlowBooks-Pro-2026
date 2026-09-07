@@ -5,7 +5,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from app.schemas.common import StrictModel
 from typing import Optional
 
 from app.database import get_db
@@ -14,9 +14,11 @@ from app.services.company_service import list_companies, create_company
 router = APIRouter(prefix="/api/companies", tags=["companies"])
 
 
-class CompanyCreate(BaseModel):
+class CompanyCreate(StrictModel):
     name: str
-    database_name: str
+    # Postgres (server) installs only — desktop/SQLite installs derive the
+    # company's .db filename from the name.
+    database_name: Optional[str] = None
     description: Optional[str] = None
 
 

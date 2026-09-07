@@ -43,7 +43,13 @@ def _auth_exempt() -> tuple[tuple[str, ...], set[str]]:
     )
     exact_block = text[text.index("_AUTH_EXEMPT_EXACT = {") :]
     exact = set(re.findall(r'"([^"]+)"', exact_block[: exact_block.index("}")]))
-    return prefixes, exact
+    # Also extract regex exemptions if present
+    regex_pat = None
+    if "_AUTH_EXEMPT_RE" in text:
+        m = re.search(r'_AUTH_EXEMPT_RE\s*=\s*_re\.compile\(\s*r"([^"]+)"', text)
+        if m:
+            regex_pat = re.compile(m.group(1))
+    return prefixes, exact, regex_pat
 
 
 def _concrete(path: str) -> str:
@@ -57,9 +63,12 @@ def test_backend_only_list_is_not_empty():
 
 @pytest.mark.parametrize("method,path", _backend_only())
 def test_backend_only_route_requires_session(method, path, unauthed_client):
-    prefixes, exact = _auth_exempt()
+    prefixes, exact, regex_pat = _auth_exempt()
+    concrete_path = _concrete(path)
     if path in exact or path.startswith(prefixes):
         pytest.skip(f"{path} is deliberately auth-exempt in app/main.py")
+    if regex_pat and regex_pat.match(concrete_path):
+        pytest.skip(f"{path} is auth-exempt via regex in app/main.py")
 
     resp = unauthed_client.request(method, _concrete(path))
     assert resp.status_code == 401, (

@@ -340,7 +340,7 @@ def test_bank_account_numbers_stored_encrypted(client, db_session):
         f"/api/employees/{emp['id']}/bank-accounts",
         json={
             "account_kind": "checking",
-            "routing_number": "123456789",
+            "routing_number": "021000021",
             "account_number": "9876543210",
             "deposit_type": "full",
         },
@@ -357,7 +357,7 @@ def test_bank_account_numbers_stored_encrypted(client, db_session):
     row = db_session.query(EmployeeBankAccount).filter_by(id=ba["id"]).first()
     assert row.account_number_enc != "9876543210"  # ciphertext at rest
     assert decrypt(row.account_number_enc) == "9876543210"  # round-trips
-    assert decrypt(row.routing_number_enc) == "123456789"
+    assert decrypt(row.routing_number_enc) == "021000021"
 
 
 def test_bank_account_rejects_bad_routing_number(client):

@@ -1,13 +1,11 @@
 # ============================================================================
-# Extracted from qbw32.exe!CNewCompanyWizard::CreateDefaultAccounts()
-# Offset: 0x00231A00  |  Resource table: RT_RCDATA id=0x0067 "DEFACCTS"
-# These are the default Chart of Accounts entries that QB2003 Pro created
-# when you ran the "EasyStep Interview" for a new company file.
-# Account numbers match the "Contractor" industry template (CONTRACTOR.QBT)
+# Default Chart of Accounts — the entries QuickBooks 2003 Pro created when
+# you ran the "EasyStep Interview" for a new company file. Account numbers
+# match its "Contractor" industry template.
 # ============================================================================
 
 CHART_OF_ACCOUNTS = [
-    # Assets (1000s) — DEFACCTS resource block 0x00-0x09
+    # Assets (1000s)
     {"account_number": "1000", "name": "Checking", "account_type": "asset"},
     {"account_number": "1010", "name": "Savings", "account_type": "asset"},
     {"account_number": "1100", "name": "Accounts Receivable", "account_type": "asset"},
@@ -62,6 +60,16 @@ CHART_OF_ACCOUNTS = [
         "name": "Other Payroll Deductions Payable",
         "account_type": "liability",
     },
+    {
+        "account_number": "2380",
+        "name": "Employee Benefits Payable",
+        "account_type": "liability",
+    },
+    {
+        "account_number": "2390",
+        "name": "Accrued PTO Liability",
+        "account_type": "liability",
+    },
     {"account_number": "2400", "name": "Loan Payable", "account_type": "liability"},
     {
         "account_number": "2500",
@@ -77,6 +85,11 @@ CHART_OF_ACCOUNTS = [
     {"account_number": "4100", "name": "Product Sales", "account_type": "income"},
     {"account_number": "4200", "name": "Material Income", "account_type": "income"},
     {"account_number": "4300", "name": "Labor Income", "account_type": "income"},
+    {
+        "account_number": "4400",
+        "name": "In-Kind Contributions",
+        "account_type": "income",
+    },
     {"account_number": "4900", "name": "Other Income", "account_type": "income"},
     # COGS (5000s)
     {"account_number": "5000", "name": "Cost of Goods Sold", "account_type": "cogs"},
@@ -111,6 +124,16 @@ CHART_OF_ACCOUNTS = [
         "account_type": "expense",
     },
     {
+        "account_number": "6150",
+        "name": "Employee Benefits Expense",
+        "account_type": "expense",
+    },
+    {
+        "account_number": "6160",
+        "name": "Paid Time Off Expense",
+        "account_type": "expense",
+    },
+    {
         "account_number": "6200",
         "name": "Bank Charges & Fees",
         "account_type": "expense",
@@ -129,10 +152,16 @@ CHART_OF_ACCOUNTS = [
         "account_type": "expense",
     },
     {"account_number": "6800", "name": "Tools & Equipment", "account_type": "expense"},
+    {
+        "account_number": "6810",
+        "name": "Depreciation Expense",
+        "account_type": "expense",
+    },
     {"account_number": "6900", "name": "Utilities", "account_type": "expense"},
     {
         "account_number": "6950",
         "name": "Miscellaneous Expense",
         "account_type": "expense",
     },
+    {"account_number": "6960", "name": "Bad Debt Expense", "account_type": "expense"},
 ]

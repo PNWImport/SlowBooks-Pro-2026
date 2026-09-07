@@ -11,12 +11,11 @@
 # before relying on these for actual tax filing.
 # ============================================================================
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 from app.seed.wa_lni_rates import get_lni_rate
+from app.services.accounting import _q
 from app.services.state_tax.base import StateEngine, StateTaxResult
-
-CENT = Decimal("0.01")
 
 # --- WA Paid Family & Medical Leave -----------------------------------------
 PFML_TOTAL_RATE = Decimal("0.0074")  # total premium as a fraction of gross
@@ -27,13 +26,9 @@ PFML_EMPLOYER_SHARE = Decimal("0.2857")  # employer pays 28.57% of the premium
 WA_CARES_RATE = Decimal("0.0058")  # employee-only, fraction of gross
 
 
-def _q(value: Decimal) -> Decimal:
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
-
-
 class WAEngine(StateEngine):
     state_code: str = "WA"
-    suta_wage_base: Decimal = Decimal("72800")
+    suta_wage_base: Decimal = Decimal("78200")
 
     def calculate(
         self,
@@ -44,7 +39,8 @@ class WAEngine(StateEngine):
         pay_periods: int,
         hours: Decimal,
         filing_status: str,
-        wc_class_code: str | None
+        wc_class_code: str | None,
+        **_extra,
     ) -> StateTaxResult:
         if gross <= 0 or taxable <= 0:
             return StateTaxResult()

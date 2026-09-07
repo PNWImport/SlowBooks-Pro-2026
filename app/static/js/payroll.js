@@ -8,10 +8,7 @@ const PayrollPage = {
         let html = `
             <div class="page-header">
                 <h2>Payroll</h2>
-                <div>
-                    <button class="btn btn-secondary" onclick="PayrollPage.showRetroPayForm()">Retro Pay</button>
-                    <button class="btn btn-primary" onclick="PayrollPage.showRunForm()">+ New Pay Run</button>
-                </div>
+                <button class="btn btn-primary" onclick="PayrollPage.showRunForm()">+ New Pay Run</button>
             </div>
             <div style="background:#fef3c7;border:1px solid #fbbf24;padding:6px 10px;margin-bottom:12px;font-size:10px;color:#92400e;">
                 <strong>Disclaimer:</strong> Tax calculations are approximate. Verify with a tax professional before filing.
@@ -21,8 +18,8 @@ const PayrollPage = {
             html += '<div class="empty-state"><p>No payroll runs yet</p></div>';
         } else {
             html += `<div class="table-container"><table>
-                <thead><tr><th>Period</th><th>Pay Date</th><th>Status</th>
-                <th class="amount">Gross</th><th class="amount">Taxes</th><th class="amount">Net</th><th>Actions</th></tr></thead><tbody>`;
+                <thead><tr><th scope="col">Period</th><th scope="col">Pay Date</th><th scope="col">Status</th>
+                <th scope="col" class="amount">Gross</th><th scope="col" class="amount">Taxes</th><th scope="col" class="amount">Net</th><th scope="col">Actions</th></tr></thead><tbody>`;
             for (const r of runs) {
                 html += `<tr>
                     <td>${formatDate(r.period_start)} - ${formatDate(r.period_end)}</td>
@@ -75,7 +72,7 @@ const PayrollPage = {
                 </label>
                 <h3 style="margin:12px 0 8px;font-size:14px;">Employee Hours</h3>
                 <div class="table-container"><table>
-                    <thead><tr><th style="width:30px;"></th><th>Employee</th><th>Type</th><th class="amount">Rate</th><th>Hours</th><th>Time Entries</th></tr></thead>
+                    <thead><tr><th scope="col" style="width:30px;"></th><th scope="col">Employee</th><th scope="col">Type</th><th scope="col" class="amount">Rate</th><th scope="col">Hours</th><th scope="col">Time Entries</th></tr></thead>
                     <tbody>${empRows}</tbody>
                 </table></div>
                 <div class="form-actions">
@@ -147,6 +144,11 @@ const PayrollPage = {
 
     async view(id) {
         const run = await API.get(`/payroll/${id}`);
+        const benefitCell = (s) => {
+            const b = s.benefits || [];
+            if (!b.length) return '—';
+            return b.map(x => `${escapeHtml(x.code)} ${formatCurrency(x.employee_amount)}${x.employer_amount ? ` <span style="color:var(--gray-400)">(+${formatCurrency(x.employer_amount)} ER)</span>` : ''}`).join('<br>');
+        };
         let rows = run.stubs.map(s => `
             <tr>
                 <td>${escapeHtml(s.employee_name || `Employee ${s.employee_id}`)}</td>
@@ -156,20 +158,25 @@ const PayrollPage = {
                 <td class="amount">${formatCurrency(s.state_tax)}</td>
                 <td class="amount">${formatCurrency(s.ss_tax)}</td>
                 <td class="amount">${formatCurrency(s.medicare_tax)}</td>
+                <td style="font-size:12px;">${benefitCell(s)}</td>
+                <td class="amount">${formatCurrency((s.pretax_deductions || 0) + (s.posttax_deductions || 0))}</td>
                 <td class="amount" style="font-weight:700;">${formatCurrency(s.net_pay)}</td>
             </tr>`).join('');
 
         openModal(`Pay Run: ${run.period_start} to ${run.period_end}`, `
             <div class="table-container"><table>
-                <thead><tr><th>Employee</th><th class="amount">Hours</th><th class="amount">Gross</th>
-                <th class="amount">Fed</th><th class="amount">State</th><th class="amount">SS</th>
-                <th class="amount">Med</th><th class="amount">Net</th></tr></thead>
+                <thead><tr><th scope="col">Employee</th><th scope="col" class="amount">Hours</th><th scope="col" class="amount">Gross</th>
+                <th scope="col" class="amount">Fed</th><th scope="col" class="amount">State</th><th scope="col" class="amount">SS</th>
+                <th scope="col" class="amount">Med</th><th scope="col">Benefits (EE, +ER)</th><th scope="col" class="amount">Deductions</th><th scope="col" class="amount">Net</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table></div>
             <div class="invoice-totals">
                 <div class="total-row"><span class="label">Total Gross</span><span class="value">${formatCurrency(run.total_gross)}</span></div>
                 <div class="total-row"><span class="label">Total Taxes</span><span class="value">${formatCurrency(run.total_taxes)}</span></div>
+                <div class="total-row"><span class="label">Employer Taxes</span><span class="value">${formatCurrency(run.total_employer_taxes)}</span></div>
+                <div class="total-row"><span class="label">Employer Benefits</span><span class="value">${formatCurrency(run.total_employer_benefits || 0)}</span></div>
                 <div class="total-row grand-total"><span class="label">Total Net</span><span class="value">${formatCurrency(run.total_net)}</span></div>
+                ${run.burden_job_cost_id ? `<div class="total-row"><span class="label">Labor burden distributed</span><span class="value"><a href="#/job-costs">Job cost entry #${run.burden_job_cost_id}</a></span></div>` : ''}
             </div>
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
@@ -183,78 +190,5 @@ const PayrollPage = {
             toast('Payroll processed');
             App.navigate('#/payroll');
         } catch (err) { toast(err.message, 'error'); }
-    },
-
-    // Retro pay — preview the shortfall from a raise, then apply it
-    // (raises the rate and stages a draft off-cycle supplemental run).
-    async showRetroPayForm() {
-        const emps = await API.get('/employees?active_only=true');
-        const opts = emps.map(e =>
-            `<option value="${e.id}">${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)} — ${formatCurrency(e.pay_rate)}${e.pay_type === 'hourly' ? '/hr' : '/yr'}</option>`
-        ).join('');
-        openModal('Retro Pay', `
-            <div class="form-group"><label>Employee</label>
-                <select id="retro-emp">${opts}</select></div>
-            <div class="form-group"><label>New rate</label>
-                <input type="number" id="retro-rate" step="0.01" min="0"></div>
-            <div class="form-group"><label>Raise effective date</label>
-                <input type="date" id="retro-effective"></div>
-            <div class="form-group"><label>Payout date (apply only)</label>
-                <input type="date" id="retro-paydate" value="${todayISO()}"></div>
-            <div id="retro-preview" style="margin-top:8px;"></div>
-            <div class="form-actions">
-                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button class="btn btn-secondary" onclick="PayrollPage.retroPreview()">Preview</button>
-                <button class="btn btn-primary" onclick="PayrollPage.retroApply()">Apply</button>
-            </div>`);
-    },
-
-    _retroPayload() {
-        const empId = parseInt($('#retro-emp')?.value, 10);
-        const rate = parseFloat($('#retro-rate')?.value);
-        const effective = $('#retro-effective')?.value;
-        if (!empId || isNaN(rate) || !effective) {
-            toast('Employee, new rate, and effective date are required', 'error');
-            return null;
-        }
-        return { employee_id: empId, new_rate: rate, effective_date: effective };
-    },
-
-    async retroPreview() {
-        const payload = PayrollPage._retroPayload();
-        if (!payload) return;
-        const box = $('#retro-preview');
-        try {
-            const data = await API.post('/payroll/retro-pay/preview', payload);
-            if (!data.periods.length) {
-                box.innerHTML = `<p style="font-size:11px; color:var(--text-muted);">
-                    No regular pay periods since ${formatDate(data.effective_date)}.</p>`;
-                return;
-            }
-            let rows = data.periods.map(p => `<tr>
-                <td>${formatDate(p.pay_date)}</td>
-                <td class="amount">${formatCurrency(p.paid_gross)}</td>
-                <td class="amount">${formatCurrency(p.gross_at_new_rate)}</td>
-                <td class="amount">${formatCurrency(p.difference)}</td>
-            </tr>`).join('');
-            box.innerHTML = `<div class="table-container"><table>
-                <thead><tr><th>Pay Date</th><th class="amount">Paid</th>
-                <th class="amount">At New Rate</th><th class="amount">Diff</th></tr></thead>
-                <tbody>${rows}</tbody></table></div>
-                <div style="font-size:12px; font-weight:700; margin-top:6px;">
-                    Retro pay due: ${formatCurrency(data.retro_pay_due)}</div>`;
-        } catch (e) { toast(e.message, 'error'); }
-    },
-
-    async retroApply() {
-        const payload = PayrollPage._retroPayload();
-        if (!payload) return;
-        payload.pay_date = $('#retro-paydate')?.value || null;
-        try {
-            const run = await API.post('/payroll/retro-pay/apply', payload);
-            closeModal();
-            toast(`Rate raised; retro run #${run.pay_run_id} staged as draft`);
-            App.navigate('#/payroll');
-        } catch (e) { toast(e.message, 'error'); }
     },
 };

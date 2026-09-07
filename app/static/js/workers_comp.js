@@ -42,8 +42,8 @@ const WorkersCompPage = {
                 : '<span class="badge badge-void">superseded</span>'}</td>
         </tr>`).join('');
         return `<div class="table-container"><table>
-            <thead><tr><th>State</th><th>Class</th><th>Description</th>
-            <th class="amount">Rate / $100</th><th>Status</th></tr></thead>
+            <thead><tr><th scope="col">State</th><th scope="col">Class</th><th scope="col">Description</th>
+            <th scope="col" class="amount">Rate / $100</th><th scope="col">Status</th></tr></thead>
             <tbody>${rows}</tbody>
         </table></div>`;
     },
@@ -122,9 +122,9 @@ const WorkersCompPage = {
                 <h3 style="margin-top:18px;">Premium Report — ${year}</h3>
                 ${missing}
                 <div class="table-container"><table>
-                    <thead><tr><th>State</th><th>Class</th><th class="amount">Employees</th>
-                    <th class="amount">Wages</th><th class="amount">Rate / $100</th>
-                    <th class="amount">Premium</th></tr></thead>
+                    <thead><tr><th scope="col">State</th><th scope="col">Class</th><th scope="col" class="amount">Employees</th>
+                    <th scope="col" class="amount">Wages</th><th scope="col" class="amount">Rate / $100</th>
+                    <th scope="col" class="amount">Premium</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table></div>
                 <div style="font-size:12px; font-weight:700; margin-top:8px;">

@@ -59,6 +59,15 @@ class Bill(Base):
     notes = Column(Text, nullable=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
 
+    # Class tracking dimension (QB-style); NULL groups with Uncategorized
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
+    # Job-costing dimension (QB "Customer:Job"); NULL = no job
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+
+    # Multi-currency: document currency + rate it was booked at (GL is home)
+    currency = Column(String(3), nullable=True)
+    exchange_rate = Column(Numeric(18, 8), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -90,6 +99,16 @@ class BillLine(Base):
     quantity = Column(Numeric(10, 2), default=1)
     rate = Column(Numeric(12, 2), default=0)
     amount = Column(Numeric(12, 2), default=0)
+    # Per-line job / class; NULL falls back to the transaction header
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
+    cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)
+    function = Column(String(20), nullable=True)  # nonprofit function
+    # Cost billable to the job's customer; set when it is pulled onto an invoice
+    is_billable = Column(Boolean, nullable=False, default=False)
+    billed_invoice_line_id = Column(
+        Integer, ForeignKey("invoice_lines.id"), nullable=True
+    )
     line_order = Column(Integer, default=0)
 
     bill = relationship("Bill", back_populates="lines")
@@ -108,6 +127,9 @@ class BillPayment(Base):
     check_number = Column(String(50), nullable=True)
     pay_from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     notes = Column(Text, nullable=True)
+    # Multi-currency: payment currency + rate it settled at (GL is home)
+    currency = Column(String(3), nullable=True)
+    exchange_rate = Column(Numeric(18, 8), nullable=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
     is_voided = Column(Boolean, default=False, nullable=False)
 

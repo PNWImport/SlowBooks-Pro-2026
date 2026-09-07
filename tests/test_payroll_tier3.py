@@ -217,7 +217,7 @@ def test_portal_bank_account_add(client, db_session):
         data={
             "nickname": "Main",
             "account_kind": "checking",
-            "routing_number": "123456789",
+            "routing_number": "021000021",
             "account_number": "5550009999",
             "deposit_type": "full",
         },

@@ -35,8 +35,8 @@ const PaySchedulesPage = {
         }
         let html = `<div class="table-container"><table>
             <thead><tr>
-                <th>Name</th><th>Frequency</th><th>Anchor Date</th>
-                <th>Lead Days</th><th>Weekend Shift</th><th>Status</th><th>Actions</th>
+                <th scope="col">Name</th><th scope="col">Frequency</th><th scope="col">Anchor Date</th>
+                <th scope="col">Lead Days</th><th scope="col">Weekend Shift</th><th scope="col">Status</th><th scope="col">Actions</th>
             </tr></thead><tbody>`;
         for (const s of schedules) {
             html += `<tr>
@@ -185,7 +185,7 @@ const PaySchedulesPage = {
             const data = await API.get(`/pay-schedules/${scheduleId}/upcoming?count=12`);
             let html = `<h3 style="margin-top:18px;">Upcoming: ${escapeHtml(data.schedule.name)}</h3>
                 <div class="table-container"><table>
-                <thead><tr><th>Pay Date</th><th>Submission Cutoff</th></tr></thead><tbody>`;
+                <thead><tr><th scope="col">Pay Date</th><th scope="col">Submission Cutoff</th></tr></thead><tbody>`;
             for (const d of data.dates) {
                 html += `<tr>
                     <td>${formatDate(d.pay_date)}</td>

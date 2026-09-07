@@ -1,3 +1,7 @@
+# Normalize all text files to LF in-repo and on checkout (mixed CRLF/LF
+# crept in via cross-platform contributions).
+* text=auto eol=lf
+
 # Ensure shell scripts always have LF line endings (fixes Docker on all platforms)
 *.sh text eol=lf
 docker-entrypoint.sh text eol=lf

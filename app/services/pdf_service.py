@@ -1,9 +1,5 @@
 # ============================================================================
-# Decompiled from qbw32.exe!CPrintManager + CInvoicePrintLayout
-# Offset: 0x00220000
-# Original used Crystal Reports 8.5 OCX embedded in an OLE container for
-# print preview. The .RPT template files were stored as RT_RCDATA resources.
-# We're using WeasyPrint + Jinja2 because Crystal Reports can go to hell.
+# PDF generation — WeasyPrint + Jinja2 templates.
 # ============================================================================
 
 import base64
@@ -13,13 +9,10 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML, default_url_fetcher
 
+from app.services import storage
+
 TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
 _jinja_env = Environment(autoescape=True, loader=FileSystemLoader(str(TEMPLATE_DIR)))
-
-# Where uploaded company logos live. Anything outside this directory is
-# refused — keeps a tampered settings.company_logo_path from reading
-# arbitrary files like /etc/passwd into the rendered PDF.
-_UPLOADS_DIR = (Path(__file__).parent.parent / "static" / "uploads").resolve()
 
 # MIME types we'll embed as data URIs. Keep this tight — WeasyPrint will
 # happily render whatever, but we don't want a path traversal turning into
@@ -36,9 +29,8 @@ _LOGO_ALLOWED_MIMES = {
 def _company_logo_data_uri(company_settings: dict) -> str:
     """Return the company logo as a base64 data URI, or empty string.
 
-    Constrains the file to live inside app/static/uploads so a tampered
-    `company_logo_path` setting can't be used to read files outside the
-    upload directory.
+    Constrains the file to the active upload storage root so a tampered
+    `company_logo_path` setting can't read files outside that directory.
     """
     logo_path = (company_settings or {}).get("company_logo_path") or ""
     if not logo_path:
@@ -49,12 +41,13 @@ def _company_logo_data_uri(company_settings: dict) -> str:
     relative = logo_path.lstrip("/")
     if relative.startswith("static/"):
         relative = relative[len("static/") :]
-    candidate = (_UPLOADS_DIR.parent / relative).resolve()
+    uploads_dir = storage.uploads_root().resolve()
+    candidate = (uploads_dir.parent / relative).resolve()
 
     # Path containment check — reject if the resolved path escapes the
     # uploads directory (defends against ../ in stored value).
     try:
-        candidate.relative_to(_UPLOADS_DIR)
+        candidate.relative_to(uploads_dir)
     except ValueError:
         return ""
 
@@ -86,6 +79,20 @@ def _safe_url_fetcher(url, timeout=10, ssl_context=None):
     raise ValueError(f"URL scheme not allowed in PDF templates: {url!r}")
 
 
+def render_pdf(html_str: str) -> bytes:
+    """Every PDF the app produces goes through here. PDF/UA-1 makes the
+    output *tagged* — headings, tables and reading order are exposed to
+    screen readers instead of a flat picture of text — which is what makes
+    a W-2 or an invoice readable to a blind user. Falls back to a plain PDF
+    if the installed WeasyPrint can't do the variant, so a render never
+    fails on an environment quirk."""
+    doc = HTML(string=html_str, url_fetcher=_safe_url_fetcher)
+    try:
+        return doc.write_pdf(pdf_variant="pdf/ua-1")
+    except Exception:  # pragma: no cover - older WeasyPrint / font edge cases
+        return doc.write_pdf()
+
+
 def _format_currency(value):
     try:
         v = float(value or 0)
@@ -105,45 +112,72 @@ def _format_date(value):
 _jinja_env.filters["currency"] = _format_currency
 _jinja_env.filters["fdate"] = _format_date
 
+# Templates may call terms('Invoice'); a direct render without company
+# settings gets the business words. _render() overrides this per call.
+from app.services.terminology import Terms as _Terms  # noqa: E402
+
+_jinja_env.globals["terms"] = _Terms()
+
+
+def _render(template_name: str, company_settings: dict, **context) -> str:
+    """Render a template with the company settings and its vocabulary
+    (``terms('Invoice')`` in a template reads Pledge for a nonprofit)."""
+    from app.services.terminology import terms_for
+
+    template = _jinja_env.get_template(template_name)
+    return template.render(
+        company=company_settings, terms=terms_for(company_settings), **context
+    )
+
 
 def generate_invoice_pdf(invoice, company_settings: dict) -> bytes:
-    template = _jinja_env.get_template("invoice_pdf.html")
-    html_str = template.render(inv=invoice, company=company_settings)
-    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    from app.services.donor_documents import invoice_pdf_context
+
+    return render_pdf(
+        _render(
+            "invoice_pdf.html",
+            company_settings,
+            inv=invoice,
+            **invoice_pdf_context(invoice, company_settings),
+        )
+    )
 
 
 def generate_estimate_pdf(estimate, company_settings: dict) -> bytes:
     template = _jinja_env.get_template("estimate_pdf.html")
     html_str = template.render(est=estimate, company=company_settings)
-    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    return render_pdf(html_str)
 
 
 def generate_statement_pdf(
     customer, invoices, payments, company_settings: dict, as_of_date=None
 ) -> bytes:
-    template = _jinja_env.get_template("statement_pdf.html")
-    html_str = template.render(
+    html_str = _render(
+        "statement_pdf.html",
+        company_settings,
         customer=customer,
         invoices=invoices,
         payments=payments,
-        company=company_settings,
         as_of_date=as_of_date,
     )
-    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    return render_pdf(html_str)
 
 
 def generate_analytics_pdf(
     dashboard: dict, period: dict, company_settings: dict
 ) -> bytes:
     """Render the analytics dashboard snapshot as a printable PDF."""
+    from app.services.terminology import terms_for
+
     template = _jinja_env.get_template("analytics_pdf.html")
     html_str = template.render(
         dashboard=dashboard,
         period=period,
         company=company_settings,
+        terms=terms_for(company_settings),
         company_logo_data_uri=_company_logo_data_uri(company_settings),
     )
-    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    return render_pdf(html_str)
 
 
 def _amount_to_words(amount) -> str:
@@ -218,20 +252,77 @@ def generate_collection_letter_pdf(
 ) -> bytes:
     from datetime import date as _date
 
+    from app.services.terminology import terms_for
+
     template = _jinja_env.get_template("collection_letter.html")
     html_str = template.render(
         customer=customer,
         invoices=invoices,
         company=company_settings,
+        terms=terms_for(company_settings),
         letter_type=letter_type,
         total_due=total_due,
         today=_date.today(),
     )
-    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    return render_pdf(html_str)
+
+
+def generate_acknowledgment_letter_pdf(
+    customer, gift: dict, irs: dict, company_settings: dict, body_html: str, today=None
+) -> bytes:
+    """A donor acknowledgment letter: letterhead, the rendered (sandboxed,
+    autoescaped) body from the editable template, and the gift box with
+    the IRS figures."""
+    from datetime import date as _date
+
+    html_str = _render(
+        "acknowledgment_letter.html",
+        company_settings,
+        customer=customer,
+        gift=gift,
+        irs=irs,
+        body_html=body_html,
+        today=today or _date.today(),
+    )
+    return render_pdf(html_str)
+
+
+def generate_giving_statement_pdf(
+    statements: list, company_settings: dict, year: int
+) -> bytes:
+    """Year-end giving statements, one per donor, a page break between
+    them — one PDF prints as the January mailing."""
+    return render_pdf(
+        _render(
+            "giving_statement_pdf.html",
+            company_settings,
+            statements=statements,
+            year=year,
+        )
+    )
 
 
 def generate_check_pdf(check_data: dict, company_settings: dict) -> bytes:
     template = _jinja_env.get_template("check_pdf.html")
     check_data["amount_words"] = _amount_to_words(check_data.get("amount", 0))
     html_str = template.render(check=check_data, company=company_settings)
-    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    return render_pdf(html_str)
+
+
+def generate_report_pdf(sections: list, company_settings: dict) -> bytes:
+    """Render one or more financial-report sections into a single PDF.
+
+    sections: [{title, period, columns: [...], rows: [{cells, style}]}]
+    Paper size comes from the pdf_paper_size setting (letter | a4) so US
+    and international installs both print natively.
+    """
+    from datetime import date
+
+    template = _jinja_env.get_template("report_pdf.html")
+    html_str = template.render(
+        sections=sections,
+        company=company_settings,
+        paper_size=(company_settings.get("pdf_paper_size") or "letter").lower(),
+        generated_on=date.today().isoformat(),
+    )
+    return render_pdf(html_str)

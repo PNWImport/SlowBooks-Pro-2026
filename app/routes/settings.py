@@ -1,10 +1,11 @@
 # ============================================================================
-# Decompiled from qbw32.exe!CPreferencesDialog  Offset: 0x0023F800
-# Original: tabbed dialog (IDD_PREFERENCES) with 12 tabs. We condensed
+# Settings — QuickBooks 2003 had a 12-tab preferences dialog; we condensed
 # everything into a single key-value store because nobody needs 12 tabs.
 # ============================================================================
 
-from fastapi import APIRouter, Depends
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
@@ -29,9 +30,13 @@ SECRET_KEYS = frozenset(
         "smtp_password",
         "stripe_secret_key",
         "stripe_webhook_secret",
+        "paypal_client_secret",
+        "square_access_token",
+        "square_webhook_signature_key",
         "qbo_client_secret",
         "qbo_access_token",
         "qbo_refresh_token",
+        "simplefin_access_url",
     }
 )
 SECRET_PLACEHOLDER = "********"
@@ -46,6 +51,14 @@ def _redact_secrets(settings: dict) -> dict:
     }
 
 
+# Settings whose value is one of a fixed set. The SPA renders a <select>;
+# this is the server-side twin so an API token cannot store "banana".
+ENUM_SETTINGS = {
+    "company_type": frozenset({"business", "nonprofit"}),
+    "ocr_engine": frozenset({"auto", "tesseract"}),
+}
+
+
 class SettingsUpdate(BaseModel):
     # Accept any subset of DEFAULT_SETTINGS keys. Unknown keys are silently
     # ignored by the handler (same as before). We keep this permissive because
@@ -58,11 +71,74 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 @router.get("")
 def get_settings(db: Session = Depends(get_db)):
+    """Every company setting, secrets redacted.
+
+    Units to know before copying a value onto a document:
+    `default_tax_rate` is a PERCENT string as the user types it ("8.9" =
+    8.9%); a document's `tax_rate` (invoices, bills, estimates, credit
+    memos, sales receipts, purchase orders, recurring templates) is a
+    FRACTION (0.089). Divide by 100 before posting; the API rejects a
+    document `tax_rate` above 1.
+    """
     return _redact_secrets(get_all_settings(db))
 
 
+def _guard_closing_period(request: Request, db: Session, fields: dict):
+    """The closing-date lock is only a control if the principal it constrains
+    cannot switch it off. A token could previously clear closing_date, post
+    into the closed period, and set closing_date_password — while the agent
+    documentation states the override password is "off-limits to agents
+    entirely".
+
+    Scoped deliberately to token principals. A human with a session is the
+    person the lock exists to serve and can still move or clear it; requiring
+    the override password from them would lock out anyone who set one and
+    forgot it. Tokens may still move the date FORWARD (tightening the lock),
+    only loosening is refused.
+    """
+    principal = getattr(getattr(request, "state", None), "token_principal", None)
+    if principal is None:
+        return  # session user — unchanged behaviour
+
+    if "closing_date_password" in fields:
+        raise HTTPException(
+            status_code=403,
+            detail="API tokens cannot set the closing-date override password.",
+        )
+
+    if "closing_date" not in fields:
+        return
+
+    def _parse(v):
+        if not v:
+            return None
+        try:
+            return date.fromisoformat(str(v))
+        except ValueError:
+            return None
+
+    from app.services.closing_date import get_closing_date
+
+    current = get_closing_date(db)
+    if current is None:
+        return  # no lock set yet — nothing to loosen
+
+    incoming = _parse(fields.get("closing_date"))
+    if incoming is None or incoming < current:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"API tokens cannot clear or roll back the closing date "
+                f"(currently {current.isoformat()}). Moving it forward is "
+                f"allowed; loosening it requires a signed-in user."
+            ),
+        )
+
+
 @router.put("")
-def update_settings(data: SettingsUpdate, db: Session = Depends(get_db)):
+def update_settings(
+    data: SettingsUpdate, request: Request, db: Session = Depends(get_db)
+):
     # model_dump returns extras plus any declared fields. Still whitelisted
     # against DEFAULT_SETTINGS so unknown keys are silently dropped.
     #
@@ -70,13 +146,47 @@ def update_settings(data: SettingsUpdate, db: Session = Depends(get_db)):
     # skip the update. Otherwise the UI would round-trip the placeholder
     # back into storage and silently overwrite the real secret when the
     # operator edits any other setting without re-typing the password.
+    _guard_closing_period(
+        request,
+        db,
+        {k: v for k, v in data.model_dump().items() if k in DEFAULT_SETTINGS},
+    )
+    incoming = data.model_dump()
+    if incoming.get("company_name"):
+        from app.services.company_service import (
+            _current_company_file,
+            company_name_taken_by,
+        )
+
+        other = company_name_taken_by(
+            incoming["company_name"], exclude_file=_current_company_file()
+        )
+        if other:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Another company file ({other}) is already named "
+                    f"'{incoming['company_name'].strip()}'. Choose a name that "
+                    "tells the two apart."
+                ),
+            )
     for key, value in data.model_dump().items():
         if key not in DEFAULT_SETTINGS:
             continue
+        allowed = ENUM_SETTINGS.get(key)
+        if allowed is not None and value not in allowed:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{key} must be one of: {', '.join(sorted(allowed))}",
+            )
         if key in SECRET_KEYS and value == SECRET_PLACEHOLDER:
             continue
         set_setting(db, key, str(value) if value is not None else "")
     db.commit()
+    if "company_name" in incoming:
+        from app.services.company_service import sync_manifest_name
+
+        sync_manifest_name(incoming.get("company_name"))
     return _redact_secrets(get_all_settings(db))
 
 
@@ -85,20 +195,25 @@ def test_email(db: Session = Depends(get_db)):
     """Feature 8: Send a test email to verify SMTP settings."""
     settings = get_all_settings(db)
     if not settings.get("smtp_host"):
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=400, detail="SMTP not configured")
     try:
         from app.services.email_service import send_email
 
-        send_email(
+        sent = send_email(
+            db=db,
             to_email=settings.get("smtp_from_email") or settings.get("smtp_user", ""),
             subject="Slowbooks Pro 2026 — Test Email",
             html_body="<p>This is a test email from Slowbooks Pro 2026. SMTP is configured correctly.</p>",
-            settings=settings,
+            entity_type="settings_test",
         )
+        if not sent:
+            raise HTTPException(
+                status_code=502,
+                detail="Test email failed to send. See the email log for the reason.",
+            )
         return {"status": "sent"}
+    except HTTPException:
+        # Don't let the catch-all below rewrite our own 502 into a 500.
+        raise
     except Exception as e:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=500, detail=f"Email failed: {str(e)}")

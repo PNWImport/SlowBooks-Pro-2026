@@ -1,16 +1,13 @@
 # ============================================================================
-# Decompiled from qbw32.exe!CEstimateManager  Offset: 0x00194000
-# Original Btrieve table: ESTIMATE.DAT (record size 0x0300)
-# Estimates were basically invoices with a different status enum and a
-# "ConvertToInvoice" button. In the disassembly, CEstimate literally
-# inherited from CInvoice and just overrode GetTxnType() to return
-# TXN_ESTIMATE (0x0014) instead of TXN_INVOICE (0x0007). Object-oriented
-# programming in its laziest and most beautiful form.
+# Estimates — header + line items; convertible to invoices.
+# Estimates are basically invoices with a different status enum and a
+# "Convert to Invoice" button.
 # ============================================================================
 
 import enum
 
 from sqlalchemy import (
+    Boolean,
     Column,
     Integer,
     String,
@@ -63,6 +60,11 @@ class Estimate(Base):
         Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True
     )
 
+    # Class tracking dimension (QB-style); NULL groups with Uncategorized
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
+    # Job-costing dimension (QB "Customer:Job"); NULL = no job
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -91,6 +93,14 @@ class EstimateLine(Base):
     rate = Column(Numeric(12, 2), default=0)
     amount = Column(Numeric(12, 2), default=0)
     class_name = Column(String(100), nullable=True)
+    # Per-line job; NULL falls back to the document header
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+    cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)
+    unit_cost = Column(Numeric(12, 4), nullable=True)  # cost side; rate is revenue
+    # Per-line sales tax (default: the item's flag, or taxable). A customer-
+    # owned-device repair is labor with no tax; the part on the same invoice
+    # is taxed.
+    is_taxable = Column(Boolean, nullable=False, default=True)
     line_order = Column(Integer, default=0)
 
     estimate = relationship("Estimate", back_populates="lines")

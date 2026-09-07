@@ -14,20 +14,14 @@
 # (1 hr per 40 hrs worked, carryover capped at 40 hrs) but verify current law.
 # ============================================================================
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
-CENT = Decimal("0.01")
+from app.services.accounting import _q
 
 # WA paid-sick-leave mandate: 1 hour accrued per 40 hours worked.
 WA_SICK_ACCRUAL_RATE: Decimal = Decimal("0.025")  # 1 / 40
 # WA caps the unused paid-sick balance carried into the new year at 40 hours.
 WA_SICK_CARRYOVER_CAP: Decimal = Decimal("40")
-
-
-def _q(value) -> Decimal:
-    if not isinstance(value, Decimal):
-        value = Decimal(str(value))
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 def _non_negative(value) -> Decimal:
@@ -118,6 +112,10 @@ def run_year_end_carryover(db, target_year: int) -> list[dict]:
 
     from app.models.pto import PTOAccrual
 
+    from datetime import date as _date
+
+    from app.services import pto_liability
+
     accruals = db.query(PTOAccrual).options(joinedload(PTOAccrual.policy)).all()
     changes = []
     for acc in accruals:
@@ -126,6 +124,17 @@ def run_year_end_carryover(db, target_year: int) -> list[dict]:
         old_used = _non_negative(acc.used_ytd)
         cap = acc.policy.max_carryover if acc.policy else None
         new_balance = apply_carryover(old_balance, cap)
+
+        # forfeited hours take their dollars off the liability
+        if acc.policy and old_balance > new_balance and acc.employee is not None:
+            pto_liability.forfeit_dollars(
+                db,
+                acc.policy,
+                acc,
+                acc.employee,
+                old_balance - new_balance,
+                _date(target_year, 12, 31),
+            )
 
         acc.balance = new_balance
         acc.accrued_ytd = Decimal("0")

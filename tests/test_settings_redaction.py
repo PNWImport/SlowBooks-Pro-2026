@@ -77,3 +77,33 @@ def test_non_secret_settings_pass_through(client):
     got = client.get("/api/settings").json()
     assert got["company_name"] == "Acme"
     assert got["invoice_prefix"] == "INV-"
+
+
+def test_paypal_client_secret_is_masked_on_get(client):
+    _set_settings(client, paypal_client_secret="pp-secret-REAL")
+    got = client.get("/api/settings").json()
+    assert got["paypal_client_secret"] == SECRET_PLACEHOLDER
+
+
+def test_paypal_placeholder_roundtrip_preserves_secret(client, db_session):
+    from app.services.settings_service import get_setting_raw
+
+    _set_settings(client, paypal_client_secret="pp-secret-REAL")
+    _set_settings(client, paypal_client_secret=SECRET_PLACEHOLDER)
+    assert get_setting_raw(db_session, "paypal_client_secret") == "pp-secret-REAL"
+
+
+def test_square_secrets_are_masked_on_get(client):
+    _set_settings(
+        client,
+        square_access_token="sq-token-REAL",
+        square_webhook_signature_key="sq-sig-REAL",
+    )
+    got = client.get("/api/settings").json()
+    assert got["square_access_token"] == SECRET_PLACEHOLDER
+    assert got["square_webhook_signature_key"] == SECRET_PLACEHOLDER
+    # The notification URL is config, not a secret — operators must be
+    # able to read it back to confirm it matches the Square dashboard.
+    assert "square_notification_url" not in {
+        k for k, v in got.items() if v == SECRET_PLACEHOLDER
+    }

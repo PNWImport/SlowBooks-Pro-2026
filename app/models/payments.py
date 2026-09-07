@@ -1,10 +1,5 @@
 # ============================================================================
-# Decompiled from qbw32.exe!CReceivePayment  Offset: 0x001A2100
-# Original Btrieve table: RCVPMT.DAT + RCVPMT_ALLOC.DAT
-# The payment allocation system was one of the more tangled parts of the
-# disassembly — Intuit used a custom linked-list structure ("CQBAllocList")
-# to track which invoices a single payment covered. The original could handle
-# max 100 allocations per payment (hard limit in CQBAllocList::AddAlloc).
+# Payments and their allocations across invoices.
 # ============================================================================
 
 from sqlalchemy import (
@@ -40,6 +35,10 @@ class Payment(Base):
     notes = Column(Text, nullable=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
     is_voided = Column(Boolean, default=False)
+
+    # Multi-currency: document currency + rate it was booked at (GL is home)
+    currency = Column(String(3), nullable=True)
+    exchange_rate = Column(Numeric(18, 8), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

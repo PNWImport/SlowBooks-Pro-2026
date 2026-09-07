@@ -3,10 +3,12 @@
 # Feature 2: Schedule automatic invoice generation
 # ============================================================================
 
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import date
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.routes.invoices.helpers import resolve_line_taxable
 from app.models.recurring import RecurringInvoice, RecurringInvoiceLine
 from app.models.contacts import Customer
 from app.schemas.recurring import RecurringCreate, RecurringUpdate, RecurringResponse
@@ -56,10 +58,13 @@ def create_recurring(data: RecurringCreate, db: Session = Depends(get_db)):
         terms=data.terms,
         tax_rate=data.tax_rate,
         notes=data.notes,
+        class_id=data.class_id,
+        job_id=data.job_id,
     )
     db.add(rec)
     db.flush()
 
+    resolve_line_taxable(db, data.lines, customer)
     for i, line_data in enumerate(data.lines):
         db.add(
             RecurringInvoiceLine(
@@ -68,6 +73,9 @@ def create_recurring(data: RecurringCreate, db: Session = Depends(get_db)):
                 description=line_data.description,
                 quantity=line_data.quantity,
                 rate=line_data.rate,
+                is_taxable=(
+                    line_data.is_taxable if line_data.is_taxable is not None else True
+                ),
                 line_order=line_data.line_order or i,
             )
         )
@@ -92,6 +100,7 @@ def update_recurring(rec_id: int, data: RecurringUpdate, db: Session = Depends(g
         db.query(RecurringInvoiceLine).filter(
             RecurringInvoiceLine.recurring_invoice_id == rec_id
         ).delete()
+        resolve_line_taxable(db, data.lines, rec.customer)
         for i, line_data in enumerate(data.lines):
             db.add(
                 RecurringInvoiceLine(
@@ -100,6 +109,11 @@ def update_recurring(rec_id: int, data: RecurringUpdate, db: Session = Depends(g
                     description=line_data.description,
                     quantity=line_data.quantity,
                     rate=line_data.rate,
+                    is_taxable=(
+                        line_data.is_taxable
+                        if line_data.is_taxable is not None
+                        else True
+                    ),
                     line_order=line_data.line_order or i,
                 )
             )
@@ -123,7 +137,9 @@ def delete_recurring(rec_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/generate")
-def generate_now(db: Session = Depends(get_db)):
-    """Manually trigger generation of all due recurring invoices."""
-    created_ids = generate_due_invoices(db)
+def generate_now(as_of: date = Query(default=None), db: Session = Depends(get_db)):
+    """Manually trigger generation of all due recurring invoices — one
+    installment per template per call. `as_of` (default today) lets a
+    catch-up or a test run generate a past installment deterministically."""
+    created_ids = generate_due_invoices(db, as_of)
     return {"invoices_created": len(created_ids), "invoice_ids": created_ids}
