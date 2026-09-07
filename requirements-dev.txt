@@ -12,3 +12,22 @@ pytest-cov>=5.0.0
 # this tree byte-identically to 24.10, so the gate did not move.
 black>=26.3.1,<27
 ruff>=0.6,<0.7
+
+# Security linter. Not in CI (ruff already gates style/correctness); run it
+# on demand:  python -m bandit -r app/ -ll
+#
+# On app/ it reports 0 HIGH and 4 MEDIUM, all four verified benign — do not
+# re-triage them from scratch:
+#   B104 config.py APP_HOST="0.0.0.0"   binding all interfaces is required
+#                                       in a container; Docker/k8s set it
+#   B104 ai_service.py "0.0.0.0"        the string sits INSIDE
+#                                       _BLOCKED_WORKER_HOSTS, the SSRF
+#                                       blocklist — bandit flagged the
+#                                       defense as the vulnerability
+#   B608 blind_index.py / encryption.py  f-string SQL interpolating table and
+#                                       column IDENTIFIERS from model
+#                                       metadata; SQL cannot parameterize
+#                                       identifiers, and no user input reaches
+#                                       them
+# B101 (assert_used) fires ~2200 times in tests; that is the pytest idiom.
+bandit>=1.9,<2
