@@ -111,6 +111,11 @@ def suta_rate_for(
         return None
 
     engine = _REGISTRY.get(code)
-    if engine is not None and getattr(engine, "suta_default_rate", 0) > 0:
-        return engine.suta_default_rate
+    if engine is None:
+        return None
+    # None = the state ships no published rate (the dedicated WA/CA/NY/OR
+    # engines, for one), which is distinct from a published rate of zero.
+    published = getattr(engine, "suta_default_rate", None)
+    if published is not None and published > 0:
+        return published
     return None

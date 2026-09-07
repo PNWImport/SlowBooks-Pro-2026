@@ -55,6 +55,7 @@ class TableEngine(StateEngine):
         self.spec = spec
         self.state_code = spec.code
         self.suta_wage_base = spec.suta_wage_base
+        self.suta_default_rate = spec.suta_default_rate
 
     def _status(self, filing_status: str) -> str:
         return (

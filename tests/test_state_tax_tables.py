@@ -127,43 +127,49 @@ def test_nonpositive_wages_produce_empty_result():
 
 
 # --- arithmetic: flat state (Illinois) --------------------------------------
-# IL: 4.95% flat, $2,850 annual exemption (single).
-# Annual taxable 2000 * 26 = 52,000; less 2,850 = 49,150.
-# 49,150 * 0.0495 = 2,432.925 annual; / 26 = 93.5740... -> 93.57
+# IL is a flat 4.95% with a $2,925 annual allowance (no standard deduction,
+# no base exemption). _calc passes no allowances, so nothing is sheltered:
+#   annual 2,000 x 26 = 52,000; x 0.0495 = 2,574.00; / 26 = 99.00
 
 
-def test_il_flat_rate_with_exemption():
-    result = _calc(get_engine("IL"))
-    assert result.income_tax == Decimal("93.57")
+def test_il_flat_rate():
+    assert _calc(get_engine("IL")).income_tax == Decimal("99.00")
 
 
-def test_il_married_exemption_is_double():
-    single = _calc(get_engine("IL"), filing_status="single").income_tax
-    married = _calc(get_engine("IL"), filing_status="married").income_tax
-    expected_gap = Decimal("2850") * Decimal("0.0495") / 26
-    assert abs((single - married) - expected_gap) <= Decimal("0.01")
+def test_il_allowance_shelters_wages():
+    """Each state W-4 allowance takes $2,925 off annual taxable wages."""
+    none = _calc(get_engine("IL")).income_tax
+    one = _calc(get_engine("IL"), state_allowances=1).income_tax
+    # 2,925 sheltered at 4.95%, spread over 26 periods. Both figures round
+    # to cents independently, so allow a cent of drift on the difference.
+    expected_gap = Decimal("2925") * Decimal("0.0495") / 26
+    assert abs((none - one) - expected_gap) <= Decimal("0.01")
 
 
-def test_il_wage_under_exemption_yields_zero():
-    result = _calc(get_engine("IL"), gross=Decimal("100"), taxable=Decimal("100"))
+def test_il_wage_under_allowance_yields_zero():
+    result = _calc(
+        get_engine("IL"),
+        gross=Decimal("100"),
+        taxable=Decimal("100"),
+        state_allowances=1,
+    )
     assert result.income_tax == 0
 
 
 # --- arithmetic: bracket state (Virginia) -----------------------------------
 # VA brackets: 2% to 3,000; 3% to 5,000; 5% to 17,000; 5.75% above.
-# Standard deduction 8,500 + exemption 930 = 9,430 sheltered.
-# Annual 52,000 - 9,430 = 42,570 taxable.
-#   3,000 @ 2%   =    60.00
-#   2,000 @ 3%   =    60.00
-#  12,000 @ 5%   =   600.00
-#  25,570 @ 5.75%= 1,470.275
-#                 ----------
-#                  2,190.275 annual; / 26 = 84.2413... -> 84.24
+# Standard deduction 8,750 (single); no allowances passed, so nothing more.
+# Annual 52,000 - 8,750 = 43,250 taxable.
+#    3,000 @ 2%    =    60.000
+#    2,000 @ 3%    =    60.000
+#   12,000 @ 5%    =   600.000
+#   26,250 @ 5.75% = 1,509.375
+#                   ----------
+#                    2,229.375 annual; / 26 = 85.7452... -> 85.75
 
 
 def test_va_progressive_brackets():
-    result = _calc(get_engine("VA"))
-    assert result.income_tax == Decimal("84.24")
+    assert _calc(get_engine("VA")).income_tax == Decimal("85.75")
 
 
 def test_va_top_bracket_is_open_ended():
@@ -178,36 +184,60 @@ def test_unknown_filing_status_defaults_to_single():
     assert default == single
 
 
-def test_bracket_state_without_married_schedule_reuses_single():
-    assert _calc(get_engine("VA"), filing_status="married").income_tax > 0
+def test_bracket_state_married_schedule_shelters_more():
+    single = _calc(get_engine("VA"), filing_status="single").income_tax
+    married = _calc(get_engine("VA"), filing_status="married").income_tax
+    assert married > 0
+    assert married < single
 
 
 # --- arithmetic: premiums (New Jersey) --------------------------------------
-# NJ SDI 0.23% and FLI 0.09%, both capped at $165,400 of wages.
+# Three employee-side items, each with its own annual wage base:
+#   UI + workforce  0.425%  capped at  44,800
+#   disability      0.19%   capped at 171,100
+#   family leave    0.23%   capped at 171,100
+# On a $2,000 check with no YTD: 8.50 + 3.80 + 4.60 = 16.90.
+
+NJ_UI = "NJ unemployment + workforce (employee)"
+NJ_DI = "NJ disability insurance (employee)"
+NJ_FLI = "NJ family leave insurance"
 
 
 def test_nj_premiums_itemized_on_employee_side():
     result = _calc(get_engine("NJ"))
-    assert result.detail["NJ SDI"] == Decimal("4.60")
-    assert result.detail["NJ FLI"] == Decimal("1.80")
-    assert result.employee_other == Decimal("6.40")
+    assert result.detail[NJ_UI] == Decimal("8.50")
+    assert result.detail[NJ_DI] == Decimal("3.80")
+    assert result.detail[NJ_FLI] == Decimal("4.60")
+    assert result.employee_other == Decimal("16.90")
 
 
-def test_nj_premiums_stop_at_the_wage_base():
-    result = _calc(get_engine("NJ"), ytd_gross=Decimal("165400"))
+def test_nj_premiums_stop_at_the_highest_wage_base():
+    """Past 171,100 of YTD wages every NJ employee item is capped out."""
+    result = _calc(get_engine("NJ"), ytd_gross=Decimal("171100"))
     assert result.employee_other == 0
 
 
 def test_nj_premium_prorates_across_the_wage_base():
-    result = _calc(get_engine("NJ"), ytd_gross=Decimal("164400"))
-    assert result.detail["NJ SDI"] == Decimal("2.30")
+    """Only the slice of the check below the cap is premium-bearing."""
+    result = _calc(get_engine("NJ"), ytd_gross=Decimal("170100"))
+    # $1,000 of the $2,000 check remains under the 171,100 cap.
+    assert result.detail[NJ_DI] == Decimal("1.90")
+    # UI capped out back at 44,800, so it contributes nothing here.
+    assert NJ_UI not in result.detail
+
+
+def test_nj_lower_wage_base_caps_independently():
+    """The UI item stops at 44,800 while disability/FLI keep collecting."""
+    result = _calc(get_engine("NJ"), ytd_gross=Decimal("50000"))
+    assert NJ_UI not in result.detail
+    assert result.detail[NJ_DI] == Decimal("3.80")
 
 
 def test_colorado_famli_splits_employee_and_employer():
     result = _calc(get_engine("CO"))
-    assert result.detail["CO FAMLI (employee)"] == Decimal("9.00")
-    assert result.detail["CO FAMLI (employer)"] == Decimal("9.00")
-    assert result.employer_other == Decimal("9.00")
+    assert result.detail["CO FAMLI (employee)"] == Decimal("8.80")
+    assert result.detail["CO FAMLI (employer)"] == Decimal("8.80")
+    assert result.employer_other == Decimal("8.80")
 
 
 # --- SUTA resolution --------------------------------------------------------
@@ -218,6 +248,7 @@ def test_suta_rate_prefers_configured_experience_rate():
 
 
 def test_suta_rate_falls_back_to_state_new_employer_rate():
+    """Shipped in tables.py as _NEW_EMPLOYER_SUTA."""
     assert suta_rate_for("IL", {}) == Decimal("0.0395")
 
 

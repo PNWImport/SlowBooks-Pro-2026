@@ -35,6 +35,10 @@ class StateEngine:
     suta_wage_base: Decimal = Decimal(
         "9000"
     )  # employer SUTA taxable wage base for this state
+    # Published new-employer SUTA rate, where the state ships one. None means
+    # nothing is published for this state, so callers fall back to the
+    # operator's configured rate rather than guessing one.
+    suta_default_rate: Decimal | None = None
 
     def calculate(
         self,

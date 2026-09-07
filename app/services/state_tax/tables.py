@@ -28,7 +28,7 @@
 # PA municipalities, MI cities, KY/AL occupational taxes ...).
 # ============================================================================
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 
 
@@ -58,6 +58,10 @@ class StateSpec:
     employee_items: tuple = ()
     employer_items: tuple = ()
     default_rate: Decimal | None = None  # employee-elected % states (AZ)
+    # Published new-employer SUTA rate. The operator's own experience
+    # rate always wins (see suta_rate_for); this is the stand-in for a
+    # state they have not configured yet.
+    suta_default_rate: Decimal | None = None
     year: str = "2025"
     source: str = ""
     notes: str = ""
@@ -944,3 +948,70 @@ DEDICATED = {
 }
 
 ALL_CODES = sorted(set(STATES) | set(DEDICATED))
+
+
+# ---------------------------------------------------------------------------
+# Published new-employer SUTA rates, per state.
+#
+# These were carried in a parallel set of JSON tables that nothing loaded
+# after the engines were consolidated here, so suta_rate_for() could never
+# resolve a published rate and every state silently fell back to the single
+# global SUTA_RATE — per-state SUTA was configured but inert. Folding them
+# in here keeps one source of truth for state data.
+#
+# An operator's own experience rate still outranks these; see suta_rate_for.
+# Verify against the state's current rate notice before filing.
+# ---------------------------------------------------------------------------
+_NEW_EMPLOYER_SUTA: dict[str, str] = {
+    "AK": "0.0227",
+    "AL": "0.027",
+    "AR": "0.021",
+    "AZ": "0.02",
+    "CO": "0.017",
+    "CT": "0.0295",
+    "DC": "0.027",
+    "DE": "0.018",
+    "FL": "0.027",
+    "GA": "0.027",
+    "HI": "0.04",
+    "IA": "0.01",
+    "ID": "0.01",
+    "IL": "0.0395",
+    "IN": "0.025",
+    "KS": "0.027",
+    "KY": "0.027",
+    "LA": "0.0209",
+    "MA": "0.0242",
+    "MD": "0.026",
+    "ME": "0.0206",
+    "MI": "0.027",
+    "MN": "0.01",
+    "MO": "0.0251",
+    "MS": "0.012",
+    "MT": "0.0113",
+    "NC": "0.01",
+    "ND": "0.0102",
+    "NE": "0.0125",
+    "NH": "0.027",
+    "NJ": "0.028",
+    "NM": "0.01",
+    "NV": "0.0295",
+    "OH": "0.027",
+    "OK": "0.015",
+    "PA": "0.03822",
+    "RI": "0.0102",
+    "SC": "0.0045",
+    "SD": "0.012",
+    "TN": "0.027",
+    "TX": "0.027",
+    "UT": "0.012",
+    "VA": "0.0251",
+    "VT": "0.01",
+    "WI": "0.0305",
+    "WV": "0.027",
+    "WY": "0.0287",
+}
+
+for _c, _r in _NEW_EMPLOYER_SUTA.items():
+    if _c in STATES:
+        STATES[_c] = replace(STATES[_c], suta_default_rate=D(_r))
