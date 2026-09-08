@@ -51,14 +51,34 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
-**2.9.4 — Unreleased:** Server/session hardening, a clarified Docker quick start,
-safer state transitions, bounded high-volume lists, and UI refresh fixes.
+**2.9.4 — Unreleased branch updates** (not yet in the installer downloads):
 
-**On this branch — expanded payroll, HR, and audit tools.** Contractor pay runs,
-pay schedules, work locations, retro pay, benefits coverage, workers' comp,
-and additional reports, plus stronger PII protection and signed audit checkpoints.
-See the [payroll/HR guide](docs/payroll-hr-module.md) and
-[remaining release checks](docs/validation.md).
+- **Payroll and HR:** expanded contractor runs, schedules, locations, retro pay,
+  benefits and workers' comp; employee portal time submission, corrected deposit
+  calendars, bank-holiday/blackout handling, and reliable save refreshes.
+- **Accounting integrity:** fix lost balances under concurrent journal writes,
+  guard repeated processing/reversals, prevent document-audit chain forks, and
+  commit signatures together with their audit records.
+- **Security and operations:** stronger session checks, private uploads, PII
+  redaction and signed audit checkpoints; hardened Docker/server defaults,
+  preserved encryption keys, and verified backup/restore and migration paths.
+- **Performance:** bounded transaction lists and fewer database queries; a
+  synthetic 50,000-invoice/150,000-line workload completed 192 page reads without
+  errors. This is a bounded test, not enterprise capacity certification.
+
+**Local validation — September 8, 2026:** 3,232 tests passed, 10 skipped,
+82.35% line coverage, with unchanged source fingerprints. All 42 OCR tests
+passed separately in the production image; formatting, lint, frontend checks,
+and Docker/API smoke checks passed. See the
+[validation evidence and limitations](docs/final-validation-2026-09-07.md).
+
+**Still required before public release:** accessibility remediation and
+keyboard/screen-reader testing, deployment-specific capacity acceptance,
+payroll jurisdiction verification, native signed-platform checks, live-provider
+acceptance, and hosted CI/code-owner review. Existing installs should follow the
+[concurrency-fix upgrade checks](docs/operations.md#concurrency-fix-upgrade-checks);
+these fixes do not repair historical balance drift or audit-chain damage.
+Feature details: [payroll/HR guide](docs/payroll-hr-module.md).
 
 **v2.9 — Nonprofit mode.** One switch in Settings and a church, a club, a
 PTO or a community arts group sees its own words — donors, pledges,
