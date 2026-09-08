@@ -5,6 +5,7 @@
 
 import re
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
@@ -142,8 +143,9 @@ async def upload_attachment(
     # Build and verify paths against the upload base BEFORE any filesystem op.
     upload_dir = _resolve_within(UPLOAD_BASE, type_dir, str(entity_id))
     upload_dir.mkdir(parents=True, exist_ok=True)
-    file_path = _resolve_within(upload_dir, safe_filename)
-    file_path.write_bytes(content)
+    file_path = _resolve_within(upload_dir, f"{uuid4().hex}{extension}")
+    with file_path.open("xb") as uploaded:
+        uploaded.write(content)
 
     attachment = Attachment(
         entity_type=entity_type,
@@ -157,18 +159,6 @@ async def upload_attachment(
     db.commit()
     db.refresh(attachment)
     return attachment
-
-
-@router.get("/{entity_type}/{entity_id}", response_model=list[AttachmentResponse])
-def list_attachments(entity_type: str, entity_id: int, db: Session = Depends(get_db)):
-    return (
-        db.query(Attachment)
-        .filter(
-            Attachment.entity_type == entity_type, Attachment.entity_id == entity_id
-        )
-        .order_by(Attachment.uploaded_at.desc())
-        .all()
-    )
 
 
 @router.get("/download/{attachment_id}")
@@ -185,6 +175,18 @@ def download_attachment(attachment_id: int, db: Session = Depends(get_db)):
         str(file_path),
         filename=attachment.filename,
         media_type=attachment.mime_type or "application/octet-stream",
+    )
+
+
+@router.get("/{entity_type}/{entity_id}", response_model=list[AttachmentResponse])
+def list_attachments(entity_type: str, entity_id: int, db: Session = Depends(get_db)):
+    return (
+        db.query(Attachment)
+        .filter(
+            Attachment.entity_type == entity_type, Attachment.entity_id == entity_id
+        )
+        .order_by(Attachment.uploaded_at.desc())
+        .all()
     )
 
 

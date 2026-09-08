@@ -187,6 +187,80 @@ def test_terminate_full_flow(client, db_session, seed_accounts):
     assert run["stubs"][0]["federal_tax"] == 132.00  # flat 22%
 
 
+def test_termination_ends_open_benefit_coverage_on_selected_date(client, seed_accounts):
+    emp = _create_employee(client, work_state="WA")
+    plan = client.post(
+        "/api/benefit-coverage/plans",
+        json={"name": "Termination Medical", "kind": "medical"},
+    ).json()
+    enrollment = client.post(
+        "/api/benefit-coverage/enrollments",
+        json={
+            "employee_id": emp["id"],
+            "plan_id": plan["id"],
+            "coverage_start": "2026-01-01",
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/employees/{emp['id']}/terminate",
+        json={
+            "termination_date": "2026-06-10",
+            "benefit_coverage_end": "2026-06-30",
+            "reason": "voluntary",
+            "payout_pto": False,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["benefit_coverage_end"] == "2026-06-30"
+    assert response.json()["benefit_enrollments_ended"] == 1
+    assert response.json()["future_benefit_enrollment_ids"] == []
+    rows = client.get(
+        f"/api/benefit-coverage/enrollments?employee_id={emp['id']}"
+    ).json()
+    ended = next(row for row in rows if row["id"] == enrollment["id"])
+    assert ended["coverage_end"] == "2026-06-30"
+    assert ended["status"] == "terminated"
+
+
+def test_termination_surfaces_future_benefit_enrollment_for_review(
+    client, seed_accounts
+):
+    emp = _create_employee(client, work_state="WA")
+    plan = client.post(
+        "/api/benefit-coverage/plans",
+        json={"name": "Future Termination Medical", "kind": "medical"},
+    ).json()
+    enrollment = client.post(
+        "/api/benefit-coverage/enrollments",
+        json={
+            "employee_id": emp["id"],
+            "plan_id": plan["id"],
+            "coverage_start": "2026-08-01",
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/employees/{emp['id']}/terminate",
+        json={
+            "termination_date": "2026-06-10",
+            "reason": "voluntary",
+            "payout_pto": False,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["benefit_enrollments_ended"] == 0
+    assert response.json()["future_benefit_enrollment_ids"] == [enrollment["id"]]
+    rows = client.get(
+        f"/api/benefit-coverage/enrollments?employee_id={emp['id']}"
+    ).json()
+    future = next(row for row in rows if row["id"] == enrollment["id"])
+    assert future["coverage_end"] is None
+    assert future["status"] == "active"
+
+
 def test_terminate_is_idempotent_and_validates(client, seed_accounts):
     emp = _create_employee(client)
     r = client.post(

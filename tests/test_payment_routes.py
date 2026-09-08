@@ -50,6 +50,27 @@ def test_public_checkout_not_blocked_by_session_auth(unauthed_client, invoice):
     assert "not enabled" in resp.json()["detail"].lower()
 
 
+def test_payment_cannot_settle_another_customers_invoice(client, invoice, db_session):
+    from app.models.payments import Payment
+
+    other = Customer(name="Different customer", is_active=True)
+    db_session.add(other)
+    db_session.commit()
+    response = client.post(
+        "/api/payments",
+        json={
+            "customer_id": other.id,
+            "date": "2026-07-01",
+            "amount": "100.00",
+            "allocations": [{"invoice_id": invoice.id, "amount": "100.00"}],
+        },
+    )
+    assert response.status_code == 400, response.text
+    db_session.refresh(invoice)
+    assert invoice.balance_due == Decimal("100.00")
+    assert db_session.query(Payment).count() == 0
+
+
 def test_unknown_provider_is_400_not_500(unauthed_client, invoice):
     resp = unauthed_client.post(
         "/api/payments/nonexistent/create-checkout-session",

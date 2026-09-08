@@ -44,12 +44,21 @@ source code or binaries were available, decompiled, or used.
 ## Accessibility
 
 SlowBooks Pro strives to conform to WCAG 2.1 AA: labelled controls,
-real dialogs, live notifications, AA contrast in both themes, and every
-generated PDF tagged (PDF/UA-1) so tax forms read to a screen reader.
+real dialogs, live notifications, and contrast improvements in both themes.
+PDF generation requests PDF/UA-1 tagging; accessibility verification is ongoing.
 Details, known gaps and how to report a barrier:
 [docs/accessibility.md](docs/accessibility.md).
 
 ## What's New
+
+**2.9.4 — Unreleased:** Server/session hardening, a clarified Docker quick start,
+safer state transitions, bounded high-volume lists, and UI refresh fixes.
+
+**On this branch — expanded payroll, HR, and audit tools.** Contractor pay runs,
+pay schedules, work locations, retro pay, benefits coverage, workers' comp,
+and additional reports, plus stronger PII protection and signed audit checkpoints.
+See the [payroll/HR guide](docs/payroll-hr-module.md) and
+[remaining release checks](docs/validation.md).
 
 **v2.9 — Nonprofit mode.** One switch in Settings and a church, a club, a
 PTO or a community arts group sees its own words — donors, pledges,
@@ -130,7 +139,8 @@ Not a watermark — a verification trail.
 **Bring-your-own-AI, including your own gateway.** AI Insights runs
 against any of eight providers (xAI Grok, Groq, Cloudflare Workers AI,
 Anthropic Claude, OpenAI, Google Gemini, a Cloudflare Worker you host
-yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
+yourself, or a public-HTTPS OpenAI-compatible Chat Completions endpoint) — keys encrypted at rest with versioned, rotatable ciphertext.
+See [provider setup and compatibility limits](docs/ai-providers.md).
 And the whole app is agent-operable through its local API: see the
 [AI setup guide](https://www.slowbookspro.com/ai/).
 
@@ -222,6 +232,13 @@ Docker remains the path for Linux servers and Intel Macs:
 ```bash
 git clone https://github.com/VonHoltenCodes/SlowBooks-Pro-2026.git
 cd SlowBooks-Pro-2026
+cp .env.example .env
+# Set PAYROLL_ENCRYPTION_SECRET and SESSION_SECRET_KEY in .env to separate
+# values generated with: openssl rand -hex 32. Generate SETTINGS_ENCRYPTION_KEY
+# with the Docker command documented in .env.example. Generate the audit signing
+# key there too; keep all four stable.
+# For this localhost-only Compose setup, set FORCE_HTTPS=false in .env.
+# Keep BIND_ADDR=127.0.0.1; network-facing deployments require TLS.
 docker compose up
 ```
 
@@ -238,6 +255,8 @@ Production checklist: **[docs/release-checklist.md](docs/release-checklist.md)**
 ---
 
 ## Documentation
+
+Maintainers: [validation results and remaining release checks](docs/validation.md).
 
 | Doc | Covers |
 |-----|--------|

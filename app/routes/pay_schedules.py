@@ -6,6 +6,8 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -18,19 +20,21 @@ router = APIRouter(prefix="/api/pay-schedules", tags=["pay-schedules"])
 
 
 class PayScheduleCreate(StrictModel):
-    name: str
+    name: str = Field(min_length=1, max_length=100)
     frequency: str
     anchor_pay_date: date
-    submission_lead_days: int = 2
+    submission_lead_days: int = Field(default=2, ge=0, le=365)
     weekend_shift: str = "previous_business_day"
+    blackout_dates: list[date] = Field(default_factory=list, max_length=366)
 
 
 class PayScheduleUpdate(StrictModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     frequency: Optional[str] = None
     anchor_pay_date: Optional[date] = None
-    submission_lead_days: Optional[int] = None
+    submission_lead_days: Optional[int] = Field(default=None, ge=0, le=365)
     weekend_shift: Optional[str] = None
+    blackout_dates: Optional[list[date]] = Field(default=None, max_length=366)
     is_active: Optional[bool] = None
 
 
@@ -42,6 +46,10 @@ def _response(s: PaySchedule) -> dict:
         "anchor_pay_date": s.anchor_pay_date.isoformat(),
         "submission_lead_days": s.submission_lead_days,
         "weekend_shift": s.weekend_shift.value if s.weekend_shift else None,
+        "blackout_dates": sorted(
+            value.isoformat() if isinstance(value, date) else value
+            for value in (s.blackout_dates or [])
+        ),
         "is_active": bool(s.is_active),
     }
 
@@ -65,6 +73,17 @@ def _validate(frequency: str | None, weekend_shift: str | None):
     return freq, shift
 
 
+def _serialize_blackouts(values: list[date]) -> list[str]:
+    return sorted({value.isoformat() for value in values})
+
+
+def _clean_name(value: str) -> str:
+    name = value.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Schedule name is required")
+    return name
+
+
 @router.get("")
 def list_schedules(db: Session = Depends(get_db)):
     return [
@@ -75,19 +94,23 @@ def list_schedules(db: Session = Depends(get_db)):
 @router.post("", status_code=201)
 def create_schedule(data: PayScheduleCreate, db: Session = Depends(get_db)):
     freq, shift = _validate(data.frequency, data.weekend_shift)
-    if db.query(PaySchedule).filter(PaySchedule.name == data.name).first():
+    name = _clean_name(data.name)
+    if db.query(PaySchedule).filter(PaySchedule.name == name).first():
         raise HTTPException(status_code=400, detail="Schedule name already exists")
-    if data.submission_lead_days < 0:
-        raise HTTPException(status_code=400, detail="lead days must be >= 0")
     s = PaySchedule(
-        name=data.name,
+        name=name,
         frequency=freq,
         anchor_pay_date=data.anchor_pay_date,
         submission_lead_days=data.submission_lead_days,
         weekend_shift=shift,
+        blackout_dates=_serialize_blackouts(data.blackout_dates),
     )
     db.add(s)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Schedule name already exists")
     db.refresh(s)
     return _response(s)
 
@@ -101,20 +124,35 @@ def update_schedule(
         raise HTTPException(status_code=404, detail="Schedule not found")
     freq, shift = _validate(data.frequency, data.weekend_shift)
     if data.name is not None:
-        s.name = data.name
+        name = _clean_name(data.name)
+        duplicate = (
+            db.query(PaySchedule.id)
+            .filter(PaySchedule.name == name, PaySchedule.id != schedule_id)
+            .first()
+        )
+        if duplicate:
+            raise HTTPException(status_code=400, detail="Schedule name already exists")
+        s.name = name
     if freq is not None:
         s.frequency = freq
+        db.query(Employee).filter(Employee.pay_schedule_id == schedule_id).update(
+            {Employee.pay_frequency: freq}, synchronize_session=False
+        )
     if data.anchor_pay_date is not None:
         s.anchor_pay_date = data.anchor_pay_date
     if data.submission_lead_days is not None:
-        if data.submission_lead_days < 0:
-            raise HTTPException(status_code=400, detail="lead days must be >= 0")
         s.submission_lead_days = data.submission_lead_days
     if shift is not None:
         s.weekend_shift = shift
+    if data.blackout_dates is not None:
+        s.blackout_dates = _serialize_blackouts(data.blackout_dates)
     if data.is_active is not None:
         s.is_active = data.is_active
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Schedule name already exists")
     return _response(s)
 
 
@@ -141,6 +179,10 @@ def assign_employee(schedule_id: int, emp_id: int, db: Session = Depends(get_db)
     s = db.query(PaySchedule).filter(PaySchedule.id == schedule_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Schedule not found")
+    if not s.is_active:
+        raise HTTPException(
+            status_code=400, detail="Cannot assign an inactive schedule"
+        )
     emp = db.query(Employee).filter(Employee.id == emp_id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")

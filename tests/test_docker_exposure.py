@@ -19,6 +19,138 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+def test_build_context_excludes_local_secrets_and_customer_data():
+    patterns = set((ROOT / ".dockerignore").read_text().splitlines())
+    assert {
+        "**/.env*",
+        "**/.slowbooks-*.key",
+        "**/slowbooks-settings-master.key",
+        "certs/",
+        "**/*.db",
+        "**/*.db-*",
+        "**/*.sqlite",
+        "**/*.sqlite-*",
+        "**/*.sqlite3",
+        "**/*.sqlite3-*",
+        "**/*.log",
+        "**/*.pid",
+        "app/static/uploads/",
+    } <= patterns
+
+
+def test_gitignore_excludes_local_secrets_and_runtime_state():
+    patterns = set((ROOT / ".gitignore").read_text().splitlines())
+    assert {
+        ".env",
+        ".env.*",
+        "!.env.example",
+        ".slowbooks-master.key",
+        ".slowbooks-session.key",
+        "slowbooks-settings-master.key",
+        "certs/",
+        "*.db-*",
+        "*.sqlite-*",
+        "*.sqlite3-*",
+        "*.log",
+        "*.pid",
+    } <= patterns
+
+
+@pytest.mark.parametrize(
+    "compose_name", ["docker-compose.yml", "docker-compose.prod.yml"]
+)
+def test_compose_passes_required_secrets_to_app(compose_name):
+    import yaml
+
+    compose = yaml.safe_load((ROOT / compose_name).read_text())
+    env = compose["services"]["slowbooks"]["environment"]
+    for secret in (
+        "PAYROLL_ENCRYPTION_SECRET",
+        "SESSION_SECRET_KEY",
+        "SETTINGS_ENCRYPTION_KEY",
+    ):
+        assert env[secret].startswith("${" + secret + ":?")
+
+    assert "AUDIT_CHECKPOINT_SIGNING_SECRET" in env
+    assert "AUDIT_CHECKPOINT_KEY_ID" in env
+    if compose_name == "docker-compose.prod.yml":
+        assert env["AUDIT_CHECKPOINT_SIGNING_SECRET"].startswith(
+            "${AUDIT_CHECKPOINT_SIGNING_SECRET:?"
+        )
+        assert env["AUDIT_CHECKPOINT_KEY_ID"].startswith("${AUDIT_CHECKPOINT_KEY_ID:?")
+
+
+def test_docker_healthcheck_accepts_direct_health_and_https_redirect(monkeypatch):
+    import urllib.error
+
+    from scripts import docker_healthcheck
+
+    class _Response:
+        def __init__(self, status):
+            self.status = status
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    class _Opener:
+        def __init__(self, result):
+            self.result = result
+
+        def open(self, _url, timeout):
+            assert timeout == 3
+            if isinstance(self.result, Exception):
+                raise self.result
+            return _Response(self.result)
+
+    for result, expected in (
+        (200, 0),
+        (urllib.error.HTTPError("http://test", 308, "redirect", {}, None), 0),
+        (503, 1),
+        (urllib.error.URLError("offline"), 1),
+    ):
+        monkeypatch.setattr(
+            docker_healthcheck.urllib.request,
+            "build_opener",
+            lambda *_args, result=result: _Opener(result),
+        )
+        assert docker_healthcheck.probe("http://127.0.0.1:3001/health") == expected
+
+
+@pytest.mark.parametrize("status, expected", [(200, 0), (308, 0), (503, 1)])
+def test_docker_healthcheck_against_real_http_server(status, expected):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from scripts import docker_healthcheck
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(status)
+            if status == 308:
+                # Nothing listens here. Following this redirect would make the
+                # probe fail, which is the production-container regression.
+                self.send_header("Location", "https://127.0.0.1:1/health")
+            self.end_headers()
+
+        def log_message(self, _format, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/health"
+        assert docker_healthcheck.probe(url) == expected
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
 # "[host_addr:]host_port:container_port", quotes optional.
 PORT_LINE = re.compile(r'^\s*-\s*"?([^"\n]+?)"?\s*$')
 
@@ -111,6 +243,27 @@ def test_entrypoint_honors_app_host():
         "entrypoint should read APP_HOST, defaulting to 0.0.0.0 — which is "
         "correct INSIDE a container"
     )
+    assert "APP_WORKERS:-1" in text
+
+
+def test_native_default_is_loopback_while_containers_bind_internally():
+    """Native installs should not join the LAN by copying `.env.example`.
+
+    Docker and explicit Server Edition launches override this value because
+    their own exposure controls live outside the application process.
+    """
+    config = (ROOT / "app" / "config.py").read_text()
+    env_example = (ROOT / ".env.example").read_text()
+    assert 'os.getenv("APP_HOST", "127.0.0.1")' in config
+    assert re.search(r"^APP_HOST=127\.0\.0\.1$", env_example, re.MULTILINE)
+
+    import yaml
+
+    for compose_name in ("docker-compose.yml", "docker-compose.prod.yml"):
+        compose = yaml.safe_load((ROOT / compose_name).read_text())
+        assert compose["services"]["slowbooks"]["environment"]["APP_HOST"] == (
+            "0.0.0.0"
+        )
 
 
 def test_dockerignore_excludes_secrets_and_history():
@@ -122,6 +275,49 @@ def test_dockerignore_excludes_secrets_and_history():
     }
     for required in (".env", ".git"):
         assert required in ignored, f".dockerignore must exclude {required}"
+
+
+@pytest.mark.parametrize(
+    "compose_name", ["docker-compose.yml", "docker-compose.prod.yml"]
+)
+def test_app_container_is_runtime_hardened(compose_name):
+    import yaml
+
+    app = yaml.safe_load((ROOT / compose_name).read_text())["services"]["slowbooks"]
+    assert app["read_only"] is True
+    assert app["init"] is True
+    assert app["cap_drop"] == ["ALL"]
+    assert "no-new-privileges:true" in app["security_opt"]
+
+
+@pytest.mark.parametrize(
+    "compose_name", ["docker-compose.yml", "docker-compose.prod.yml"]
+)
+def test_compose_prepares_writable_data_volumes_without_privileging_app(compose_name):
+    import yaml
+
+    compose = yaml.safe_load((ROOT / compose_name).read_text())
+    init = compose["services"]["storage-init"]
+    app = compose["services"]["slowbooks"]
+
+    assert init["user"] == "0:0"
+    assert init["network_mode"] == "none"
+    assert init["read_only"] is True
+    assert init["cap_drop"] == ["ALL"]
+    assert init["cap_add"] == ["CHOWN"]
+    assert "no-new-privileges:true" in init["security_opt"]
+    assert init["entrypoint"] == [
+        "chown",
+        "-R",
+        "1000:1000",
+        "/app/backups",
+        "/app/app/static/uploads",
+    ]
+    assert set(init["volumes"]) == set(app["volumes"])
+    assert app["depends_on"]["storage-init"]["condition"] == (
+        "service_completed_successfully"
+    )
+    assert any(str(item).startswith("/tmp:") for item in app["tmpfs"])
 
 
 def test_container_runs_as_non_root():

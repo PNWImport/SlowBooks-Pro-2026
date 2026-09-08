@@ -190,7 +190,12 @@ def convert_to_bill(po_id: int, db: Session = Depends(get_db)):
         record_purchase,
     )
 
-    po = db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
+    po = (
+        db.query(PurchaseOrder)
+        .filter(PurchaseOrder.id == po_id)
+        .with_for_update()
+        .first()
+    )
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
     # Posts a JE dated to po.date; closing-date enforcement must cover this

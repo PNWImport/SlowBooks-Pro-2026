@@ -43,7 +43,7 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 - **Core payroll** — pay runs with federal/state/FICA withholding, balanced journal entries, pay stubs, YTD totals, encrypted ACH direct deposit, gross-up calculator, supplemental wages, multi-state withholding
 - **HR** — 8-task onboarding checklist with e-signature, time tracking with approve/reject, PTO policies + requests with accrual draw-down, pre/post-tax deductions, court-ordered garnishments
 - **Tax forms** — W-2, W-3, Form 940 (FUTA), Form 941 (FICA) endpoints. JSON for downstream integrations + WeasyPrint PDFs with tamper-evident audit hashes in the footer (SHA-256 + audit ID matched against the `document_audits` table).
-- **Self-service portal** — token-accessed at `/portal/{token}` — pay stubs, W-4 updates, direct-deposit setup, PTO requests; branded with the employer's logo and company name
+- **Self-service portal** — token-claimed, cookie-backed access to pay stubs, W-4, direct deposit, PTO, documents, and time-entry submission
 
 Tax calculations are approximate — verify with a tax professional. Full module reference (models, routes, UI pages, pending items) lives at [docs/payroll-hr-module.md](payroll-hr-module.md).
 
@@ -136,26 +136,29 @@ curl 'http://localhost:3001/api/analytics/export.csv?period=year' -o analytics.c
 Flat CSV with columns `(section, key, subkey, value)` covering 9 sections: period, revenue_by_customer, revenue_trend, expenses_by_category, ar_aging, ap_aging, dso, cash_forecast, customer_profit. Drops straight into Excel / Google Sheets / any BI tool.
 
 ### AI Insights
-An optional LLM layer sits on top of the analytics snapshot and produces a compact **3 observations / 3 risks / 3 recommendations** executive brief. Nothing is sent until you click the **AI Insights** button — the feature is zero-cost by default.
+An optional LLM layer uses the analytics snapshot to produce **3 observations / 3 risks / 3 recommendations**. External requests occur when you use Test, AI Insights, predefined analyses, or Q&A; configuring a provider alone does not run an analysis.
 
-**Seven providers supported out of the box** (verified April 2026):
+**Eight configured provider options** (bundled defaults, not live availability guarantees):
 
-| Provider | Wire format | Default model | Free tier |
+| Provider | Wire format | Bundled default model | Configuration |
 |---|---|---|---|
-| **xAI Grok** | OpenAI-compat | `grok-4-fast` | $25 signup credit |
-| **Groq (LPU Cloud)** | OpenAI-compat | `llama-3.3-70b-versatile` | Generous free tier, no card |
-| **Cloudflare Workers AI** | OpenAI-compat | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | 10k neurons/day, no card |
-| **Cloudflare Worker Gateway** (self-hosted) | OpenAI-compat | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | Same 10k neurons/day — **your keys stay in *your* Cloudflare account** |
-| **Anthropic Claude** | `/v1/messages` | `claude-sonnet-4-6` | Paid only |
-| **OpenAI** | `/v1/chat/completions` | `gpt-5.4-mini` | Paid only |
-| **Google Gemini** | `generateContent` | `gemini-2.5-flash` | Free Flash tier via AI Studio |
+| **xAI Grok** | OpenAI-compat | `grok-4.6` | API key |
+| **Groq (LPU Cloud)** | OpenAI-compat | `openai/gpt-oss-120b` | API key |
+| **Cloudflare Workers AI** | OpenAI-compat | `@cf/openai/gpt-oss-120b` | API token and account ID |
+| **Cloudflare Worker Gateway** (self-hosted) | OpenAI-compat | `@cf/openai/gpt-oss-120b` | Worker URL and shared secret |
+| **Anthropic Claude** | `/v1/messages` | `claude-sonnet-5` | API key |
+| **OpenAI** | `/v1/chat/completions` | `gpt-5.6-terra` | API key |
+| **Google Gemini** | `generateContent` | `gemini-3.8-flash` | API key |
 | **Custom (OpenAI-compatible)** | `/v1/chat/completions` | *you supply it* | Any vendor or gateway that speaks the OpenAI wire format, on the public internet — HTTPS only, private/LAN addresses refused (v2.9, contributed by @jarvis4openclaw) |
 
-Each provider's model string is configurable from **Settings → AI Insights** — a curated dropdown per provider with a **Custom…** escape hatch for new model IDs the vendors ship between releases. So renames ("gemini-2.5-flash" → "gemini-3.0-nano") are a Custom-field entry, not a code change. Cloudflare gets an extra field for your account ID since its endpoint is account-scoped. The dedicated **Cloudflare Worker Gateway** provider adds a second field for your Worker URL — see the self-hosted gateway section below.
+Each provider accepts an editable model ID from **Settings → AI Insights**.
+Choose a curated default or **Custom…** for new, pinned, or account-specific IDs;
+the backend stores and forwards that ID unchanged. Cloudflare direct also needs
+an account ID, while the Worker Gateway needs its deployed URL.
 
 ![AI Insights provider configuration](../screenshots/ai-insights-settings.png)
 
-> **Verified providers as of v2.0.0:** Only **Groq** has been validated end-to-end against a live key (both the AI Insights button and the predefined-analysis dropdown). The other six providers' wire formats are implemented and unit-tested but have not been exercised against live credentials. **Accepting working PRs that confirm or fix any provider's config** — open an issue or PR with provider name, working model ID, and any quirks discovered (e.g., headers, payload shape, error mapping).
+> **Validation:** Historical project notes record live Groq checks. The remaining options and arbitrary custom endpoints are not live-certified by unit tests. Model availability and free-tier offers must be checked with each provider. See [setup, compatibility limits, and data sharing](ai-providers.md).
 
 **Settings encryption.** API keys are stored in the `settings` table under `ai_api_key`, encrypted with **Fernet** (AES-128-CBC + HMAC-SHA256) via `app/services/crypto.py`. Ciphertext rows carry the prefix `fernet:v1:` so legacy plaintext rows are detected and migrated gracefully. The master key is resolved in priority order:
 
@@ -164,8 +167,10 @@ Each provider's model string is configurable from **Settings → AI Insights** �
 3. Fresh generation on first run (logged as a warning)
 
 **Never commit `.slowbooks-master.key`** — it is in `.gitignore`. Losing it means losing every encrypted secret.
+Docker Compose requires option 1 so the key lives outside replaceable app
+containers; keep the value stable and back it up securely.
 
-`GET /api/analytics/ai-config` returns `{provider, model, cloudflare_account_id, worker_url, has_api_key, api_key_encrypted, providers}` — the raw key is **never** in the response body. `PUT /api/analytics/ai-config` accepts a Pydantic `AIConfigUpdate` model — `{provider, model, cloudflare_account_id, worker_url, api_key}` — so malformed payloads are rejected with a 422 before they reach the service layer. An empty/missing `api_key` is interpreted as "keep the existing encrypted value", so re-saving the provider won't clobber the stored key.
+`GET /api/analytics/ai-config` returns `{provider, model, cloudflare_account_id, worker_url, endpoint_url, has_api_key, api_key_encrypted, providers}` without the raw key. `PUT` accepts `{provider, model, cloudflare_account_id, worker_url, endpoint_url, api_key}`. Omit `api_key` to keep it; an explicit empty string removes it. The UI omits a blank key field unless Remove is clicked.
 
 **Endpoints:**
 - `GET  /api/analytics/ai-config` — read display config (no secrets)
@@ -637,4 +642,3 @@ All read endpoints accept `?period=month|quarter|year` (or `mtd/qtd/ytd`), or ex
 - Accessibility: WCAG 2.1 AA posture ("strive to conform") — header scopes,
   labelled icon buttons, live-region toasts, dialog focus management, AA
   contrast, and tagged (PDF/UA-1) PDFs. See docs/accessibility.md.
-

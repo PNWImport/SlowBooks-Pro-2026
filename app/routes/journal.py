@@ -6,11 +6,12 @@
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.models.transactions import Transaction
 from app.models.accounts import Account
+from app.routes._helpers import clamp_pagination
 from app.schemas.journal import JournalEntryCreate, JournalEntryResponse
 from app.services.accounting import create_journal_entry, reversing_lines
 from app.services.closing_date import check_closing_date
@@ -38,13 +39,19 @@ def _line_dict(line, acct) -> dict:
 
 
 @router.get("", response_model=list[JournalEntryResponse])
-def list_journal_entries(source_type: str = None, db: Session = Depends(get_db)):
-    q = db.query(Transaction)
+def list_journal_entries(
+    source_type: str = None,
+    skip: int = 0,
+    limit: int = 500,
+    db: Session = Depends(get_db),
+):
+    skip, limit = clamp_pagination(skip, limit)
+    q = db.query(Transaction).options(selectinload(Transaction.lines))
     if source_type:
         q = q.filter(Transaction.source_type == source_type)
     else:
         q = q.filter(Transaction.source_type == "manual")
-    entries = q.order_by(Transaction.date.desc()).all()
+    entries = q.order_by(Transaction.date.desc()).offset(skip).limit(limit).all()
     accounts = {a.id: a for a in db.query(Account).all()}
     results = []
     for txn in entries:
@@ -143,11 +150,29 @@ def create_manual_journal_entry(
 
 @router.post("/{entry_id}/void", response_model=JournalEntryResponse)
 def void_journal_entry(entry_id: int, db: Session = Depends(get_db)):
-    txn = db.query(Transaction).filter(Transaction.id == entry_id).first()
+    txn = (
+        db.query(Transaction)
+        .filter(Transaction.id == entry_id)
+        .with_for_update()
+        .first()
+    )
     if not txn:
         raise HTTPException(status_code=404, detail="Journal entry not found")
-    if txn.source_type and txn.source_type.endswith("_void"):
-        raise HTTPException(status_code=400, detail="Cannot void a reversal entry")
+    if txn.source_type != "manual":
+        raise HTTPException(
+            status_code=400,
+            detail="Only manual journal entries can be voided here",
+        )
+    already_voided = (
+        db.query(Transaction.id)
+        .filter(
+            Transaction.source_type == "manual_void",
+            Transaction.source_id == txn.id,
+        )
+        .first()
+    )
+    if already_voided:
+        raise HTTPException(status_code=400, detail="Journal entry already voided")
 
     check_closing_date(db, txn.date)
 

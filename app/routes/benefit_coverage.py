@@ -233,8 +233,7 @@ def cobra_notice(enrollment_id: int, db: Session = Depends(get_db)):
         _hash_and_audit,
         _pdf_response,
     )
-    from app.services.pdf_service import _jinja_env, _safe_url_fetcher
-    from weasyprint import HTML
+    from app.services.pdf_service import _jinja_env, render_pdf
 
     e = (
         db.query(BenefitEnrollment)
@@ -272,5 +271,5 @@ def cobra_notice(enrollment_id: int, db: Session = Depends(get_db)):
     audit = _hash_and_audit(db, "cobra", f"enr{enrollment_id}", company, data)
     template = _jinja_env.get_template("cobra_notice.html")
     html_str = template.render(data=data, company=company, audit=audit)
-    pdf = HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    pdf = render_pdf(html_str)
     return _pdf_response(pdf, f"cobra_notice_enr{enrollment_id}.pdf")

@@ -16,6 +16,7 @@ import subprocess
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
@@ -79,16 +80,45 @@ def _sqlite_db_path() -> Path | None:
 def _parse_db_url(url: str) -> dict:
     """Parse PostgreSQL connection URL into components."""
     # postgresql://user:pass@host:port/dbname
-    from urllib.parse import urlparse
+    from urllib.parse import parse_qs, unquote, urlparse
 
     parsed = urlparse(url)
     return {
         "host": parsed.hostname or "localhost",
         "port": str(parsed.port or 5432),
-        "user": parsed.username or "bookkeeper",
-        "password": parsed.password or "",
-        "dbname": parsed.path.lstrip("/") or "bookkeeper",
+        "user": unquote(parsed.username or "bookkeeper"),
+        "password": unquote(parsed.password or ""),
+        "dbname": unquote(parsed.path.lstrip("/")) or "bookkeeper",
+        "options": parse_qs(parsed.query),
     }
+
+
+def _pg_environment(params: dict) -> dict:
+    """Keep URL transport settings when invoking libpq command-line tools."""
+    env = {**os.environ, "PGPASSWORD": params["password"]}
+    for option in (
+        "sslmode",
+        "sslrootcert",
+        "sslcert",
+        "sslkey",
+        "sslcrl",
+        "sslcrldir",
+        "ssl_min_protocol_version",
+        "ssl_max_protocol_version",
+        "channel_binding",
+        "gssencmode",
+        "connect_timeout",
+        "target_session_attrs",
+    ):
+        values = params["options"].get(option)
+        if values:
+            name = (
+                "PGCONNECT_TIMEOUT"
+                if option == "connect_timeout"
+                else ("PG" + option.replace("_", "").upper())
+            )
+            env[name] = values[-1]
+    return env
 
 
 def _create_sqlite_backup(db: Session, notes: str, backup_type: str) -> dict:
@@ -101,7 +131,7 @@ def _create_sqlite_backup(db: Session, notes: str, backup_type: str) -> dict:
         }
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"slowbooks_{timestamp}.db"
+    filename = f"slowbooks_{timestamp}_{uuid4().hex}.db"
     filepath = BACKUP_DIR / filename
 
     try:
@@ -167,10 +197,10 @@ def create_backup(db: Session, notes: str = None, backup_type: str = "manual") -
 
     params = _parse_db_url(DATABASE_URL)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"slowbooks_{timestamp}.sql"
+    filename = f"slowbooks_{timestamp}_{uuid4().hex}.sql"
     filepath = BACKUP_DIR / filename
 
-    env = {"PGPASSWORD": params["password"]}
+    env = _pg_environment(params)
 
     try:
         result = subprocess.run(
@@ -188,7 +218,7 @@ def create_backup(db: Session, notes: str = None, backup_type: str = "manual") -
                 str(filepath),
                 params["dbname"],
             ],
-            env={**dict(__import__("os").environ), **env},
+            env=env,
             capture_output=True,
             text=True,
             timeout=300,
@@ -241,7 +271,7 @@ def restore_backup(db: Session, filename: str) -> dict:
         return _restore_sqlite_backup(filepath, safe_name)
 
     params = _parse_db_url(DATABASE_URL)
-    env = {"PGPASSWORD": params["password"]}
+    env = _pg_environment(params)
 
     try:
         result = subprocess.run(
@@ -257,16 +287,17 @@ def restore_backup(db: Session, filename: str) -> dict:
                 params["dbname"],
                 "--clean",
                 "--if-exists",
+                "--single-transaction",
                 str(filepath),
             ],
-            env={**dict(__import__("os").environ), **env},
+            env=env,
             capture_output=True,
             text=True,
             timeout=300,
         )
-        # pg_restore may return non-zero even on partial success
-        if result.returncode != 0 and "error" in result.stderr.lower():
-            return {"success": False, "error": result.stderr[:500]}
+        if result.returncode != 0:
+            logger.error("PostgreSQL restore failed: %s", result.stderr)
+            return {"success": False, "error": "PostgreSQL restore failed. Check logs."}
 
         return {"success": True, "message": f"Restored from {filename}"}
 

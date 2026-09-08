@@ -5,7 +5,12 @@ Security hardening around the AI provider layer:
 - validate_worker_url() must reject every SSRF / scheme-confusion vector
 """
 
+import socket
+
+import httpx
 import pytest
+
+import app.services.ai_service as ai
 
 from app.services.ai_service import (
     CLOUDFLARE_ACCOUNT_ID_RE,
@@ -104,3 +109,75 @@ def test_custom_endpoint_rejects_lan_and_private():
     ):
         with pytest.raises(ValueError):
             validate_worker_url(bad)
+
+
+def _fake_getaddrinfo(ip):
+    def gai(host, port, *args, **kwargs):
+        family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+        return [(family, socket.SOCK_STREAM, 6, "", (ip, port))]
+
+    return gai
+
+
+class _Stream:
+    def __init__(self, peer):
+        self.peer = peer
+
+    def get_extra_info(self, name):
+        return self.peer if name == "server_addr" else None
+
+
+def test_custom_request_pins_checked_address_and_preserves_tls_name(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
+
+    def fake_request(self, method, url, **kwargs):
+        seen.update(
+            url=str(url), headers=kwargs["headers"], extensions=kwargs["extensions"]
+        )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}]},
+            extensions={"network_stream": _Stream(("93.184.216.34", 443))},
+        )
+
+    monkeypatch.setattr(httpx.Client, "request", fake_request)
+    req = ai.build_request(
+        "custom",
+        "sk-test",
+        "vendor/model",
+        "system",
+        "user",
+        endpoint_url="https://api.example.com/v1",
+    )
+    response = ai._execute_request("custom", req, 5, None)
+
+    assert response.status_code == 200
+    assert seen["url"] == "https://93.184.216.34/v1/chat/completions"
+    assert seen["headers"]["Host"] == "api.example.com"
+    assert seen["extensions"] == {"sni_hostname": "api.example.com"}
+
+
+def test_custom_request_refuses_private_rebinding_answer(monkeypatch):
+    answers = iter(
+        [
+            _fake_getaddrinfo("93.184.216.34"),
+            _fake_getaddrinfo("93.184.216.34"),
+            _fake_getaddrinfo("127.0.0.1"),
+        ]
+    )
+
+    def changing_dns(host, port, *args, **kwargs):
+        return next(answers)(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", changing_dns)
+    req = ai.build_request(
+        "custom",
+        "sk-test",
+        "vendor/model",
+        "system",
+        "user",
+        endpoint_url="https://api.example.com/v1",
+    )
+    with pytest.raises(ai.AIProviderError, match="private or local"):
+        ai._execute_request("custom", req, 5, None)

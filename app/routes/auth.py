@@ -25,6 +25,7 @@ from app.services.auth import (
     is_multi_user,
     password_is_set,
     set_password,
+    session_credential,
 )
 from app.services.rate_limit import limiter
 from app.services.request_utils import client_ip as _client_ip
@@ -201,6 +202,7 @@ def _stash_user(request: Request, user) -> None:
     request.session["username"] = user.username
     request.session["display_name"] = user.display_name
     request.session["role"] = user.role
+    request.session["credential"] = session_credential(user)
 
 
 @router.post("/login")

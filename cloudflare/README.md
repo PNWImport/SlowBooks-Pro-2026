@@ -8,9 +8,9 @@ account so the actual AI credentials never touch Slowbooks' database.
 - **Your keys stay in Cloudflare.** Slowbooks only ever holds a shared
   secret scoped to your one Worker. Even if someone dumps the Slowbooks
   SQLite file, they can't talk to Workers AI as you.
-- **Free tier.** Cloudflare Workers AI gives every account 10,000
-  neurons per day for free — plenty for hundreds of AI Insights runs
-  and tool-calling Q&A sessions.
+- **Included usage may be available.** Check Cloudflare's current Workers AI
+  pricing and limits before deployment; quotas can change independently of
+  Slowbooks.
 - **Per-person lockdown.** Every LAN owner installs their own Worker in
   their own Cloudflare account. One compromised install can't reach
   another. One abused install can't burn someone else's quota.
@@ -22,7 +22,7 @@ account so the actual AI credentials never touch Slowbooks' database.
 
 ### 1. Cloudflare account
 
-Free tier is all you need:
+Create or use a Cloudflare account and review its current Workers AI limits:
 https://dash.cloudflare.com/sign-up
 
 ### 2. Install wrangler
@@ -68,15 +68,11 @@ Wrangler prints your Worker URL, e.g.
 
 ### 6. Wire Slowbooks to the Worker
 
-1. Open Slowbooks → Analytics → **⚙ AI**
-2. Provider: **Cloudflare Workers AI** (or the dedicated
-   _Cloudflare Worker Gateway_ option if your version of Slowbooks
-   ships one separately)
-3. Cloudflare account ID: your 32-char hex ID from the top right of
-   https://dash.cloudflare.com/
-4. Worker URL: the one `wrangler deploy` just printed
-5. API key: the shared secret from step 3
-6. Click **Save**, then **Test** — you should see the word `ok`
+1. Open Slowbooks → Settings → **AI Insights**.
+2. Choose **Cloudflare Worker Gateway (self-hosted)**.
+3. Enter the Worker URL printed by `wrangler deploy`.
+4. Enter the shared secret from step 3 as the API key.
+5. Click **Save**, then **Test** — you should see the word `ok`.
 
 ## Smoke test from the command line
 
@@ -87,7 +83,7 @@ curl -sS https://slowbooks-ai.yourname.workers.dev/v1/chat/completions \
   -H "Authorization: Bearer <your-shared-secret>" \
   -H "Content-Type: application/json" \
   -d '{
-        "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "model": "@cf/openai/gpt-oss-120b",
         "messages": [
           {"role": "user", "content": "Reply with the word ok and nothing else."}
         ],
@@ -118,7 +114,7 @@ wrangler secret put AUTH_TOKEN
 Comma-separated list of model IDs to permit. If not set, defaults to:
 
 ```
-@cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/meta/llama-3.1-8b-instruct,@cf/mistral/mistral-7b-instruct-v0.2-lora
+@cf/openai/gpt-oss-120b,@cf/openai/gpt-oss-20b,@cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/meta/llama-4-scout-17b-16e-instruct
 ```
 
 To restrict which models Slowbooks can invoke:
@@ -132,7 +128,7 @@ wrangler deploy --env production
 ### DEFAULT_MODEL (optional)
 
 Which model to use if Slowbooks' request doesn't specify one. Must be a model
-in `ALLOWED_MODELS`. Defaults to `@cf/meta/llama-3.3-70b-instruct-fp8-fast`.
+in `ALLOWED_MODELS`. Defaults to `@cf/openai/gpt-oss-120b`.
 
 Set via wrangler.toml or Cloudflare dashboard.
 

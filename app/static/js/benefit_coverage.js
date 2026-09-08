@@ -158,7 +158,7 @@ const BenefitCoveragePage = {
             });
             closeModal();
             toast(`Plan "${name}" created`);
-            App.navigate('#/hr/benefits');
+            await App.navigate('#/hr/benefit-coverage');
         } catch (e) {
             toast(e.message, 'error');
         }

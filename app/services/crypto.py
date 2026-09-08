@@ -78,8 +78,9 @@ def _load_or_create_master_key() -> bytes:
             _KEY_FILE.write_bytes(key)
             _KEY_FILE.chmod(0o600)
         except OSError:
-            logger.warning(
-                "Could not persist key to %s — check volume permissions", _KEY_FILE
+            raise RuntimeError(
+                f"Could not persist settings encryption key to {_KEY_FILE}; "
+                "refusing to use an ephemeral key"
             )
     logger.warning(
         "Generated new settings encryption key at %s. "
@@ -102,6 +103,11 @@ def reset_cache_for_tests():
     """Clear the cached Fernet — only used by tests that override env vars."""
     global _cached_fernet
     _cached_fernet = None
+
+
+def validate_master_key() -> None:
+    """Fail early when the configured Fernet key is missing or malformed."""
+    _fernet()
 
 
 # ---------------------------------------------------------------------------

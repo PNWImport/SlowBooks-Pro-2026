@@ -5,18 +5,20 @@ New York and Oregon have dedicated engines; the other 47 are driven by the table
 `app/services/state_tax/tables.py` through `TableEngine` (annualized percentage method:
 wages − standard deduction − exemptions → flat rate or brackets → ÷ pay periods + extra).
 
-**Figures are the 2026 published values**, verified 2026-09-03 against the state publications
+The source records a prior **2026-09-03 verification claim** against state publications
 and the compilations named in each row (Tax Foundation's 2026 rates and brackets; the 2026 SUI
 wage-base chart), simplified to the percentage-method structure. States that only publish
 wage-bracket tables are modelled from the formula equivalent. Rates change every January (and
 some mid-year — Utah moved to 4.45% on 2026-06-01): update `tables.py` and regenerate this file
-together. **Verify before filing.**
+together. **Verify before filing.** The current pass found stale paid-leave caps;
+see [verification status and corrections](state-tax-tables.md). This catalog
+describes implementation values, not an independent approval of every formula.
 
 Employee inputs the engines read (Employees → form): **State W-4 allowances**,
 **extra state withholding** per period, an **elected rate** (Arizona A-4), and a flat
 **local tax rate** in percent where the state requires one (Indiana and Maryland counties,
-Ohio cities and school districts, Pennsylvania municipalities, Michigan cities). Local
-jurisdictions are not modelled individually.
+Ohio cities and school districts, Pennsylvania municipalities, Michigan cities).
+The separate [local-tax engine](local-taxes.md) also models named jurisdictions.
 
 The `GET /api/payroll/states` catalog returns the same information.
 
@@ -28,7 +30,7 @@ The `GET /api/payroll/states` catalog returns the same information.
 | **AZ** Arizona | Employee-elected rate (default 2.0%) Employee elects a rate on Form A-4 (0.5%–3.5%); 2.0% is the default when none is on file. Set employee.state_rate_override. The 2.5% flat income tax is what the election approximates. | none | — | 8,000 | 2026 | Arizona Form A-4; Tax Foundation, 2026 State Individual Income Tax Rates and Brackets; 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
 | **CA** California | Progressive (DE 44 Method B) + SDI — dedicated engine | see engine | see engine | 7,000 | 2026-approximate | app/services/state_tax/ca.py |
 | **CO** Colorado | Flat 4.40% Employers with 9 or fewer employees owe no employer FAMLI share. | std ded 16,100 / 32,200 | CO FAMLI (employee) 0.44% to 176,100; CO FAMLI (employer) 0.44% to 176,100 | 30,600 | 2026 | Colorado DR 1098 / DR 0004; FAMLI 0.88% for 2026 split 50/50 (famli.colorado.gov); Tax Foundation, 2026 State Individual Income Tax Rates and Brackets; 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
-| **CT** Connecticut | Progressive 2.00%–6.99% (7 brackets) Personal exemption phases out above $30k/$48k; the full amount is used. Withholding codes A–F map to filing status here. | base exemption 15,000 / 24,000 | CT Paid Leave 0.50% to 176,100 | 27,000 | 2026 | Connecticut Circular CT; CT Paid Leave 0.5% (ctpaidleave.org); Tax Foundation, 2026 State Individual Income Tax Rates and Brackets; 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
+| **CT** Connecticut | Progressive 2.00%–6.99% (7 brackets) Personal exemption phases out above $30k/$48k; the full amount is used. Withholding codes A–F map to filing status here. | base exemption 15,000 / 24,000 | CT Paid Leave 0.50% to 184,500 | 27,000 | 2026 | Connecticut Circular CT; CT Paid Leave 0.5% (ctpaidleave.org); Tax Foundation, 2026 State Individual Income Tax Rates and Brackets; 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
 | **DC** District of Columbia | Progressive 4.00%–10.75% (7 brackets) | std ded 16,100 / 32,200 | DC Paid Family Leave (employer) 0.75% | 9,000 | 2026 | DC OTR withholding instructions (FR-230); Tax Foundation, 2026 State Individual Income Tax Rates and Brackets; 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
 | **DE** Delaware | Progressive 0.00%–6.60% (7 brackets) Delaware gives a $110 per-exemption credit; not modelled. | std ded 3,250 / 6,500 | DE Paid Leave (employee) 0.40% to 176,100; DE Paid Leave (employer) 0.40% to 176,100 | 14,500 | 2026 | Delaware Withholding Tax Tables; Paid Leave 0.8% (employer may pass up to half to employees); Tax Foundation, 2026 State Individual Income Tax Rates and Brackets; 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
 | **FL** Florida | No wage income tax | none | — | 7,000 | 2026 | Florida DOR reemployment tax; 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
@@ -45,7 +47,7 @@ The `GET /api/payroll/states` catalog returns the same information.
 | **MD** Maryland | Progressive 2.00%–6.50% (10 brackets) County tax (2.25%–3.2%) is required — set employee.local_tax_rate. Standard deduction is 15% of wages within a range; the maximum is used. | std ded 3,350 / 6,700; 3,200 per allowance | — | 8,500 | 2026 | Maryland Employer Withholding Guide (2026: new 6.25% / 6.5% brackets, std deduction $3,350/$6,700); Tax Foundation, 2026 State Individual Income Tax Rates and Brackets; 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
 | **ME** Maine | Progressive 5.80%–7.15% (3 brackets) | std ded 15,300 / 30,600; 5,300 per allowance | — | 12,000 | 2026 | Maine Revenue Services 2026 Withholding Tables (exemption $5,300; std deduction $15,300/$30,600); 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
 | **MI** Michigan | Flat 4.25% Cities with an income tax (Detroit, Grand Rapids…) — use employee.local_tax_rate. | 5,900 per allowance | — | 9,500 | 2026 | Michigan Income Tax Withholding Guide (2026 exemption $5,900); 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
-| **MN** Minnesota | Progressive 5.35%–9.85% (4 brackets) Small employers pay a reduced 0.66% total Paid Leave premium. | std ded 15,300 / 30,600; 5,300 per allowance | MN Paid Leave (employee) 0.44% to 176,100; MN Paid Leave (employer) 0.44% to 176,100 | 44,000 | 2026 | Minnesota Income Tax Withholding Instruction Booklet; Paid Leave 0.88% from 2026-01-01 split 50/50 (pl.mn.gov); Tax Foundation, 2026 State Individual Income Tax Rates and Brackets; 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
+| **MN** Minnesota | Progressive 5.35%–9.85% (4 brackets) Small employers pay a reduced 0.66% total Paid Leave premium. | std ded 15,300 / 30,600; 5,300 per allowance | MN Paid Leave (employee) 0.44% to 185,000; MN Paid Leave (employer) 0.44% to 185,000 | 44,000 | 2026 | Minnesota Income Tax Withholding Instruction Booklet; Paid Leave 0.88% from 2026-01-01 split 50/50 (pl.mn.gov); Tax Foundation, 2026 State Individual Income Tax Rates and Brackets; 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
 | **MO** Missouri | Progressive 0.00%–4.70% (8 brackets) | std ded 16,100 / 32,200 | — | 9,000 | 2026 | Missouri Employer's Tax Guide (Form MO-W-4); Tax Foundation, 2026 State Individual Income Tax Rates and Brackets; 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
 | **MS** Mississippi | Progressive 0.00%–4.00% (2 brackets) | std ded 2,300 / 4,600; base exemption 6,000 / 12,000; 1,500 per allowance | — | 14,000 | 2026 | Mississippi Withholding Tax Tables (2026: 4.0%, stepping toward 3% by 2030); Tax Foundation, 2026 State Individual Income Tax Rates and Brackets; 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |
 | **MT** Montana | Progressive 4.70%–5.65% (2 brackets) | std ded 16,100 / 32,200 | — | 47,300 | 2026 | Montana Withholding Tax Guide (2026: 5.65% top rate above $47,500; 5.4% in 2027); Tax Foundation, 2026 State Individual Income Tax Rates and Brackets; 2026 SUI wage bases (Nextep chart of state releases as of 2026-01-02) |

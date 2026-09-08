@@ -13,6 +13,9 @@ codebase — this file is the index, not the source of truth.
 ```bash
 export PAYROLL_ENCRYPTION_SECRET=$(openssl rand -base64 32)
 export SESSION_SECRET_KEY=$(openssl rand -hex 32)
+export SETTINGS_ENCRYPTION_KEY="$(openssl rand -base64 32 | tr '+/' '-_')"
+export AUDIT_CHECKPOINT_SIGNING_SECRET=$(openssl rand -base64 48)
+export AUDIT_CHECKPOINT_KEY_ID=ops-2026
 export POSTGRES_PASSWORD=$(openssl rand -hex 24)
 ```
 
@@ -21,18 +24,32 @@ export POSTGRES_PASSWORD=$(openssl rand -hex 24)
   from the database.
 - `SESSION_SECRET_KEY` — cookie signer. Losing it just invalidates every
   current session; not catastrophic, but inconvenient.
+- `SETTINGS_ENCRYPTION_KEY` — Fernet key for saved AI, SMTP, payment-provider,
+  QBO, and bank-feed credentials. Losing it makes those database values
+  unrecoverable. Docker Compose requires it outside the app container.
+- `AUDIT_CHECKPOINT_SIGNING_SECRET` — HMAC key for audit evidence. Keep an
+  off-host copy; `AUDIT_CHECKPOINT_KEY_ID` identifies it during rotation.
 - The setup wizard collects the operator password on first boot. Argon2id
   hashes it; you never need to set it via env var.
 
 ## 2. Database
 
-- Postgres 16+ (we tested against 17). SQLite is supported but only for
-  dev / tests.
-- `DATABASE_URL` MUST include `sslmode=require` or `sslmode=verify-full`.
-  The app refuses to start in production without it.
-- Apply migrations once: `alembic upgrade head` (or rely on
-  `Base.metadata.create_all()` on first boot).
-- Take a baseline backup before opening to users.
+- PostgreSQL is the Docker/server database; SQLite company files are also
+  supported by the native desktop and Windows Server Edition paths.
+- PostgreSQL production connections require `sslmode=require`, `verify-ca`,
+  or `verify-full`; prefer `verify-full` with the appropriate CA certificate.
+  The documented single-host Compose configuration explicitly relaxes this
+  transport guard through `SLOWBOOKS_PRIVATE_NETWORK=1`.
+- Back up the database and encryption keys before applying migrations.
+- For Docker upgrades from before 2.9.4, export the running container's settings
+  key before replacement; follow [Docker settings-key upgrade](operations.md#docker-settings-key-upgrade).
+- Apply `alembic upgrade head` once per deployment. Docker's entrypoint and
+  the desktop launcher already do this; Kubernetes uses its migration Job.
+  `Base.metadata.create_all()` is not a substitute for schema upgrades.
+- Preserve the existing database volume/company file; reseeding is not an upgrade.
+- Check [validation results and remaining release checks](validation.md)
+  before opening to users. Passing automated tests does not certify tax tables,
+  native installers, or untested browser workflows.
 
 ## 3. Required environment
 
@@ -44,6 +61,9 @@ FORCE_HTTPS=true
 DATABASE_URL=postgresql://user:pass@host:5432/db?sslmode=require
 PAYROLL_ENCRYPTION_SECRET=<from step 1>
 SESSION_SECRET_KEY=<from step 1>
+SETTINGS_ENCRYPTION_KEY=<from step 1>
+AUDIT_CHECKPOINT_SIGNING_SECRET=<from step 1>
+AUDIT_CHECKPOINT_KEY_ID=ops-2026
 CORS_ALLOW_ORIGINS=https://books.your-domain.com
 ```
 
@@ -53,6 +73,7 @@ Recommended:
 SESSION_IDLE_TIMEOUT_SECONDS=14400      # 4-hour idle cap
 HSTS_MAX_AGE=63072000                   # 2-year HSTS preload minimum
 RATE_LIMIT_ENABLED=1                    # default; only off for load tests
+APP_WORKERS=1                           # set higher only with shared rate limits
 EMPLOYER_EIN=12-3456789                 # required for tax forms
 EMPLOYER_STATE=WA
 SUTA_RATE=0.012                         # your state's experience rate
@@ -163,10 +184,10 @@ output format.
 
 ## 9. HIPAA / compliance context
 
-SlowBooks is not a HIPAA-covered system by default. See
-[hipaa-compliance.md](hipaa-compliance.md) for the Security Rule mapping,
-the eight remaining gaps, and recommendations for compliance-conscious
-deployments.
+HIPAA applicability depends on the deployment and data flow. Before handling
+ePHI, review [HIPAA readiness](hipaa-compliance.md), including historical audit
+copies, role boundaries, and operational safeguards. Passing tests are not a
+compliance approval.
 
 ## 10. Pre-flight test
 

@@ -1,10 +1,9 @@
 """WeasyPrint call sites must not enable presentational hints.
 
-PYSEC-2026-3412 is open against weasyprint 68.1 with no fixed release.
-It is a CSS-injection issue that requires HTML presentational hints to be
-enabled — unescaped attribute values get embedded into CSS. Every call
-site currently invokes `write_pdf()` without `presentational_hints`,
-which defaults to False, so the advisory does not apply to us.
+WeasyPrint 69.0 fixes PYSEC-2026-3412 / CVE-2026-49452, but this remains a
+defense-in-depth regression guard. The issue required HTML presentational
+hints to be enabled; every call site invokes `write_pdf()` without
+`presentational_hints`, which defaults to False.
 
 That is a call-site property, not a library property, so it can be
 undone by one well-meaning edit adding `presentational_hints=True` to fix
@@ -35,7 +34,28 @@ def _weasyprint_call_sites() -> list[tuple[Path, int, str]]:
 
 def test_weasyprint_is_actually_used():
     """Guard the guard — if the scan finds nothing, the rest is vacuous."""
-    assert len(_weasyprint_call_sites()) >= 5
+    assert len(_weasyprint_call_sites()) >= 3
+
+
+def test_pdf_writes_stay_in_the_shared_renderer():
+    """All output uses the same resource restrictions and tagged-PDF attempt."""
+    assert not [
+        f"{p.relative_to(APP.parent)}:{n}"
+        for p, n, line in _weasyprint_call_sites()
+        if "write_pdf(" in line and p != APP / "services" / "pdf_service.py"
+    ]
+
+
+def test_tagged_pdf_fallback_is_explicit(monkeypatch):
+    from unittest.mock import Mock
+    from app.services import pdf_service
+
+    document = Mock()
+    document.write_pdf.side_effect = [TypeError("unsupported variant"), b"plain-pdf"]
+    monkeypatch.setattr(pdf_service, "HTML", Mock(return_value=document))
+    assert pdf_service.render_pdf("<html></html>") == b"plain-pdf"
+    assert document.write_pdf.call_args_list[0].kwargs == {"pdf_variant": "pdf/ua-1"}
+    assert document.write_pdf.call_args_list[1].kwargs == {}
 
 
 def test_no_call_site_enables_presentational_hints():

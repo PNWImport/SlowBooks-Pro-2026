@@ -30,9 +30,11 @@ config = context.config
 # Otherwise, override sqlalchemy.url from DATABASE_URL env var (Docker).
 _url_override = config.attributes.get("database_url")
 if _url_override:
-    config.set_main_option("sqlalchemy.url", _url_override)
+    config.set_main_option("sqlalchemy.url", _url_override.replace("%", "%%"))
 elif os.getenv("DATABASE_URL"):
-    config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
+    config.set_main_option(
+        "sqlalchemy.url", os.environ["DATABASE_URL"].replace("%", "%%")
+    )
 
 # Interpret the config file for Python logging.
 # disable_existing_loggers=False: alembic also runs in-process (desktop

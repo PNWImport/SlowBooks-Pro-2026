@@ -1,12 +1,20 @@
 __pycache__/
+.venv/
+venv/
 *.pyc
 *.pyo
 .env
+.env.*
+!.env.example
 *.egg-info/
 dist/
 build/
 *.db
+*.db-*
+*.sqlite
+*.sqlite-*
 *.sqlite3
+*.sqlite3-*
 .idea/
 .vscode/
 *.swp
@@ -20,12 +28,22 @@ build/
 # Session signing key (auto-generated on first boot). NEVER commit.
 .slowbooks-session.key
 
+# Exported during the pre-2.9.4 Docker settings-key upgrade. It is a live
+# decryption key, not a release artifact. PostgreSQL TLS material mounted by
+# docker-compose.prod.yml is local deployment state for the same reason.
+slowbooks-settings-master.key
+certs/
+
 # Pytest / coverage artifacts
 .coverage
 .coverage.*
 htmlcov/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+.hypothesis/
 
 # User-uploaded attachments / logos — runtime data, not source
 app/static/uploads/
@@ -40,8 +58,13 @@ backups/*
 .DS_Store
 Thumbs.db
 
+# Local application/test process output
+*.log
+*.pid
+
 # Build artifacts from pip installs done in this directory
 *.egg
+node_modules/
 
 
 # Coverage XML artifact from pytest --cov (CI writes its own)

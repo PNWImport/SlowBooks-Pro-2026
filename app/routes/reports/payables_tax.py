@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date as dt_date
 from decimal import Decimal
 from typing import Optional
 
@@ -16,7 +16,7 @@ from app.routes.reports._router import router
 
 
 class SalesTaxPaymentRequest(StrictModel):
-    date: Optional[date] = None
+    date: Optional[dt_date] = None
     amount: Decimal
     pay_from_account_id: int
     check_number: Optional[str] = ""
@@ -25,15 +25,15 @@ class SalesTaxPaymentRequest(StrictModel):
 
 @router.get("/sales-tax")
 def sales_tax_report(
-    start_date: date = Query(default=None),
-    end_date: date = Query(default=None),
+    start_date: dt_date = Query(default=None),
+    end_date: dt_date = Query(default=None),
     db: Session = Depends(get_db),
 ):
     """Sales Tax report."""
     if not start_date:
-        start_date = date(date.today().year, 1, 1)
+        start_date = dt_date(dt_date.today().year, 1, 1)
     if not end_date:
-        end_date = date.today()
+        end_date = dt_date.today()
 
     # joinedload avoids an N+1 on inv.customer access in the loop below.
     from sqlalchemy.orm import joinedload
@@ -87,7 +87,7 @@ def pay_sales_tax(data: SalesTaxPaymentRequest, db: Session = Depends(get_db)):
     from app.services.accounting import create_journal_entry, get_sales_tax_account_id
     from app.services.closing_date import check_closing_date
 
-    pay_date = data.date or date.today()
+    pay_date = data.date or dt_date.today()
     check_closing_date(db, pay_date)
 
     if data.amount <= 0:
@@ -135,10 +135,10 @@ def pay_sales_tax(data: SalesTaxPaymentRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/ap-aging")
-def ap_aging(as_of_date: date = Query(default=None), db: Session = Depends(get_db)):
+def ap_aging(as_of_date: dt_date = Query(default=None), db: Session = Depends(get_db)):
     """AP Aging report — mirrors AR aging but for bills."""
     if not as_of_date:
-        as_of_date = date.today()
+        as_of_date = dt_date.today()
 
     try:
         from app.models.bills import Bill, BillStatus
@@ -219,7 +219,7 @@ def report_1099_summary(
 ):
     """1099 Summary: total payments to 1099 vendors for a year."""
     if not year:
-        year = date.today().year
+        year = dt_date.today().year
 
     from app.models.bills import BillPayment, BillPaymentAllocation
 

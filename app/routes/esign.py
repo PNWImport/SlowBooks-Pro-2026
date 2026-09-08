@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models.esign import EnvelopeKind, EnvelopeStatus, SignatureEnvelope
 from app.models.payroll import Employee
+from app.routes._helpers import clamp_pagination
 from app.schemas.common import StrictModel
 
 router = APIRouter(prefix="/api/esign", tags=["esign"])
@@ -55,8 +56,11 @@ def _response(e: SignatureEnvelope, include_body: bool = False) -> dict:
 def list_envelopes(
     employee_id: int = Query(default=None),
     status: str = Query(default=None),
+    skip: int = 0,
+    limit: int = 500,
     db: Session = Depends(get_db),
 ):
+    skip, limit = clamp_pagination(skip, limit)
     q = db.query(SignatureEnvelope).options(joinedload(SignatureEnvelope.employee))
     if employee_id is not None:
         q = q.filter(SignatureEnvelope.employee_id == employee_id)
@@ -65,7 +69,8 @@ def list_envelopes(
             q = q.filter(SignatureEnvelope.status == EnvelopeStatus(status))
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid status {status!r}")
-    return [_response(e) for e in q.order_by(SignatureEnvelope.id.desc()).all()]
+    rows = q.order_by(SignatureEnvelope.id.desc()).offset(skip).limit(limit).all()
+    return [_response(e) for e in rows]
 
 
 @router.get("/{envelope_id}")
@@ -101,7 +106,12 @@ def create_envelope(data: EnvelopeCreate, db: Session = Depends(get_db)):
 
 @router.post("/{envelope_id}/void")
 def void_envelope(envelope_id: int, db: Session = Depends(get_db)):
-    e = db.query(SignatureEnvelope).filter(SignatureEnvelope.id == envelope_id).first()
+    e = (
+        db.query(SignatureEnvelope)
+        .filter(SignatureEnvelope.id == envelope_id)
+        .with_for_update()
+        .first()
+    )
     if not e:
         raise HTTPException(status_code=404, detail="Envelope not found")
     if e.status == EnvelopeStatus.SIGNED:

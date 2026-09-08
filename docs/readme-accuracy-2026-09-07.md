@@ -19,7 +19,7 @@ README describes something other than what ships.
 ### 1. "250+ bullets" in the feature catalog — actual count is 144
 
 > "Full feature catalog (250+ bullets across every module) lives in
-> **[docs/features.md](docs/features.md)**"
+> **[docs/features.md](features.md)**"
 
 `grep -c "^- \|^  - " docs/features.md` → **144**.
 
@@ -50,10 +50,8 @@ lands first should make the two agree.
 > "Python 3.13 + FastAPI on PostgreSQL 17…"
 
 `Dockerfile` (`FROM python:3.13-slim`) and all four CI jobs
-(`python-version: "3.13"`) do target 3.13, so the claim matches intent.
-But the container these 1369 tests ran in is **Python 3.11.15**. Nothing
-failed, but "runs on 3.13" is currently an untested assertion. One CI run
-settles it.
+(`python-version: "3.13"`) target 3.13. This was an evidence gap at the time
+of this review; the final release-candidate suite later ran on Python 3.13.
 
 `INSTALL.md` is more careful and says the right thing already: *"CI gates
 against 3.13; older 3.12 may work but isn't tested."*
@@ -112,5 +110,6 @@ Smallest set that makes the README true:
 
 Findings 1 and 2 are **resolved by the merge**, not by an edit here: the
 README now says "eight providers" (which matches `ai_service.PROVIDERS`)
-and no longer claims a bullet count. Finding 3 (Python 3.13 asserted but
-only ever exercised on 3.11) still stands — one CI run settles it.
+and no longer claims a bullet count. Finding 3 is also resolved: the final
+release-candidate suite ran on Python 3.13. See
+[final validation](final-validation-2026-09-07.md).

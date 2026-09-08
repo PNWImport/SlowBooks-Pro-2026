@@ -5,9 +5,10 @@
 
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
+from app.routes._helpers import clamp_pagination
 from app.routes.invoices.helpers import resolve_line_taxable
 from app.models.recurring import RecurringInvoice, RecurringInvoiceLine
 from app.models.contacts import Customer
@@ -18,11 +19,20 @@ router = APIRouter(prefix="/api/recurring", tags=["recurring"])
 
 
 @router.get("", response_model=list[RecurringResponse])
-def list_recurring(active_only: bool = False, db: Session = Depends(get_db)):
-    q = db.query(RecurringInvoice)
+def list_recurring(
+    active_only: bool = False,
+    skip: int = 0,
+    limit: int = 500,
+    db: Session = Depends(get_db),
+):
+    skip, limit = clamp_pagination(skip, limit)
+    q = db.query(RecurringInvoice).options(
+        joinedload(RecurringInvoice.customer),
+        selectinload(RecurringInvoice.lines),
+    )
     if active_only:
         q = q.filter(RecurringInvoice.is_active)
-    recs = q.order_by(RecurringInvoice.next_due).all()
+    recs = q.order_by(RecurringInvoice.next_due).offset(skip).limit(limit).all()
     results = []
     for r in recs:
         resp = RecurringResponse.model_validate(r)

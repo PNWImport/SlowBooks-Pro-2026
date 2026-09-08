@@ -7,11 +7,32 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
-### Branch additions
+### 2.9.4 — Unreleased
 
+- Fix valid dates being rejected when recording sales tax payments; expand schema collision checks.
+- Refreshed AI defaults, made every model ID editable, and completed custom-endpoint validation and wiring.
+- Pin Custom and Worker AI connections to the public address approved by the SSRF guard.
+- Refresh saved onboarding, employee, and pay-schedule changes; suppress duplicate terminations, close active coverage, and keep new plans on Benefit Coverage.
+- Fix container keys, Compose parsing, HTTPS health checks, and rate-limit defaults; existing installs must preserve their settings key before upgrading.
+- Run Docker and Kubernetes app containers non-root with read-only roots and no Linux capabilities; repair Docker upload/backup volume ownership before startup.
 - Expanded payroll, HR, benefits coverage, and filing helpers.
+- Add guarded contractor-run voids with reversing entries and ACH warnings.
+- Correct federal deposit holidays, semiweekly extensions, quarter splits, and $100k allocation/carryover.
+- Shift pay dates around bank holidays/blackouts and keep assigned employee frequencies in sync.
+- Add employee time-entry submission to the portal, enforce workflow/hour bounds,
+  serialize payroll/job consumption, and fix Documents route precedence.
+- Serialize accounting process/void/conversion, PTO, and HR transitions,
+  restrict journal voids to one manual reversal, and scope reconciliation toggles.
 - Signed audit checkpoints and additional PII protection.
+- Prevent lost account-balance updates during concurrent journal/invoice writes;
+  serialize document-audit appends and commit signatures with their audit rows.
 - Preserved both benefits systems and reconciled upgrade paths.
+- Hardened uploads, audit redaction, startup checks, and backup/restore.
+- Revalidate signed-in accounts; require LAN HTTPS and restrict Windows server privileges/access.
+- Unified PDF rendering and excluded local secrets/data from Docker builds.
+- Corrected CT/MN paid-leave caps; added regression and migration checks.
+- Bound high-growth transaction lists and eliminate N+1 loads for time/job,
+  journals, recurring invoices, payables, payroll benefits, and remittances.
 
 ### v2.9.3 — SimpleFIN request pinned to the address the guard approved
 
@@ -1213,11 +1234,12 @@ constraint. `create_invoice`, `create_po`, and `create_estimate` now
 catch `IntegrityError`, roll back, and retry up to 10 times. Pinned
 by `tests/test_invoice_number_race.py`.
 
-**N+1 SELECT storm — eager-loaded every list endpoint.**
+**N+1 SELECT storm — eager-loaded six document list endpoints.**
 `for inv in invoices: inv.customer.name` was firing one SELECT per
 row. Added `joinedload(.customer)` + `selectinload(.lines)` to
-invoices, bills, POs, estimates, payments. Also clamped `skip`/`limit`
-on every list route (1 ≤ limit ≤ 1000; skip ≥ 0). Pinned by
+invoices, bills, POs, estimates, payments, and credit memos. Also clamped
+`skip`/`limit` on the paginated routes audited in that sweep
+(1 ≤ limit ≤ 1000; skip ≥ 0). Pinned by
 `tests/test_no_nplus1_in_list_endpoints.py`.
 
 **Closing-date enforcement — plugged three bypass paths.**

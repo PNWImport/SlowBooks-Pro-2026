@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.audit import AuditLog
 from app.services.request_context import acting_username
+from app.services.encryption import EncryptedDate, EncryptedEnum, EncryptedString
 
 
 def _actor(session) -> str | None:
@@ -43,7 +44,17 @@ _SKIP_TABLES = {
 
 # Column values that must never be snapshotted into audit JSON — the users
 # table is audited (who created/changed accounts matters), its hashes are not.
-_REDACT_COLUMNS = {"password_hash"}
+_REDACT_COLUMNS = {"password_hash", "portal_token", "token_hash"}
+
+
+def _redact_column(instance, column):
+    """Keep protected values out of the plaintext audit JSON, on every action."""
+    return (
+        column.key in _REDACT_COLUMNS
+        or isinstance(column.type, (EncryptedString, EncryptedDate, EncryptedEnum))
+        # Settings can contain credentials or arbitrary sensitive configuration.
+        or (instance.__tablename__ == "settings" and column.key == "value")
+    )
 
 
 def _serialize_value(val):
@@ -75,7 +86,7 @@ def _get_instance_dict(instance):
     result = {}
     for col in mapper.columns:
         key = col.key
-        if key in _REDACT_COLUMNS:
+        if _redact_column(instance, col):
             result[key] = "***"
             continue
         val = getattr(instance, key, None)
@@ -148,14 +159,16 @@ def _after_flush(session, flush_context):
         old_vals = {}
         new_vals = {}
         changed = []
-        for attr in insp.attrs:
+        for col in insp.mapper.columns:
+            attr = insp.attrs[col.key]
             hist = attr.history
             if hist.has_changes():
                 key = attr.key
                 old_val = hist.deleted[0] if hist.deleted else None
                 new_val = hist.added[0] if hist.added else None
-                old_vals[key] = _serialize_value(old_val)
-                new_vals[key] = _serialize_value(new_val)
+                redact = _redact_column(obj, col)
+                old_vals[key] = "***" if redact else _serialize_value(old_val)
+                new_vals[key] = "***" if redact else _serialize_value(new_val)
                 changed.append(key)
 
         if changed:

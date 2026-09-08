@@ -33,11 +33,11 @@ binding = "AI"
 [vars]
 # Comma-separated list of allowed model IDs.
 # If not set, defaults to:
-#   @cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/meta/llama-3.1-8b-instruct,@cf/mistral/mistral-7b-instruct-v0.2-lora
+#   @cf/openai/gpt-oss-120b,@cf/openai/gpt-oss-20b,@cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/meta/llama-4-scout-17b-16e-instruct
 # ALLOWED_MODELS = ""
 
 # Default model to use if request doesn't specify one.
-# Must be in ALLOWED_MODELS. Defaults to @cf/meta/llama-3.3-70b-instruct-fp8-fast
+# Must be in ALLOWED_MODELS. Defaults to @cf/openai/gpt-oss-120b
 # DEFAULT_MODEL = ""
 
 # Comma-separated list of origins allowed for CORS (browser requests).

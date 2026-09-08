@@ -2,21 +2,18 @@
 # Slowbooks Pro 2026 — AI Insights service (Phase 9.5)
 #
 # Runs the analytics dashboard through an LLM and returns a structured
-# "3 observations / 3 risks / 3 recommendations" report. Six providers
-# are hardcoded with sensible April-2026 defaults; users can override the
-# model string per provider from the UI so they're not stuck when the
-# vendors inevitably rename everything next quarter.
+# "3 observations / 3 risks / 3 recommendations" report. Eight adapters
+# have curated September-2026 defaults; every model ID remains editable so
+# vendor releases and account-specific snapshots do not require an app update.
 #
-# Providers (verified April 2026):
+# Providers (catalogues reviewed September 2026):
 #   * grok        — xAI, OpenAI-compat,    https://api.x.ai/v1
 #   * groq        — Groq LPU cloud, OpenAI-compat, https://api.groq.com/openai/v1
-#                   (GENEROUS free tier)
 #   * cloudflare  — Cloudflare Workers AI, OpenAI-compat, account-scoped URL
-#                   (10k neurons/day free)
+#   * cloudflare_worker — self-hosted Workers AI gateway
 #   * anthropic   — Claude native /v1/messages
 #   * openai      — OpenAI /v1/chat/completions
 #   * gemini      — Google generativelanguage.googleapis.com generateContent
-#                   (Flash models free)
 #   * custom       — any OpenAI-compatible /v1/chat/completions endpoint
 #                   (user-supplied base URL, HTTPS-only, SSRF-guarded)
 #
@@ -28,12 +25,14 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import logging
 import re
+import socket
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import httpx
 
@@ -155,8 +154,6 @@ def validate_worker_url(url: str) -> str:
         # re-resolves later; this raises the bar at config-save time. Resolution
         # failure is left non-fatal — the hardened client + provider allowlist
         # still gate the actual call.)
-        import socket
-
         try:
             infos = socket.getaddrinfo(host, None)
         except OSError:
@@ -212,7 +209,7 @@ class ProviderSpec:
 
     key: str  # machine id used in settings + UI
     label: str  # human-readable name for the UI
-    default_model: str  # recommended default as of April 2026
+    default_model: str  # recommended default as of September 2026
     wire_format: str  # "openai" | "anthropic" | "gemini"
     docs_url: str  # where users go to get a key
     free_tier_hint: str  # 1-line description for the UI
@@ -229,52 +226,48 @@ PROVIDERS: Dict[str, ProviderSpec] = {
     "grok": ProviderSpec(
         key="grok",
         label="xAI Grok",
-        default_model="grok-4-fast",
+        default_model="grok-4.6",
         wire_format="openai",
         docs_url="https://console.x.ai/",
-        free_tier_hint="$25 promotional credit on signup",
-        # xAI renames models often — verify against
-        # https://docs.x.ai/docs/models. Use Custom… for anything newer.
-        model_choices=(
-            "grok-4-fast",
-            "grok-3",
-        ),
+        free_tier_hint="API key required — check xAI Console for current pricing and limits",
+        # https://docs.x.ai/developers/models
+        model_choices=("grok-4.6",),
     ),
     "groq": ProviderSpec(
         key="groq",
         label="Groq (LPU Cloud)",
-        default_model="llama-3.3-70b-versatile",
+        default_model="openai/gpt-oss-120b",
         wire_format="openai",
         docs_url="https://console.groq.com/keys",
-        free_tier_hint="Free tier with generous rate limits — no credit card",
-        # Conservative list — verify against
-        # https://console.groq.com/docs/models. Use Custom… for newer ones.
+        free_tier_hint="API key required — check Groq Console for current access and limits",
+        # Production text models from https://console.groq.com/docs/models.
+        # Custom… remains available for account-specific and future models.
         model_choices=(
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768",
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
         ),
     ),
     "cloudflare": ProviderSpec(
         key="cloudflare",
         label="Cloudflare Workers AI (direct)",
-        default_model="@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        default_model="@cf/openai/gpt-oss-120b",
         wire_format="openai",
         docs_url="https://dash.cloudflare.com/profile/api-tokens",
-        free_tier_hint="10,000 neurons/day free — requires CF API token",
+        free_tier_hint="Cloudflare API token and account ID required",
         needs_account_id=True,
         # Subset of CF's catalogue — full list at
         # https://developers.cloudflare.com/workers-ai/models/
         model_choices=(
+            "@cf/openai/gpt-oss-120b",
+            "@cf/openai/gpt-oss-20b",
             "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-            "@cf/meta/llama-3.1-8b-instruct",
-            "@cf/mistral/mistral-7b-instruct-v0.1",
+            "@cf/meta/llama-4-scout-17b-16e-instruct",
         ),
     ),
     "cloudflare_worker": ProviderSpec(
         key="cloudflare_worker",
         label="Cloudflare Worker Gateway (self-hosted)",
-        default_model="@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        default_model="@cf/openai/gpt-oss-120b",
         wire_format="openai",
         docs_url="https://github.com/pnwimport/slowbooks-pro-2026/tree/main/cloudflare",
         free_tier_hint=(
@@ -284,20 +277,23 @@ PROVIDERS: Dict[str, ProviderSpec] = {
         ),
         needs_worker_url=True,
         model_choices=(
+            "@cf/openai/gpt-oss-120b",
+            "@cf/openai/gpt-oss-20b",
             "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-            "@cf/meta/llama-3.1-8b-instruct",
-            "@cf/mistral/mistral-7b-instruct-v0.1",
+            "@cf/meta/llama-4-scout-17b-16e-instruct",
         ),
     ),
     "anthropic": ProviderSpec(
         key="anthropic",
         label="Anthropic Claude",
-        default_model="claude-sonnet-4-6",
+        default_model="claude-sonnet-5",
         wire_format="anthropic",
         docs_url="https://console.anthropic.com/",
-        free_tier_hint="Paid only (no free tier)",
+        free_tier_hint="API key required — check Anthropic Console for current access",
         model_choices=(
-            "claude-opus-4-7",
+            "claude-sonnet-5",
+            "claude-opus-5",
+            "claude-fable-5",
             "claude-sonnet-4-6",
             "claude-haiku-4-5-20251001",
         ),
@@ -305,26 +301,28 @@ PROVIDERS: Dict[str, ProviderSpec] = {
     "openai": ProviderSpec(
         key="openai",
         label="OpenAI",
-        default_model="gpt-5.4-mini",
+        default_model="gpt-5.6-terra",
         wire_format="openai",
         docs_url="https://platform.openai.com/api-keys",
-        free_tier_hint="Paid only (no free tier)",
-        # OpenAI naming changes per release — verify against
-        # https://platform.openai.com/docs/models. Use Custom… for new ones.
-        model_choices=("gpt-5.4-mini",),
+        free_tier_hint="API key and API billing account required",
+        # Current general-purpose Chat Completions models. Custom… supports
+        # account-specific snapshots and future IDs without an app release.
+        model_choices=("gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"),
     ),
     "gemini": ProviderSpec(
         key="gemini",
         label="Google Gemini",
-        default_model="gemini-2.5-flash",
+        default_model="gemini-3.8-flash",
         wire_format="gemini",
         docs_url="https://aistudio.google.com/app/apikey",
-        free_tier_hint="Free tier for Flash models via AI Studio",
+        free_tier_hint="API key required — check AI Studio for current access and limits",
         model_choices=(
-            "gemini-2.5-pro",
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-lite",
+            "gemini-3.8-flash",
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
         ),
     ),
     "custom": ProviderSpec(
@@ -503,11 +501,24 @@ def _openai_style_request(
     model: str,
     system: str,
     user: str,
+    *,
+    token_parameter: str = "max_tokens",
+    include_temperature: bool = True,
 ) -> Dict[str, Any]:
     """Build an OpenAI-compatible chat-completions request.
 
     Shared by OpenAI, Grok, Groq, and Cloudflare (all OpenAI-compat endpoints).
     """
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        token_parameter: MAX_TOKENS,
+    }
+    if include_temperature:
+        body["temperature"] = TEMPERATURE
     return {
         "method": "POST",
         "url": url,
@@ -515,15 +526,7 @@ def _openai_style_request(
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
-        "json": {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": TEMPERATURE,
-            "max_tokens": MAX_TOKENS,
-        },
+        "json": body,
     }
 
 
@@ -613,6 +616,7 @@ def build_request(
             model,
             system,
             user,
+            token_parameter="max_completion_tokens",
         )
 
     if provider_key == "openai":
@@ -622,6 +626,8 @@ def build_request(
             model,
             system,
             user,
+            token_parameter="max_completion_tokens",
+            include_temperature=False,
         )
 
     if provider_key == "cloudflare":
@@ -783,7 +789,95 @@ def _hardened_client(timeout: float) -> httpx.Client:
         verify=True,
         follow_redirects=False,
         headers={"User-Agent": "slowbooks-pro-ai/1.0"},
+        trust_env=False,
     )
+
+
+def _resolve_public_endpoint(url: str) -> str:
+    """Resolve a user-configured endpoint and return one checked address."""
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    try:
+        infos = socket.getaddrinfo(host, parts.port or 443, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise AIProviderError("AI endpoint hostname could not be resolved") from exc
+    if not infos:
+        raise AIProviderError("AI endpoint hostname could not be resolved")
+    for info in infos:
+        try:
+            address = ipaddress.ip_address(info[4][0])
+        except (ValueError, IndexError, TypeError) as exc:
+            raise AIProviderError("AI endpoint returned an invalid address") from exc
+        if not address.is_global:
+            raise AIProviderError(
+                "AI endpoint resolves to a private or local address — refusing"
+            )
+    return infos[0][4][0]
+
+
+def _pin_public_endpoint(url: str, address: str) -> tuple[str, dict]:
+    """Connect to the checked address while preserving Host and TLS SNI."""
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    ip = ipaddress.ip_address(address)
+    netloc = f"[{address}]" if ip.version == 6 else address
+    if parts.port:
+        netloc += f":{parts.port}"
+    pinned = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    return pinned, {"host": parts.netloc, "sni": host}
+
+
+def _response_peer_address(response: httpx.Response) -> Optional[str]:
+    stream = response.extensions.get("network_stream")
+    if stream is None:
+        return None
+    try:
+        info = stream.get_extra_info("server_addr")
+        address = info[0]
+        ipaddress.ip_address(address)
+    except (OSError, ValueError, AttributeError, IndexError, TypeError):
+        return None
+    return address
+
+
+def _execute_request(
+    provider_key: str,
+    req: Dict[str, Any],
+    timeout: float,
+    client: Optional[httpx.Client],
+) -> httpx.Response:
+    """Execute one provider request with endpoint pinning where required."""
+    safe_url = _check_outbound_url(provider_key, req["url"])
+    if client is not None:
+        # Injectable clients are deterministic test transports and perform no
+        # production network I/O. Production calls always use the path below.
+        return client.request(
+            req["method"], safe_url, headers=req["headers"], json=req["json"]
+        )
+
+    if provider_key in ("cloudflare_worker", "custom"):
+        address = _resolve_public_endpoint(safe_url)
+        pinned_url, names = _pin_public_endpoint(safe_url, address)
+        headers = {**req["headers"], "Host": names["host"]}
+        with _hardened_client(timeout) as hardened:
+            response = hardened.request(
+                req["method"],
+                pinned_url,
+                headers=headers,
+                json=req["json"],
+                extensions={"sni_hostname": names["sni"]},
+            )
+            peer = _response_peer_address(response)
+        if peer and not ipaddress.ip_address(peer).is_global:
+            raise AIProviderError(
+                "AI endpoint connected to a private or local address — refusing"
+            )
+        return response
+
+    with _hardened_client(timeout) as hardened:
+        return hardened.request(
+            req["method"], safe_url, headers=req["headers"], json=req["json"]
+        )
 
 
 def call_provider(
@@ -812,20 +906,8 @@ def call_provider(
         worker_url,
         endpoint_url,
     )
-    # Re-validate outbound URL against the per-provider allowlist before
-    # any network IO. Defense-in-depth + CodeQL trust boundary at the sink.
-    safe_url = _check_outbound_url(provider_key, req["url"])
-
     try:
-        if client is None:
-            with _hardened_client(timeout) as c:
-                resp = c.request(
-                    req["method"], safe_url, headers=req["headers"], json=req["json"]
-                )
-        else:
-            resp = client.request(
-                req["method"], safe_url, headers=req["headers"], json=req["json"]
-            )
+        resp = _execute_request(provider_key, req, timeout, client)
     except httpx.HTTPError as e:
         # Never include api_key in the exception — it might have been
         # substituted into the URL (Gemini).
@@ -1032,25 +1114,10 @@ def call_with_tools(
                 f"Tool calling not supported for wire format: {wire_format}"
             )
 
-        # Re-validate outbound URL against the per-provider allowlist before
-        # any network IO. Defense-in-depth + CodeQL trust boundary at the sink.
-        safe_url = _check_outbound_url(provider_key, req["url"])
-
         # Make the call — reuses the same hardened-client profile as
         # call_provider (verify=True, follow_redirects=False, explicit UA).
         try:
-            if client is None:
-                with _hardened_client(DEFAULT_TIMEOUT) as c:
-                    resp = c.request(
-                        req["method"],
-                        safe_url,
-                        headers=req["headers"],
-                        json=req["json"],
-                    )
-            else:
-                resp = client.request(
-                    req["method"], safe_url, headers=req["headers"], json=req["json"]
-                )
+            resp = _execute_request(provider_key, req, DEFAULT_TIMEOUT, client)
         except httpx.HTTPError as e:
             raise AIProviderError(f"{provider_key}: network error") from e
 
@@ -1082,11 +1149,15 @@ def call_with_tools(
                 "success": bool(final_text),
             }
 
-        # Execute the tool calls and build results
+        # Execute all calls from this assistant turn before adding protocol
+        # history. OpenAI and Anthropic require the original provider-issued
+        # call IDs to be echoed with the corresponding results.
+        executed_calls = []
         for call in tool_calls:
             tool_name = call.get("name")
             tool_params = call.get("arguments", {})
             result = tool_executor(tool_name, **tool_params)
+            executed_calls.append((call, tool_name, tool_params, result))
             tool_calls_made.append(
                 {
                     "tool_name": tool_name,
@@ -1095,87 +1166,91 @@ def call_with_tools(
                 }
             )
 
-            # Add the assistant's response (tool call request) to messages
-            if wire_format == "openai":
-                messages.append(
+        if wire_format == "openai":
+            assistant_calls = []
+            completed_before = len(tool_calls_made) - len(executed_calls)
+            for index, (call, tool_name, tool_params, _result) in enumerate(
+                executed_calls, start=1
+            ):
+                call_id = call.get("id") or f"call_{completed_before + index}"
+                assistant_calls.append(
                     {
-                        "role": "assistant",
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": f"call_{len(tool_calls_made)}",
-                                "type": "function",
-                                "function": {
-                                    "name": tool_name,
-                                    "arguments": str(tool_params),
-                                },
-                            }
-                        ],
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": call.get("raw_arguments")
+                            or json.dumps(tool_params, default=str),
+                        },
                     }
                 )
-                # Add tool result
+            messages.append(
+                {"role": "assistant", "content": None, "tool_calls": assistant_calls}
+            )
+            for assistant_call, executed in zip(assistant_calls, executed_calls):
+                _call, _name, _params, result = executed
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": f"call_{len(tool_calls_made)}",
-                        "content": str(result),
+                        "tool_call_id": assistant_call["id"],
+                        "content": json.dumps(result, default=str),
                     }
                 )
 
-            elif wire_format == "anthropic":
-                messages.append(
+        elif wire_format == "anthropic":
+            assistant_content = []
+            result_content = []
+            completed_before = len(tool_calls_made) - len(executed_calls)
+            for index, (call, tool_name, tool_params, result) in enumerate(
+                executed_calls, start=1
+            ):
+                call_id = call.get("id") or f"tool_use_{completed_before + index}"
+                assistant_content.append(
                     {
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "id": f"tool_use_{len(tool_calls_made)}",
-                                "name": tool_name,
-                                "input": tool_params,
-                            }
-                        ],
+                        "type": "tool_use",
+                        "id": call_id,
+                        "name": tool_name,
+                        "input": tool_params,
                     }
                 )
-                messages.append(
+                result_content.append(
                     {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": f"tool_use_{len(tool_calls_made)}",
-                                "content": str(result),
-                            }
-                        ],
+                        "type": "tool_result",
+                        "tool_use_id": call_id,
+                        "content": json.dumps(result, default=str),
                     }
                 )
+            messages.append({"role": "assistant", "content": assistant_content})
+            messages.append({"role": "user", "content": result_content})
 
-            elif wire_format == "gemini":
-                gemini_contents.append(
-                    {
-                        "role": "model",
-                        "parts": [
-                            {
-                                "functionCall": {
-                                    "name": tool_name,
-                                    "args": tool_params,
-                                }
+        elif wire_format == "gemini":
+            gemini_contents.append(
+                {
+                    "role": "model",
+                    "parts": [
+                        {"functionCall": {"name": name, "args": params}}
+                        for _call, name, params, _result in executed_calls
+                    ],
+                }
+            )
+            gemini_contents.append(
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "functionResponse": {
+                                "name": name,
+                                "response": (
+                                    result
+                                    if isinstance(result, dict)
+                                    else {"result": result}
+                                ),
                             }
-                        ],
-                    }
-                )
-                gemini_contents.append(
-                    {
-                        "role": "function",
-                        "parts": [
-                            {
-                                "functionResponse": {
-                                    "name": tool_name,
-                                    "response": {"content": str(result)},
-                                }
-                            }
-                        ],
-                    }
-                )
+                        }
+                        for _call, name, _params, result in executed_calls
+                    ],
+                }
+            )
 
     # Max iterations reached
     return {
@@ -1191,7 +1266,7 @@ def call_with_tools(
 def _extract_tool_calls(wire_format: str, body: Dict[str, Any]) -> list:
     """Extract tool calls from the provider's response body.
 
-    Returns list of {name, arguments} dicts, or [] if no tool calls.
+    Returns normalized calls, including provider call IDs where applicable.
     """
     if wire_format in ("grok", "groq", "openai", "cloudflare"):
         # OpenAI format: choices[0].message.tool_calls
@@ -1200,10 +1275,12 @@ def _extract_tool_calls(wire_format: str, body: Dict[str, Any]) -> list:
             message = choice.get("message", {})
             return [
                 {
+                    "id": tc.get("id"),
                     "name": tc.get("function", {}).get("name"),
                     "arguments": _parse_json_args(
                         tc.get("function", {}).get("arguments", "{}")
                     ),
+                    "raw_arguments": tc.get("function", {}).get("arguments", "{}"),
                 }
                 for tc in message.get("tool_calls", [])
             ]
@@ -1215,7 +1292,11 @@ def _extract_tool_calls(wire_format: str, body: Dict[str, Any]) -> list:
         try:
             content = body.get("content", [])
             return [
-                {"name": c.get("name"), "arguments": c.get("input", {})}
+                {
+                    "id": c.get("id"),
+                    "name": c.get("name"),
+                    "arguments": c.get("input", {}),
+                }
                 for c in content
                 if isinstance(c, dict) and c.get("type") == "tool_use"
             ]
@@ -1247,8 +1328,6 @@ def _parse_json_args(args_str: str) -> Dict[str, Any]:
     if isinstance(args_str, dict):
         return args_str
     try:
-        import json
-
         return json.loads(args_str)
     except (ValueError, TypeError):
         return {}

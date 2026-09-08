@@ -307,13 +307,36 @@ def prepare_env() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _lan_tls() -> dict:
+    """Require usable TLS material before opening a non-loopback listener."""
+    import ssl
+
+    cert = os.environ.get("SLOWBOOKS_TLS_CERTFILE") or get_env_value(
+        "SLOWBOOKS_TLS_CERTFILE"
+    )
+    key = os.environ.get("SLOWBOOKS_TLS_KEYFILE") or get_env_value(
+        "SLOWBOOKS_TLS_KEYFILE"
+    )
+    if not cert or not key:
+        raise RuntimeError(
+            "Server Edition requires SLOWBOOKS_TLS_CERTFILE and SLOWBOOKS_TLS_KEYFILE. "
+            "See docs/server-edition.md; plain-HTTP LAN startup is disabled."
+        )
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert, key)
+    return {
+        "ssl_certfile": str(Path(cert).resolve()),
+        "ssl_keyfile": str(Path(key).resolve()),
+    }
+
+
 def _server_env(db_url: str, port: int, bind_host: str = "127.0.0.1") -> dict:
     env = dict(os.environ)
     env.update(
         {
             "DATABASE_URL": db_url,
-            "APP_DEBUG": "true",
-            "FORCE_HTTPS": "false",
+            "APP_DEBUG": "true" if bind_host == "127.0.0.1" else "false",
+            "FORCE_HTTPS": "false" if bind_host == "127.0.0.1" else "true",
             "APP_HOST": bind_host,
             # Server Edition groundwork: anything beyond loopback flips the
             # flag the frontend uses to show the SERVER EDITION header.
@@ -371,6 +394,16 @@ def migrate(db_url: str, output=None) -> None:
 def start_server(
     db_url: str, port: int, output=None, bind_host: str = "127.0.0.1"
 ) -> subprocess.Popen:
+    tls = _lan_tls() if bind_host != "127.0.0.1" else {}
+    env = _server_env(db_url, port, bind_host)
+    if tls:
+        env.update(
+            SLOWBOOKS_TLS_CERTFILE=tls["ssl_certfile"],
+            SLOWBOOKS_TLS_KEYFILE=tls["ssl_keyfile"],
+        )
+        env["SLOWBOOKS_PRIVATE_NETWORK"] = "0"
+        # Direct TLS does not need proxy headers; do not trust spoofed origins.
+        env["FORWARDED_ALLOW_IPS"] = ""
     if FROZEN:
         # Re-exec this same bundled exe; --_serve (handled at the top of
         # main()) turns the child into the uvicorn server. cwd must be
@@ -393,10 +426,18 @@ def start_server(
             "--no-use-colors",
         ]
         cwd = ROOT
+        if tls:
+            cmd += [
+                "--ssl-certfile",
+                tls["ssl_certfile"],
+                "--ssl-keyfile",
+                tls["ssl_keyfile"],
+                "--no-proxy-headers",
+            ]
     return subprocess.Popen(
         cmd,
         cwd=cwd,
-        env=_server_env(db_url, port, bind_host),
+        env=env,
         stdout=output,
         stderr=subprocess.STDOUT if output else None,
     )
@@ -407,14 +448,33 @@ def wait_for_health(
     port: int,
     timeout: float = 120,
     host: str = "127.0.0.1",
+    tls: bool = False,
 ) -> bool:
-    url = f"http://{host}:{port}/health"
+    import ssl
+
+    context = None
+    if tls:
+        # Use the certificate-covered DNS name when configured. It must
+        # resolve to this server locally; verification remains mandatory.
+        host = (
+            os.environ.get("SLOWBOOKS_TLS_HEALTH_HOST")
+            or get_env_value("SLOWBOOKS_TLS_HEALTH_HOST")
+            or host
+        )
+        # Private-CA deployments can supply their root bundle. Never disable
+        # certificate or hostname verification for the health probe.
+        ca = os.environ.get("SLOWBOOKS_TLS_CA_FILE") or get_env_value(
+            "SLOWBOOKS_TLS_CA_FILE"
+        )
+        context = ssl.create_default_context(cafile=ca or None)
+    url_host = f"[{host}]" if ":" in host else host
+    url = f"{'https' if tls else 'http'}://{url_host}:{port}/health"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             return False  # server process died
         try:
-            with urllib.request.urlopen(url, timeout=2) as resp:
+            with urllib.request.urlopen(url, timeout=2, context=context) as resp:
                 if resp.status == 200:
                     return True
         except OSError:
@@ -471,7 +531,14 @@ def launch_company(
     proc = start_server(db_url, port, output=output, bind_host=bind_host)
     # 0.0.0.0 includes loopback; a specific interface bind does not.
     health_host = "127.0.0.1" if bind_host in ("127.0.0.1", "0.0.0.0") else bind_host
-    if not wait_for_health(proc, port, host=health_host):
+    try:
+        healthy = wait_for_health(
+            proc, port, host=health_host, tls=bind_host != "127.0.0.1"
+        )
+    except Exception:
+        stop_server(proc)
+        raise
+    if not healthy:
         stop_server(proc)
         raise RuntimeError(
             f"Server did not become healthy on port {port}. "
@@ -1030,10 +1097,10 @@ def _compose_serve_banner(port: int, addresses: list[str]) -> str:
     lines = ["SlowBooks Pro — SERVER EDITION mode is running.", ""]
     lines.append("Your team connects at:")
     for addr in addresses or ["<this machine's IP>"]:
-        lines.append(f"    http://{addr}:{port}")
+        lines.append(f"    https://{addr}:{port}")
     lines += [
         "",
-        "Traffic is plain HTTP — trusted networks only.",
+        "HTTPS is required; use a name covered by the server certificate.",
         "This server stops when this process is closed.",
     ]
     return "\n".join(lines)
@@ -1196,6 +1263,12 @@ def _lan_addresses() -> list[str]:
 
 
 def run_headless(port: int, bind_host: str = "127.0.0.1") -> int:
+    if bind_host != "127.0.0.1":
+        try:
+            _lan_tls()
+        except (OSError, ValueError, RuntimeError) as exc:
+            print(f"ERROR: {exc}")
+            return 1
     from app.services import company_service
 
     filename = company_service.get_last_opened()
@@ -1290,7 +1363,15 @@ def _serve() -> int:
 
     port = int(os.environ.get("APP_PORT", "3001"))
     host = os.environ.get("APP_HOST", "127.0.0.1")
-    uvicorn.run(app.main.app, host=host, port=port, use_colors=False)
+    tls = _lan_tls() if host != "127.0.0.1" else {}
+    uvicorn.run(
+        app.main.app,
+        host=host,
+        port=port,
+        use_colors=False,
+        **tls,
+        **({"proxy_headers": False} if tls else {}),
+    )
     return 0
 
 

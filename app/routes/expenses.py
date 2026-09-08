@@ -106,6 +106,7 @@ def void_expense(expense_id: int, db: Session = Depends(get_db)):
     txn = (
         db.query(Transaction)
         .filter(Transaction.id == expense_id, Transaction.source_type == SOURCE_TYPE)
+        .with_for_update()
         .first()
     )
     if txn is None:

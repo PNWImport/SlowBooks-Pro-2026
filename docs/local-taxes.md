@@ -4,7 +4,7 @@ The tax layer below the states: Pennsylvania EIT + LST, Ohio municipal and
 school-district taxes, New York City and Yonkers, Maryland and Indiana county
 taxes, Kentucky occupational license fees, Michigan city income taxes.
 
-Same design as [state-tax-tables.md](state-tax-tables.md): one engine
+Unlike the current Python [state tables](state-tax-tables.md), local taxes use one engine
 (`app/services/local_tax/engine.py`), reviewable JSON data
 (`app/services/local_tax/localities/*.json`), per-file provenance with a
 `verified` flag, validation at load rather than mid-pay-run. Run

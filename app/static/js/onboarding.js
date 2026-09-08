@@ -48,11 +48,11 @@ const OnboardingPage = {
             const complete = cl ? cl.complete        : 0;
             const total    = cl ? cl.total           : 0;
             const pct      = cl ? cl.percent_complete : 0;
-            html += `<tr>
+            html += `<tr data-onboarding-employee="${emp.id}">
                 <td><strong>${escapeHtml(emp.first_name)} ${escapeHtml(emp.last_name)}</strong></td>
-                <td class="amount">${complete}</td>
-                <td class="amount">${total}</td>
-                <td class="amount">${pct}%</td>
+                <td class="amount" data-summary="complete">${complete}</td>
+                <td class="amount" data-summary="total">${total}</td>
+                <td class="amount" data-summary="percent">${pct}%</td>
                 <td class="actions">
                     <button class="btn btn-sm btn-secondary" onclick="OnboardingPage.viewChecklist(${emp.id})">View Checklist</button>
                 </td>
@@ -82,6 +82,14 @@ const OnboardingPage = {
             }
         }
 
+        // Refresh the page behind the dialog from the same saved summary.
+        // All dismissal paths (Close, X, Escape) then reveal current counts.
+        const row = document.querySelector(`[data-onboarding-employee="${empId}"]`);
+        if (row) {
+            row.querySelector('[data-summary="complete"]').textContent = cl.complete;
+            row.querySelector('[data-summary="total"]').textContent = cl.total;
+            row.querySelector('[data-summary="percent"]').textContent = `${cl.percent_complete}%`;
+        }
         const tasks = cl.tasks || [];
         let rows = '';
         for (const t of tasks) {

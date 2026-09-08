@@ -4,6 +4,22 @@
 # ============================================================================
 
 services:
+  # Named volumes are created as root by Docker on some upgrade paths. Repair
+  # only the two writable data volumes, then let the application stay fully
+  # unprivileged with a read-only root filesystem and no Linux capabilities.
+  storage-init:
+    build: .
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: [no-new-privileges:true]
+    entrypoint: ["chown", "-R", "1000:1000", "/app/backups", "/app/app/static/uploads"]
+    volumes:
+      - slowbooks_uploads:/app/app/static/uploads
+      - slowbooks_backups:/app/backups
+
   postgres:
     image: postgres:17-alpine
     command:
@@ -40,7 +56,16 @@ services:
   slowbooks:
     build: .
     restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+      - /home/slowbooks/.cache:size=16m,mode=1777
     depends_on:
+      storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     environment:
@@ -52,6 +77,15 @@ services:
       APP_HOST: "0.0.0.0"
       APP_PORT: "3001"
       APP_DEBUG: "${APP_DEBUG:-false}"
+      PAYROLL_ENCRYPTION_SECRET: "${PAYROLL_ENCRYPTION_SECRET:?set a unique payroll encryption secret in .env}"
+      SESSION_SECRET_KEY: "${SESSION_SECRET_KEY:?set a unique session signing secret in .env}"
+      # Encrypts credentials stored in PostgreSQL (AI, SMTP, payment providers,
+      # bank feeds). Keeping it outside the container means those values remain
+      # decryptable after an image update or container replacement.
+      SETTINGS_ENCRYPTION_KEY: "${SETTINGS_ENCRYPTION_KEY:?set a stable Fernet settings encryption key in .env}"
+      AUDIT_CHECKPOINT_SIGNING_SECRET: "${AUDIT_CHECKPOINT_SIGNING_SECRET:-}"
+      AUDIT_CHECKPOINT_KEY_ID: "${AUDIT_CHECKPOINT_KEY_ID:-}"
+      AUDIT_CHECKPOINT_SIGNING_SECRET_PREV: "${AUDIT_CHECKPOINT_SIGNING_SECRET_PREV:-}"
       # ---- Single-host transport (the documented `docker compose up`) ----
       # Postgres is on the compose-internal bridge and the app answers on
       # http://localhost:3001, so the production guards for a TLS database
@@ -63,7 +97,10 @@ services:
       # the flag.
       SLOWBOOKS_PRIVATE_NETWORK: "${SLOWBOOKS_PRIVATE_NETWORK:-1}"
       FORCE_HTTPS: "${FORCE_HTTPS:-false}"
-      APP_WORKERS: "${APP_WORKERS:-2}"
+      RATE_LIMIT_STORAGE_URI: "${RATE_LIMIT_STORAGE_URI:-}"
+      # In-memory rate-limit counters are correct only with one worker.
+      # Configure RATE_LIMIT_STORAGE_URI before deliberately scaling this up.
+      APP_WORKERS: "${APP_WORKERS:-1}"
       # Python 3.13 experimental JIT - uncomment for ~5-10% extra on hot loops
       # PYTHON_JIT: "1"
     ports:

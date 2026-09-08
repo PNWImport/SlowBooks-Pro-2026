@@ -20,17 +20,23 @@ recorded only inside a struck-through entry further down this file.
 Pulled up here so the open surface is visible in one place.
 
 **Blocking real payroll use — data verification:**
-- **Verify the 47 state withholding tables** — all ship
-  `"verified": false`. Verify the states you actually pay in against
-  their published guides; see `docs/state-tax-tables.md`.
-- **Verify the 32 locality files** — same, all `"verified": false`.
-  See `docs/local-taxes.md`.
+- **Paid-leave caps:** Connecticut and Minnesota caps are corrected and boundary-tested.
+  CO/MA/DE items still use the legacy `SS_BASE=176100`; independently verify
+  each program before payroll. See `docs/state-tax-tables.md`.
+- **Independently verify state withholding for supported deployments** — the
+  current `StateSpec` data lives in `app/services/state_tax/tables.py`, not JSON
+  with a `verified` flag. It records a prior 2026-09-03 verification claim and
+  known simplifications; this validation pass did not reverify every figure.
+  See `docs/state-withholding.md`.
+- **Verify local-tax data** — locality JSON files still carry verification
+  flags. Check each jurisdiction used; see `docs/local-taxes.md`.
 - **Verify e-file layouts** — EFW2 / Pub 1220 output has never been run
   through AccuWage or checked against current-year specs.
 
 **Missing schema dimensions (each blocks a named feature):**
-- **`Employee.state_allowances`** — `exemption_allowance` assumes one
-  allowance per employee because the column doesn't exist.
+- **State allowances — implemented:** model, request/response schemas, payroll
+  calculation, and allowance regression tests exist. Validate state-specific
+  inputs and formulas; do not treat the column as missing.
 - **Department / job-cost dimension** — payroll reports can't allocate
   by department without it.
 - **Gross-receipts tracking** — Form 8027 (allocated tips) needs it.
@@ -40,16 +46,8 @@ Pulled up here so the open surface is visible in one place.
   transmittal zero-fills. Also needs a TCC config field.
 
 **Feature gaps with a known shape:**
-- **Contractor run void** — no void endpoint for a processed run;
-  mirror the payroll void (row-lock, reversing JE, idempotent flag).
-- **Holiday calendar + blackout dates** — pay schedules shift weekends
-  only, so a pay date landing on a federal holiday isn't moved.
-- **Federal holidays in the deposit calendar** — same gap; the roll is
-  weekend-only, so a due date can read at most a day early.
 - **Per-locality W-2 box 20 split** — multiple localities currently
   join into one line.
-- **Auto-end benefit enrollments on termination** — termination
-  deactivates deductions but leaves enrollments open.
 - **1095-C PDF + AIR e-file** — JSON derivation ships; rendering and
   transport do not.
 - **Child-support e-IWO / NACHA CCD+ addenda** — remittance register
@@ -66,7 +64,8 @@ Pulled up here so the open surface is visible in one place.
 
 ## ⚠ Test coverage gaps — models without direct test imports
 
-The audit found 20 models that aren't directly imported by any test
+Historical audit note (not a current coverage measurement): the audit found
+20 models that weren't directly imported by any test
 module. Most are exercised indirectly through their API routes (a
 `POST /api/bills` test exercises `app/models/bills.py`), but no test
 imports the model class and pokes its constraints / defaults / hybrid
@@ -83,8 +82,10 @@ silently.
 
 **Priority — HR / payroll adjacent:**
 - `app/models/hr.py` — onboarding tasks, employee documents
-- `app/models/time_entries.py` — approval state machine, overtime math
 - `app/models/tax.py` — tax-rate snapshots used by historical reports
+
+`app/models/time_entries.py` is no longer in this gap: direct portal/payroll/job
+tests now exercise its approval state machine, bounds, locks, and pay-run linkage.
 
 **Lower priority — config / admin:**
 - `app/models/settings.py`, `app/models/audit.py`, `app/models/backups.py`,
@@ -109,12 +110,13 @@ was deliberately left out of scope; what shipped is computation, records,
 and files the operator submits themselves. Entries keep their design notes
 and their follow-ups (all of which also appear in the open section above).
 
-- ~~**50-state withholding**~~ — DONE: table-driven engine + 47 JSON tables
+- ~~**50-state withholding**~~ — DONE: table-driven engine + 47 Python state specifications
   + per-state SUTA rates and wage bases. See `docs/state-tax-tables.md`.
   Follow-ups it created:
-  - **Verify the tables** — all 47 ship `"verified": false`
-  - **State W-4 allowances** — needs an `Employee.state_allowances` column;
-    `exemption_allowance` currently assumes one allowance
+  - **Verify the tables** — independently check the jurisdictions used;
+    the current source records a prior verification claim, not JSON flags.
+  - **State W-4 allowances** — implemented; validate jurisdiction-specific
+    rules and input dimensions (including Illinois Line 2 allowances).
 - ~~**Local / municipal tax layer**~~ — DONE: `app/services/local_tax/`
   with 32 seeded localities across PA/OH/NY/MD/IN/KY/MI, W-2 boxes 18-20,
   JE + garnishment integration. See `docs/local-taxes.md`. Follow-ups:
@@ -140,19 +142,21 @@ and their follow-ups (all of which also appear in the open section above).
   (941 deposits, $100k next-day rule, de-minimis warnings, FUTA $500
   floor + carryover, return due dates). SPA page at
   `#/payroll/deposit-calendar` — classification cards, lookback quarters,
-  date-sorted liability table. Follow-up: federal holidays not modelled
-  (weekend-only roll, so at most a day early).
+  date-sorted liability table. Federal deposit deadlines include recurring
+  D.C. legal holidays and the semiweekly three-business-day extension;
+  annually verify Publication 15 for one-off holidays or legal changes.
 - ~~**Contractor pay runs**~~ — DONE: `/api/contractor-runs` (batch create
   → process JE → NACHA), `VendorBankAccount` (Fernet-encrypted, one active
   per vendor), contractor payments join bill payments in 1099-NEC totals.
-  Follow-ups: no void endpoint for a processed contractor run yet (mirror
-  the payroll void). SPA page at `#/payroll/contractors` — create runs, add
+  Processed runs can be voided with a row lock and reversing JE; the UI warns
+  that accounting reversal cannot recall ACH already sent. SPA page at
+  `#/payroll/contractors` — create runs, add
   payees, process (posts the JE), NACHA export modal.
 - ~~**Pay-schedule object**~~ — DONE: `/api/pay-schedules` CRUD + upcoming
-  preview + employee assignment (syncs pay_frequency). SPA page at
-  `#/payroll/schedules` — list, create, edit, preview upcoming dates,
-  assign employees. Follow-ups: holiday calendar (weekend-only shifting
-  today), blackout dates.
+  preview + employee assignment (syncs pay_frequency). Non-business-day
+  shifting includes Federal Reserve holidays and per-schedule blackout dates.
+  SPA page at `#/payroll/schedules` — list, create, edit, preview upcoming
+  dates, and assign employees.
 - ~~**Retro pay / mid-period proration**~~ — DONE: day-weighted salary
   blend via `rate_change_date`/`old_rate` on the stub input;
   `POST /api/payroll/retro-pay/preview|apply` (apply raises the rate and
@@ -227,7 +231,8 @@ and their follow-ups (all of which also appear in the open section above).
   MEDICAL enrollment, mirroring the server rule rather than letting the
   operator discover it through a 400. Follow-ups: 1095-C PDF + AIR e-file,
   ACA offer codes / affordability safe harbors (offers aren't modelled),
-  auto-end enrollments on termination.
+  Employee termination now ends open, already-effective enrollments on the
+  operator-selected coverage date and flags future enrollments for review.
 - ~~**Workers' comp**~~ — DONE: carrier-quoted `wc_class_rates`
   (per $100 of payroll, supersede-on-re-quote) and the premium-audit
   report at `GET /api/workers-comp/premium-report?year=` grouping wages
@@ -305,7 +310,7 @@ and their follow-ups (all of which also appear in the open section above).
      duplicate-detection engine already at `/api/customers/check-duplicate`
      extends to invoice-number + PO-number lookup).
   3. **Classify + sentiment** — pass the body through the AI layer (the
-     existing 7-provider BYOK config in `app/services/ai_service.py`) to
+     existing 8-provider BYOK config in `app/services/ai_service.py`) to
      tag intent (payment confirmation / dispute / inquiry / quote /
      unrelated) plus sentiment (positive / neutral / negative). Tag goes
      into the staged record; AI never auto-acts.
@@ -333,13 +338,15 @@ and their follow-ups (all of which also appear in the open section above).
   checkpoint over a clean chain reads as a setup gap rather than as
   tampering. Driven end-to-end in Chromium including the
   delete-the-tail-and-every-checkpoint case; 12 contract tests in CI.
-- **Portal time-entry submit flow** — server endpoint
-  `POST /api/time-entries/{id}/submit` exists for employee self-service;
-  portal UI page does not.
 - **Stripe upgrade / checkout** — `POST /api/stripe/create-checkout-session`
   ready; surfacing requires a pricing-page + plan model. Single-tier today.
 
 ### Recently wired (was dark-endpoint backlog)
+- ~~Portal time-entry submit flow~~ — DONE: ownership-scoped `/portal/time`
+  lists the employee's entries and submits draft/rejected rows for approval.
+  Approved/paid entries cannot be downgraded through the generic endpoint.
+- ~~Portal Documents route precedence~~ — DONE: the cookieless Documents page
+  is registered before `/portal/{token}`, so `documents` is not parsed as a token.
 - ~~Inventory item movement history UI~~ — DONE: "History" button on each
   tracked item opens the movement ledger (ItemsPage.showMovements).
 - ~~AP aging report in the Reports menu~~ — DONE: A/P Aging card alongside

@@ -421,6 +421,54 @@ def test_time_entries_feed_pay_run(client, db_session, seed_accounts):
     assert run["stubs"][0]["regular_hours"] == 16.0
 
 
+def test_pay_run_time_sweep_and_processing_take_row_locks(
+    client, seed_accounts, monkeypatch
+):
+    """SQLite cannot reproduce the race, but both PostgreSQL lock sites are pinned."""
+    from sqlalchemy.orm import Query
+
+    locked_entities = []
+    original = Query.with_for_update
+
+    def spy(query, *args, **kwargs):
+        entity = (
+            query.column_descriptions[0].get("entity")
+            if query.column_descriptions
+            else None
+        )
+        if entity is not None:
+            locked_entities.append(entity.__name__)
+        return original(query, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "with_for_update", spy)
+    employee = _create_employee(client, pay_type="hourly", pay_rate=30)
+    entry = client.post(
+        "/api/time-entries",
+        json={
+            "employee_id": employee["id"],
+            "date": "2026-06-09",
+            "hours_regular": 8,
+        },
+    ).json()
+    client.post(
+        f"/api/time-entries/{entry['id']}/approve", json={"approved_by": "boss"}
+    )
+    run = client.post(
+        "/api/payroll",
+        json={
+            "period_start": "2026-06-01",
+            "period_end": "2026-06-14",
+            "pay_date": "2026-06-20",
+            "stubs": [{"employee_id": employee["id"], "use_time_entries": True}],
+        },
+    )
+    assert run.status_code == 201, run.text
+    processed = client.post(f"/api/payroll/{run.json()['id']}/process")
+    assert processed.status_code == 200, processed.text
+    assert "TimeEntry" in locked_entities
+    assert "PayRun" in locked_entities
+
+
 def test_time_entry_summary_endpoint_aggregates_by_employee(
     client, db_session, seed_accounts
 ):
@@ -621,7 +669,23 @@ def test_year_end_carryover_balance_below_cap_unchanged(
 # ---------------------------------------------------------------------------
 # Integration — PTO
 # ---------------------------------------------------------------------------
-def test_pto_policy_accrual_and_request(client):
+def test_pto_policy_accrual_and_request(client, monkeypatch):
+    from sqlalchemy.orm import Query
+
+    locked_entities = []
+    original = Query.with_for_update
+
+    def spy(query, *args, **kwargs):
+        entity = (
+            query.column_descriptions[0].get("entity")
+            if query.column_descriptions
+            else None
+        )
+        if entity is not None:
+            locked_entities.append(entity.__name__)
+        return original(query, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "with_for_update", spy)
     emp = _create_employee(client)
     policy = client.post(
         "/api/pto/policies",
@@ -663,6 +727,14 @@ def test_pto_policy_accrual_and_request(client):
     assert decided["status"] == "approved"
     balances = client.get(f"/api/pto/accruals?employee_id={emp['id']}").json()
     assert balances[0]["balance"] == 6.0  # 14 - 8
+    assert {"PTORequest", "PTOAccrual"}.issubset(locked_entities)
+    assert (
+        client.post(
+            f"/api/pto/requests/{req['id']}/decision",
+            json={"status": "approved"},
+        ).status_code
+        == 400
+    )
 
 
 # ---------------------------------------------------------------------------

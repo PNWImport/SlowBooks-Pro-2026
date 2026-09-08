@@ -810,7 +810,7 @@ def test_migrations_create_every_model_table(tmp_path):
 
 
 def test_ai_api_key_can_be_cleared_with_an_explicit_empty_string(client):
-    base = {"provider": "openai", "model": "gpt-5.4-mini"}
+    base = {"provider": "openai", "model": "gpt-5.6-terra"}
     r = client.put(
         "/api/analytics/ai-config", json={**base, "api_key": "sk-test-1234567890"}
     )

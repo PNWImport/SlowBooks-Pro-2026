@@ -125,6 +125,31 @@ def reversing_lines(lines) -> list[dict]:
     ]
 
 
+def lock_accounts(db: Session, account_ids) -> dict[int, Account]:
+    """Serialize balance changes and refresh any previously cached balances.
+
+    Lock in ID order so opposite journal line orders cannot deadlock. Flush
+    earlier work before refreshing, including another journal in this same
+    transaction; otherwise populate_existing would discard pending changes.
+    """
+    db.flush()
+    conn = db.connection()
+    if conn.dialect.name == "sqlite":
+        if not conn.connection.driver_connection.in_transaction:
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
+    return {
+        account.id: account
+        for account in (
+            db.query(Account)
+            .filter(Account.id.in_({i for i in account_ids if i is not None}))
+            .order_by(Account.id)
+            .with_for_update()
+            .populate_existing()
+            .all()
+        )
+    }
+
+
 def create_journal_entry(
     db: Session,
     txn_date: date,
@@ -178,6 +203,8 @@ def create_journal_entry(
             f"Journal entry not balanced: debits={total_debit}, credits={total_credit}"
         )
 
+    locked_accounts = lock_accounts(db, (line["account_id"] for line in lines))
+
     txn = Transaction(
         date=txn_date,
         description=description,
@@ -222,9 +249,7 @@ def create_journal_entry(
         db.add(txn_line)
 
         # Update account balance
-        account = (
-            db.query(Account).filter(Account.id == line_data["account_id"]).first()
-        )
+        account = locked_accounts.get(line_data["account_id"])
         if account:
             if account.account_type.value in ("asset", "expense", "cogs"):
                 account.balance += debit - credit

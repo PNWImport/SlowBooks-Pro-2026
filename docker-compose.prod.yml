@@ -9,13 +9,28 @@
 # What this differs from docker-compose.yml on:
 #   - Postgres uses SSL (sslmode=require). You must mount a cert/key pair.
 #   - The app's APP_DEBUG is forced false and the strict startup checks fire.
-#   - PAYROLL_ENCRYPTION_SECRET, SESSION_SECRET_KEY, FORCE_HTTPS are required.
+#   - Payroll, session, and settings encryption secrets are required.
 #   - Postgres port is NOT published to the host.
 #   - The app sits behind your own TLS-terminating reverse proxy. This file
 #     does not include nginx/Traefik — wire it in front yourself.
 # ============================================================================
 
 services:
+  # Repair ownership on persistent data volumes before starting the
+  # unprivileged application. This also fixes volumes created by older images.
+  storage-init:
+    build: .
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: [no-new-privileges:true]
+    entrypoint: ["chown", "-R", "1000:1000", "/app/backups", "/app/app/static/uploads"]
+    volumes:
+      - slowbooks_uploads:/app/app/static/uploads
+      - slowbooks_backups:/app/backups
+
   postgres:
     image: postgres:17-alpine
     command:
@@ -56,7 +71,16 @@ services:
   slowbooks:
     build: .
     restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+      - /home/slowbooks/.cache:size=16m,mode=1777
     depends_on:
+      storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     environment:
@@ -77,33 +101,35 @@ services:
       # audit tables record the proxy address instead of the caller's.
       # Set to your proxy's address or CIDR — never 0.0.0.0/0, which would
       # let any client forge its own source IP. uvicorn reads this natively.
-      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:?set to your reverse proxy's IP or CIDR, e.g. 172.18.0.0/16}
+      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:?set to your reverse proxy's IP or CIDR, e.g. 172.18.0.0/16}"
 
-      # Shared rate-limit counters. APP_WORKERS below defaults to 4, and
-      # in-process counters are per-worker, so leaving this unset makes every
-      # configured limit 4x looser than it reads. Point at redis for any
-      # multi-worker or multi-replica deploy.
-      RATE_LIMIT_STORAGE_URI: ${RATE_LIMIT_STORAGE_URI:-}
+      # Shared rate-limit counters. In-process counters are per-worker, so
+      # point at Redis before increasing APP_WORKERS or adding replicas.
+      RATE_LIMIT_STORAGE_URI: "${RATE_LIMIT_STORAGE_URI:-}"
 
       # Required secrets. ?:err makes compose refuse to start with them empty.
-      PAYROLL_ENCRYPTION_SECRET: ${PAYROLL_ENCRYPTION_SECRET:?missing PAYROLL_ENCRYPTION_SECRET — run: openssl rand -base64 32}
-      SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:?missing SESSION_SECRET_KEY — run: openssl rand -hex 32}
+      PAYROLL_ENCRYPTION_SECRET: "${PAYROLL_ENCRYPTION_SECRET:?missing PAYROLL_ENCRYPTION_SECRET — run: openssl rand -base64 32}"
+      SESSION_SECRET_KEY: "${SESSION_SECRET_KEY:?missing SESSION_SECRET_KEY — run: openssl rand -hex 32}"
+      SETTINGS_ENCRYPTION_KEY: "${SETTINGS_ENCRYPTION_KEY:?missing SETTINGS_ENCRYPTION_KEY — generate a Fernet key and keep it stable}"
+      AUDIT_CHECKPOINT_SIGNING_SECRET: "${AUDIT_CHECKPOINT_SIGNING_SECRET:?missing AUDIT_CHECKPOINT_SIGNING_SECRET — run: openssl rand -base64 48}"
+      AUDIT_CHECKPOINT_KEY_ID: "${AUDIT_CHECKPOINT_KEY_ID:?missing AUDIT_CHECKPOINT_KEY_ID — use an operations key label}"
+      AUDIT_CHECKPOINT_SIGNING_SECRET_PREV: "${AUDIT_CHECKPOINT_SIGNING_SECRET_PREV:-}"
 
       # Optional during key rotation
-      PAYROLL_ENCRYPTION_SECRET_PREV: ${PAYROLL_ENCRYPTION_SECRET_PREV:-}
+      PAYROLL_ENCRYPTION_SECRET_PREV: "${PAYROLL_ENCRYPTION_SECRET_PREV:-}"
 
       # Browser origin allowlist for the SPA. Comma-separated, no wildcards.
-      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:?set this to your real origin, e.g. https://books.example.com}
+      CORS_ALLOW_ORIGINS: "${CORS_ALLOW_ORIGINS:?set this to your real origin, e.g. https://books.example.com}"
 
       # Workers / serving
       APP_HOST: "0.0.0.0"
       APP_PORT: "3001"
-      APP_WORKERS: "${APP_WORKERS:-4}"
+      APP_WORKERS: "${APP_WORKERS:-1}"
 
       # Employer identifiers (used by W-2 / W-3 / 940 / 941 endpoints)
-      EMPLOYER_EIN: ${EMPLOYER_EIN:-}
-      EMPLOYER_STATE: ${EMPLOYER_STATE:-WA}
-      SUTA_RATE: ${SUTA_RATE:-0.012}
+      EMPLOYER_EIN: "${EMPLOYER_EIN:-}"
+      EMPLOYER_STATE: "${EMPLOYER_STATE:-WA}"
+      SUTA_RATE: "${SUTA_RATE:-0.012}"
     expose:
       - "3001"
     # Not published to host — your TLS proxy (nginx, Traefik, AWS ALB, etc.)

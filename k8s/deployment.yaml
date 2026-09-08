@@ -59,13 +59,16 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
-            # Not read-only: WeasyPrint writes temp files during PDF render.
-            readOnlyRootFilesystem: false
+            readOnlyRootFilesystem: true
           volumeMounts:
             - name: uploads
               mountPath: /app/app/static/uploads
             - name: backups
               mountPath: /app/backups
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /home/slowbooks/.cache
       volumes:
         - name: uploads
           persistentVolumeClaim:
@@ -73,3 +76,11 @@ spec:
         - name: backups
           persistentVolumeClaim:
             claimName: slowbooks-backups
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Mi
+        - name: cache
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi

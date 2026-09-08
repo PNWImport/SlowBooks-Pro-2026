@@ -91,7 +91,12 @@ def list_bank_transactions(
 @router.post("/transactions", response_model=BankTransactionResponse, status_code=201)
 def create_bank_transaction(data: BankTransactionCreate, db: Session = Depends(get_db)):
     check_closing_date(db, data.date)
-    ba = db.query(BankAccount).filter(BankAccount.id == data.bank_account_id).first()
+    ba = (
+        db.query(BankAccount)
+        .filter(BankAccount.id == data.bank_account_id)
+        .with_for_update()
+        .first()
+    )
     if not ba:
         raise HTTPException(status_code=404, detail="Bank account not found")
 
@@ -176,15 +181,32 @@ def get_reconciliation_transactions(recon_id: int, db: Session = Depends(get_db)
 @router.post("/reconciliations/{recon_id}/toggle/{txn_id}")
 def toggle_cleared(recon_id: int, txn_id: int, db: Session = Depends(get_db)):
     """Toggle a transaction's cleared status."""
-    recon = db.query(Reconciliation).filter(Reconciliation.id == recon_id).first()
+    recon = (
+        db.query(Reconciliation)
+        .filter(Reconciliation.id == recon_id)
+        .with_for_update()
+        .first()
+    )
     if not recon:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
     if recon.status == ReconciliationStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="Reconciliation already completed")
 
-    txn = db.query(BankTransaction).filter(BankTransaction.id == txn_id).first()
+    txn = (
+        db.query(BankTransaction)
+        .filter(
+            BankTransaction.id == txn_id,
+            BankTransaction.bank_account_id == recon.bank_account_id,
+            BankTransaction.date <= recon.statement_date,
+        )
+        .with_for_update()
+        .first()
+    )
     if not txn:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Transaction is not part of this reconciliation",
+        )
 
     txn.reconciled = not txn.reconciled
     db.commit()
@@ -249,7 +271,12 @@ def check_register(account_id: int = None, db: Session = Depends(get_db)):
 @router.post("/reconciliations/{recon_id}/complete")
 def complete_reconciliation(recon_id: int, db: Session = Depends(get_db)):
     """Finish a reconciliation — validates the difference is 0."""
-    recon = db.query(Reconciliation).filter(Reconciliation.id == recon_id).first()
+    recon = (
+        db.query(Reconciliation)
+        .filter(Reconciliation.id == recon_id)
+        .with_for_update()
+        .first()
+    )
     if not recon:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
     if recon.status == ReconciliationStatus.COMPLETED:
@@ -260,6 +287,7 @@ def complete_reconciliation(recon_id: int, db: Session = Depends(get_db)):
         .filter(BankTransaction.bank_account_id == recon.bank_account_id)
         .filter(BankTransaction.date <= recon.statement_date)
         .filter(BankTransaction.reconciled)
+        .with_for_update()
         .all()
     )
     cleared_total = sum(t.amount for t in txns)

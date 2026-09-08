@@ -11,8 +11,10 @@ from app.schemas.common import StrictModel
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
+from app.models.jobs import Job
 from app.models.payroll import Employee
 from app.models.time_entries import TimeEntry, TimeEntryStatus
+from app.routes._helpers import clamp_pagination
 from app.schemas.time_entries import (
     TimeEntryCreate,
     TimeEntryUpdate,
@@ -35,6 +37,19 @@ def _resp(entry: TimeEntry) -> TimeEntryResponse:
     return r
 
 
+def _validate_daily_hours(entry: TimeEntry, fields: dict | None = None) -> None:
+    fields = fields or {}
+    total = sum(
+        Decimal(str(fields.get(name, getattr(entry, name)) or 0))
+        for name in ("hours_regular", "hours_overtime", "hours_doubletime")
+    )
+    if total <= 0 or total > 24:
+        raise HTTPException(
+            status_code=400,
+            detail="Daily hours must be greater than 0 and at most 24",
+        )
+
+
 class PostToJobRequest(StrictModel):
     ids: list[int]
 
@@ -48,7 +63,12 @@ def post_entries_to_job(data: PostToJobRequest, db: Session = Depends(get_db)):
 
     results = []
     for entry_id in data.ids:
-        entry = db.get(TimeEntry, entry_id)
+        entry = (
+            db.query(TimeEntry)
+            .filter(TimeEntry.id == entry_id)
+            .with_for_update()
+            .first()
+        )
         if not entry:
             results.append({"id": entry_id, "ok": False, "error": "not found"})
             continue
@@ -76,9 +96,16 @@ def list_time_entries(
     start: date = Query(default=None),
     end: date = Query(default=None),
     status: str = Query(default=None),
+    skip: int = 0,
+    limit: int = 500,
     db: Session = Depends(get_db),
 ):
-    q = db.query(TimeEntry).options(joinedload(TimeEntry.employee))
+    skip, limit = clamp_pagination(skip, limit)
+    q = db.query(TimeEntry).options(
+        joinedload(TimeEntry.employee),
+        joinedload(TimeEntry.job).joinedload(Job.customer),
+        joinedload(TimeEntry.cost_code),
+    )
     if employee_id:
         q = q.filter(TimeEntry.employee_id == employee_id)
     if start:
@@ -90,7 +117,8 @@ def list_time_entries(
             q = q.filter(TimeEntry.status == TimeEntryStatus(status))
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
-    return [_resp(e) for e in q.order_by(TimeEntry.date.desc()).all()]
+    entries = q.order_by(TimeEntry.date.desc()).offset(skip).limit(limit).all()
+    return [_resp(e) for e in entries]
 
 
 @router.post("", response_model=TimeEntryResponse, status_code=201)
@@ -108,7 +136,9 @@ def create_time_entry(data: TimeEntryCreate, db: Session = Depends(get_db)):
 def update_time_entry(
     entry_id: int, data: TimeEntryUpdate, db: Session = Depends(get_db)
 ):
-    entry = db.query(TimeEntry).filter(TimeEntry.id == entry_id).first()
+    entry = (
+        db.query(TimeEntry).filter(TimeEntry.id == entry_id).with_for_update().first()
+    )
     if not entry:
         raise HTTPException(status_code=404, detail="Time entry not found")
     if entry.pay_run_id is not None:
@@ -116,12 +146,18 @@ def update_time_entry(
             status_code=400,
             detail="Time entry is locked to a pay run and cannot be edited",
         )
+    if entry.status not in (TimeEntryStatus.DRAFT, TimeEntryStatus.REJECTED):
+        raise HTTPException(
+            status_code=400,
+            detail="Only draft or rejected time entries can be edited",
+        )
     fields = data.model_dump(exclude_unset=True)
     if "status" in fields:
-        try:
-            fields["status"] = TimeEntryStatus(fields["status"])
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid status")
+        raise HTTPException(
+            status_code=400,
+            detail="Use the submit, approve, or reject action to change status",
+        )
+    _validate_daily_hours(entry, fields)
     for key, val in fields.items():
         setattr(entry, key, val)
     db.commit()
@@ -131,13 +167,20 @@ def update_time_entry(
 
 @router.delete("/{entry_id}")
 def delete_time_entry(entry_id: int, db: Session = Depends(get_db)):
-    entry = db.query(TimeEntry).filter(TimeEntry.id == entry_id).first()
+    entry = (
+        db.query(TimeEntry).filter(TimeEntry.id == entry_id).with_for_update().first()
+    )
     if not entry:
         raise HTTPException(status_code=404, detail="Time entry not found")
     if entry.pay_run_id is not None:
         raise HTTPException(
             status_code=400,
             detail="Time entry is locked to a pay run and cannot be deleted",
+        )
+    if entry.status not in (TimeEntryStatus.DRAFT, TimeEntryStatus.REJECTED):
+        raise HTTPException(
+            status_code=400,
+            detail="Only draft or rejected time entries can be deleted",
         )
     db.delete(entry)
     db.commit()
@@ -146,9 +189,25 @@ def delete_time_entry(entry_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{entry_id}/submit", response_model=TimeEntryResponse)
 def submit_time_entry(entry_id: int, db: Session = Depends(get_db)):
-    entry = db.query(TimeEntry).filter(TimeEntry.id == entry_id).first()
+    return submit_time_entry_record(entry_id, db)
+
+
+def submit_time_entry_record(
+    entry_id: int, db: Session, employee_id: int | None = None
+) -> TimeEntryResponse:
+    """Submit an editable entry, optionally scoped to one portal employee."""
+    query = db.query(TimeEntry).filter(TimeEntry.id == entry_id)
+    if employee_id is not None:
+        query = query.filter(TimeEntry.employee_id == employee_id)
+    entry = query.with_for_update().first()
     if not entry:
         raise HTTPException(status_code=404, detail="Time entry not found")
+    if entry.pay_run_id is not None:
+        raise HTTPException(status_code=400, detail="Time entry is locked to a pay run")
+    if entry.status not in (TimeEntryStatus.DRAFT, TimeEntryStatus.REJECTED):
+        raise HTTPException(
+            status_code=400, detail="Only draft or rejected entries can be submitted"
+        )
     entry.status = TimeEntryStatus.SUBMITTED
     db.commit()
     db.refresh(entry)
@@ -159,9 +218,17 @@ def submit_time_entry(entry_id: int, db: Session = Depends(get_db)):
 def approve_time_entry(
     entry_id: int, data: TimeEntryApprove, db: Session = Depends(get_db)
 ):
-    entry = db.query(TimeEntry).filter(TimeEntry.id == entry_id).first()
+    entry = (
+        db.query(TimeEntry).filter(TimeEntry.id == entry_id).with_for_update().first()
+    )
     if not entry:
         raise HTTPException(status_code=404, detail="Time entry not found")
+    if entry.pay_run_id is not None:
+        raise HTTPException(status_code=400, detail="Time entry is locked to a pay run")
+    if entry.status not in (TimeEntryStatus.DRAFT, TimeEntryStatus.SUBMITTED):
+        raise HTTPException(
+            status_code=400, detail="Only draft or submitted entries can be approved"
+        )
     entry.status = TimeEntryStatus.APPROVED
     entry.approved_by = data.approved_by
     entry.approved_at = datetime.now(timezone.utc)
@@ -176,7 +243,9 @@ def post_entry_to_job(entry_id: int, db: Session = Depends(get_db)):
     employee's loaded rate, with burden as its own line."""
     from app.services.job_costing import post_time_entry_to_job
 
-    entry = db.get(TimeEntry, entry_id)
+    entry = (
+        db.query(TimeEntry).filter(TimeEntry.id == entry_id).with_for_update().first()
+    )
     if not entry:
         raise HTTPException(status_code=404, detail="Time entry not found")
     try:
@@ -194,9 +263,15 @@ def post_entry_to_job(entry_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{entry_id}/reject", response_model=TimeEntryResponse)
 def reject_time_entry(entry_id: int, db: Session = Depends(get_db)):
-    entry = db.query(TimeEntry).filter(TimeEntry.id == entry_id).first()
+    entry = (
+        db.query(TimeEntry).filter(TimeEntry.id == entry_id).with_for_update().first()
+    )
     if not entry:
         raise HTTPException(status_code=404, detail="Time entry not found")
+    if entry.pay_run_id is not None:
+        raise HTTPException(status_code=400, detail="Time entry is locked to a pay run")
+    if entry.status == TimeEntryStatus.REJECTED:
+        raise HTTPException(status_code=400, detail="Time entry already rejected")
     # A submitted entry may already be posted to its job; rejecting it has
     # to take that labor cost back off the job, not leave it behind.
     if entry.job_cost_id:

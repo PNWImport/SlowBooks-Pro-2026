@@ -20,7 +20,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.models.document_audit import (
@@ -101,14 +101,25 @@ def compute_chain_hash(
 
 
 def _chain_tip(db: Session, lock: bool = False):
-    """The current last row of the chain, optionally row-locked.
+    """Read the tip after serializing appends, including an empty chain.
 
-    Appending needs serialization: two concurrent writers that both read the
-    same tip would each link to it and fork the chain. On PostgreSQL the
-    SELECT ... FOR UPDATE makes the second writer wait. SQLite serializes
-    writers already, and does not support FOR UPDATE, so the lock is skipped
-    there.
+    Locking the previous tip row alone is insufficient: a waiting SELECT can
+    still return that old row after another writer appends a new one.
     """
+    if lock:
+        conn = db.connection()
+        if conn.dialect.name == "postgresql":
+            # One stable transaction-scoped lock per database. Acquire it in a
+            # separate statement BEFORE reading the tip (READ COMMITTED).
+            conn.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"),
+                {"key": 0x5342444F43415544},
+            )
+        elif conn.dialect.name == "sqlite":
+            # Legacy sqlite3 transaction mode does not BEGIN for SELECTs.
+            # Reserve the writer before reading rather than racing at INSERT.
+            if not conn.connection.driver_connection.in_transaction:
+                conn.exec_driver_sql("BEGIN IMMEDIATE")
     query = db.query(DocumentAudit).order_by(DocumentAudit.id.desc())
     if lock and db.bind is not None and db.bind.dialect.name != "sqlite":
         query = query.with_for_update()
@@ -116,7 +127,12 @@ def _chain_tip(db: Session, lock: bool = False):
 
 
 def record_doc_audit(
-    db: Session, doc_type: str, doc_key: str, content_hash: str
+    db: Session,
+    doc_type: str,
+    doc_key: str,
+    content_hash: str,
+    *,
+    commit: bool = True,
 ) -> DocumentAudit:
     """Append one DocumentAudit row, linked to the current chain tip.
 
@@ -138,7 +154,12 @@ def record_doc_audit(
         prev_hash, content_hash, doc_type, doc_key, created_at
     )
     db.add(audit)
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        # Signing must persist the envelope and audit row atomically, keeping
+        # both the envelope and chain locks until its caller commits.
+        db.flush()
     db.refresh(audit)
     return audit
 

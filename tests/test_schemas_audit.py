@@ -26,6 +26,7 @@ to bite at runtime.
 from __future__ import annotations
 
 import re
+import ast
 from pathlib import Path
 
 SCHEMAS_DIR = Path(__file__).resolve().parents[1] / "app" / "schemas"
@@ -62,3 +63,30 @@ def test_no_date_field_shadows_date_type():
         "Pydantic schemas with the date-field-shadows-date-type collision:\n"
         + "\n".join(offenders)
     )
+
+
+def test_no_annotation_name_collisions_anywhere_in_app():
+    """Inline route models must be audited too, including nested modules.
+
+    Check all field names, not just date; aliasing imported types prevents
+    the same failure for datetime, time, UUID, or other matching names.
+    """
+    offenders = []
+    for path in sorted(SCHEMAS_DIR.parent.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for cls in ast.walk(tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            for field in cls.body:
+                if not isinstance(field, ast.AnnAssign) or not isinstance(
+                    field.target, ast.Name
+                ):
+                    continue
+                if any(
+                    isinstance(node, ast.Name) and node.id == field.target.id
+                    for node in ast.walk(field.annotation)
+                ):
+                    offenders.append(
+                        f"{path}:{field.lineno}: {cls.name}.{field.target.id}"
+                    )
+    assert not offenders, "Field/type annotation collisions:\n" + "\n".join(offenders)

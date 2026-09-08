@@ -123,6 +123,81 @@ def test_process_respects_closing_date(client, seed_accounts):
     assert "clos" in r.json()["detail"].lower()
 
 
+# --- void -------------------------------------------------------------------
+
+
+def test_void_processed_run_reverses_je_and_1099_total(
+    client, db_session, seed_accounts
+):
+    from app.models.transactions import Transaction, TransactionLine
+
+    vendor = _create_vendor(client)
+    run = _create_run(client, [{"vendor_id": vendor["id"], "amount": 900}])
+    processed = client.post(f"/api/contractor-runs/{run['id']}/process").json()
+
+    response = client.post(f"/api/contractor-runs/{run['id']}/void")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "void"
+    assert body["original_transaction_id"] == processed["transaction_id"]
+    assert body["void_transaction_id"] != processed["transaction_id"]
+    assert "bank" in body["warning"].lower()
+
+    original = db_session.query(TransactionLine).filter_by(
+        transaction_id=processed["transaction_id"]
+    )
+    reversal = db_session.query(TransactionLine).filter_by(
+        transaction_id=body["void_transaction_id"]
+    )
+    original_by_account = {line.account_id: line for line in original.all()}
+    reversal_by_account = {line.account_id: line for line in reversal.all()}
+    assert set(original_by_account) == set(reversal_by_account)
+    for account_id, line in original_by_account.items():
+        reverse = reversal_by_account[account_id]
+        assert reverse.debit == line.credit
+        assert reverse.credit == line.debit
+
+    reversal_txn = db_session.get(Transaction, body["void_transaction_id"])
+    assert reversal_txn.source_type == "contractor_run_void"
+    assert reversal_txn.source_id == run["id"]
+
+    detail = client.get(f"/api/contractor-runs/{run['id']}").json()
+    assert detail["status"] == "void"
+    total = next(
+        row
+        for row in compute_1099_data(db_session, 2026)
+        if row["vendor_id"] == vendor["id"]
+    )
+    assert total["total_paid"] == Decimal("0.00")
+
+
+def test_void_rejects_draft_repeat_and_closed_period(client, seed_accounts):
+    vendor = _create_vendor(client)
+    draft = _create_run(client, [{"vendor_id": vendor["id"], "amount": 100}])
+    assert client.post(f"/api/contractor-runs/{draft['id']}/void").status_code == 400
+
+    processed = _create_run(
+        client, [{"vendor_id": vendor["id"], "amount": 200}], "2026-01-15"
+    )
+    assert (
+        client.post(f"/api/contractor-runs/{processed['id']}/process").status_code
+        == 200
+    )
+    closing = client.put("/api/settings", json={"closing_date": "2026-03-31"})
+    assert closing.status_code == 200
+    assert (
+        client.post(f"/api/contractor-runs/{processed['id']}/void").status_code == 403
+    )
+
+    assert client.put("/api/settings", json={"closing_date": None}).status_code == 200
+    assert (
+        client.post(f"/api/contractor-runs/{processed['id']}/void").status_code == 200
+    )
+    assert (
+        client.post(f"/api/contractor-runs/{processed['id']}/void").status_code == 400
+    )
+
+
 # --- vendor bank + NACHA ----------------------------------------------------
 
 

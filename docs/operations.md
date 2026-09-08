@@ -9,13 +9,24 @@ production-launch checklist see
 
 ## Backups
 
+### Application backups
+
+Settings/API backups use `slowbooks_<timestamp>_<unique-id>.db` for SQLite and
+`.sql` for PostgreSQL. Despite the `.sql` suffix, PostgreSQL application backups
+are **custom-format archives** for `pg_restore`, not plain SQL. The application
+forwards supported database TLS options and restores PostgreSQL in one transaction.
+Keep encryption keys with a separate secure backup; database files alone are not
+enough to recover encrypted fields.
+
+The standalone script below produces a different format: gzipped plain SQL.
+
 ### Quick local backup
 
 ```bash
 ./scripts/backup.sh
 ```
 
-- Output: `~/bookkeeper-backups/bookkeeper-YYYY-MM-DD-HHMM.sql.gz`
+- Output: `~/bookkeeper-backups/bookkeeper_YYYYMMDD_HHMMSS.sql.gz`
 - Compression: gzip
 - Retention: keeps the 30 most recent dumps; older ones are pruned
   automatically.
@@ -29,7 +40,7 @@ production-launch checklist see
 **Always encrypt** dumps before they leave the host:
 
 ```bash
-gpg --encrypt --recipient your-key@example.com bookkeeper-2026-05-23.sql.gz
+gpg --encrypt --recipient your-key@example.com bookkeeper_20260523_120000.sql.gz
 ```
 
 Store the encrypted copy somewhere physically separate from the
@@ -39,8 +50,7 @@ test restore quarterly.
 
 ### Docker backups
 
-When running under `docker compose`, backups land in a Docker volume
-inside the container. To copy them out to your host:
+Application backups land in the `/app/backups` Docker volume. To copy them out:
 
 ```bash
 docker compose cp slowbooks:/app/backups ./my-backups
@@ -49,7 +59,7 @@ docker compose cp slowbooks:/app/backups ./my-backups
 To take a one-off backup from a running container:
 
 ```bash
-docker compose exec slowbooks ./scripts/backup.sh
+docker compose exec -e BACKUP_DIR=/app/backups slowbooks ./scripts/backup.sh
 ```
 
 ### Restore
@@ -57,14 +67,14 @@ docker compose exec slowbooks ./scripts/backup.sh
 Native:
 
 ```bash
-gunzip -c bookkeeper-2026-05-23.sql.gz | psql -U bookkeeper bookkeeper
+gunzip -c bookkeeper_20260523_120000.sql.gz | psql -U bookkeeper bookkeeper
 ```
 
 Docker:
 
 ```bash
 docker compose exec -T postgres psql -U bookkeeper bookkeeper \
-    < <(gunzip -c bookkeeper-2026-05-23.sql.gz)
+    < <(gunzip -c bookkeeper_20260523_120000.sql.gz)
 ```
 
 `pg_dump` not found?
@@ -107,6 +117,27 @@ Master key files (`.slowbooks-master.key`, `.slowbooks-session.key`)
 are excluded in `.gitignore` — never commit them. Losing the master
 key means losing every encrypted secret in the database.
 
+Docker uses `SETTINGS_ENCRYPTION_KEY` from `.env` instead of a key inside the
+replaceable app container. Back up `.env` securely with the database and verify
+the key is present before recreating or restoring the stack.
+
+### Docker settings-key upgrade
+
+For an install created before 2.9.4, preserve its current key **before** pulling
+the new Compose file or replacing the running app container:
+
+```bash
+docker compose cp slowbooks:/app/.slowbooks-master.key ./slowbooks-settings-master.key
+chmod 600 ./slowbooks-settings-master.key
+```
+
+Put that file's exact one-line value on `SETTINGS_ENCRYPTION_KEY=` in `.env`.
+Keep the exported file in secure backup until saved AI, SMTP, payment-provider,
+QBO, and bank-feed settings have been read successfully after the upgrade. If
+the old container has no key file because no encrypted setting was ever saved,
+generate a new key using the command in `.env.example`. Never generate a new key
+over existing encrypted settings.
+
 ### Blind-index key rotation
 
 Encrypted columns that still have to be queryable carry a second,
@@ -140,6 +171,20 @@ after `rewrap` in that case.
 ---
 
 ## Monitoring + audit
+
+### Concurrency-fix upgrade checks
+
+The 2.9.4 concurrency fixes prevent future lost cached-account balance updates
+and document-audit chain forks. They do not rewrite historical balances or
+rehash existing audit evidence. Before resuming production writes after an
+upgrade, preserve the database and off-box checkpoints, reconcile stored
+account balances with the journal/opening-balance records, and run the
+administrator-only `GET /api/document-audits/chain/verify` without a `limit`.
+Review any reported break before release; do not silently regenerate old hash
+links to make verification pass. Keep the original evidence when investigating
+or planning a separate repair.
+
+### Routine monitoring
 
 The app emits enough breadcrumbs to back-trace any change. Wire these
 into your SIEM, or just `tail -f` them for small deployments:
@@ -178,9 +223,11 @@ database write access can delete checkpoint rows. Signing stops them
 
 ### Set the signing key
 
-```bash
-# .env — NOT the same value as PAYROLL_ENCRYPTION_SECRET
-AUDIT_CHECKPOINT_SIGNING_SECRET=$(openssl rand -base64 48)
+Generate `openssl rand -base64 48`, then paste the result into `.env` (dotenv
+files do not execute command substitution):
+
+```dotenv
+AUDIT_CHECKPOINT_SIGNING_SECRET=<generated value>
 AUDIT_CHECKPOINT_KEY_ID=ops-2026
 ```
 

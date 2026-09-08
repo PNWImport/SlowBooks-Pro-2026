@@ -61,7 +61,7 @@ SlowBooks-Pro-2026/
 │   │   ├── hr.py             # HR module: onboarding, time entries, PTO, deductions
 │   │   ├── pto.py            # PTO policies, requests, accruals
 │   │   ├── time_entries.py   # Time entry tracking with approval workflow
-│   │   ├── deductions.py     # Deduction types, employee deductions, garnishments
+│   │   ├── deductions.py     # Garnishment orders and remittances; voluntary deductions use benefits.py
 │   │   ├── qbo_mapping.py    # QBO ↔ Slowbooks ID mappings
 │   │   ├── attachments.py    # File attachments
 │   │   ├── bank_rules.py     # Bank transaction categorization rules
@@ -124,7 +124,7 @@ SlowBooks-Pro-2026/
 │   ├── worker.js             # Hardened proxy (model allowlist, rate limiting, security headers)
 │   ├── wrangler.toml         # Deployment config
 │   └── README.md             # Setup guide
-├── tests/                    # 452 pytest tests (auth, security, posting, reporting, import, payroll Tiers 1-3, HR, wiring audit, schema audit, jinja autoescape audit, rounding consistency, race-condition / N+1 / closing-date / secret-redaction / void-symmetry / IIF round-trip / shell-injection audits)
+├── tests/                    # Regression and integration suites; current results in docs/validation.md
 └── index.html                # SPA shell
 ```
 
@@ -135,10 +135,10 @@ SlowBooks-Pro-2026/
   / `@router.post` / etc., then `app.include_router(router)` in
   `app/main.py`. Group by domain — add to the smallest existing
   router file, or create a new one for a new feature area.
-- **New DB table** — model goes in `app/models/<name>.py`. Test
-  setup uses `Base.metadata.create_all()` so fresh installs pick it
-  up; for in-place upgrades on existing deploys, add an Alembic
-  migration in `migrations/versions/`.
+- **New DB table or column** — update `app/models/<name>.py` and add an
+  Alembic migration in `migrations/versions/`. Most unit tests use
+  `Base.metadata.create_all()`, which does not validate migration history.
+  Run migration parity against PostgreSQL and test populated upgrades too.
 - **New Pydantic shape** — `app/schemas/<domain>.py`. **Beware the
   `date: date` field-shadows-type collision** — see
   [CONTRIBUTING.md → Schema conventions](../CONTRIBUTING.md#-the-date-date-field-name-shadows-the-type-collision).
@@ -155,11 +155,19 @@ SlowBooks-Pro-2026/
 ## Running tests
 
 ```bash
-pip install -r requirements-dev.txt
-pytest                       # full suite (~50s)
-pytest tests/test_wiring.py  # 0.15s — JS <-> backend wiring audit
+pip install -r requirements.txt -r requirements-dev.txt
+pytest                       # full suite; allow several minutes
+pytest tests/test_wiring.py  # JS <-> backend wiring audit
 pytest -k "audit or portal"  # subset by keyword
 ```
+
+CI provisions PostgreSQL 17 and installs Tesseract/Poppler. Locally, set
+`MIGRATION_TEST_DATABASE_URL` to a **disposable test server** with database
+creation privileges to run `tests/test_migration_schema_parity.py`. That test
+creates and drops its own temporary databases. Without the tooling, database
+and OCR integration tests skip; inspect skip reasons instead of assuming all
+integrations ran. See [the validation report](validation.md) for measured results
+and the checks still needed before release.
 
 The wiring audit is also a boot-time tripwire in
 `docker-entrypoint.sh`: containers built off `requirements-dev.txt`
@@ -187,14 +195,12 @@ python scripts/integration_test_frontend.py
 
 ```bash
 pip install "black>=24.8.0" "ruff>=0.6.0"
-black --check app/main.py app/services/audit.py tests/   # mirrors CI scope
-ruff check app/main.py app/services/audit.py tests/
+black --check app/ tests/ scripts/
+ruff check app/ tests/ scripts/
 ```
 
-CI gates a curated file allowlist (`.github/workflows/ci.yml`).
-Earlier-phase routes carry pre-black style and are tracked in
-[todo.md](todo.md) for a dedicated cleanup pass — new files MUST
-land in the allowlist so they don't slip the gate.
+CI gates all three directories (`.github/workflows/ci.yml`); use its pinned
+tool versions when reproducing checks locally.
 
 ---
 

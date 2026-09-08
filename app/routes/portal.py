@@ -22,14 +22,16 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.config import FORCE_HTTPS
 from app.database import get_db
 from app.models.bank_accounts import BankAccountKind, DepositType, EmployeeBankAccount
+from app.models.jobs import Job
 from app.models.payroll import Employee, FilingStatus
 from app.models.portal_access import PortalAccess
 from app.models.pto import PTOAccrual, PTOPolicy, PTORequest, PTOType
+from app.models.time_entries import TimeEntry, TimeEntryStatus
 from app.services.encryption import encrypt
 from app.services.nacha_export import validate_routing_number
 from app.services.rate_limit import limiter
@@ -534,6 +536,42 @@ def portal_pto_request(
     return _portal_redirect("/portal/pto?saved=1")
 
 
+@router.get("/portal/time")
+@limiter.limit("30/minute")
+def portal_time_entries(
+    request: Request, submitted: int = 0, db: Session = Depends(get_db)
+):
+    emp = _employee_from_cookie(request, db)
+    entries = (
+        db.query(TimeEntry)
+        .options(joinedload(TimeEntry.job).joinedload(Job.customer))
+        .filter(TimeEntry.employee_id == emp.id)
+        .order_by(TimeEntry.date.desc(), TimeEntry.id.desc())
+        .limit(100)
+        .all()
+    )
+    return _render(
+        "time_entries.html",
+        db,
+        emp=emp,
+        entries=entries,
+        editable_statuses=(TimeEntryStatus.DRAFT, TimeEntryStatus.REJECTED),
+        submitted=submitted,
+    )
+
+
+@router.post("/portal/time/{entry_id}/submit")
+@limiter.limit("10/minute")
+def portal_submit_time_entry(
+    entry_id: int, request: Request, db: Session = Depends(get_db)
+):
+    emp = _employee_from_cookie(request, db)
+    from app.routes.time_entries import submit_time_entry_record
+
+    submit_time_entry_record(entry_id, db, employee_id=emp.id)
+    return _portal_redirect("/portal/time?submitted=1")
+
+
 @router.post("/portal/logout")
 def portal_logout():
     """Clear the portal cookie and send the employee somewhere neutral."""
@@ -569,6 +607,30 @@ def portal_favicon(db: Session = Depends(get_db)):
     if not full_path.exists():
         return Response(status_code=204)
     return FileResponse(full_path, media_type="image/png")
+
+
+@router.get("/portal/documents")
+@limiter.limit("30/minute")
+def portal_documents(request: Request, signed: int = 0, db: Session = Depends(get_db)):
+    from app.models.esign import EnvelopeStatus, SignatureEnvelope
+
+    emp = _employee_from_cookie(request, db)
+    rows = (
+        db.query(SignatureEnvelope)
+        .filter(SignatureEnvelope.employee_id == emp.id)
+        .order_by(SignatureEnvelope.id.desc())
+        .all()
+    )
+    pending = [row for row in rows if row.status == EnvelopeStatus.PENDING]
+    completed = [row for row in rows if row.status == EnvelopeStatus.SIGNED]
+    return _render(
+        "documents.html",
+        db,
+        emp=emp,
+        pending=pending,
+        completed=completed,
+        signed=signed,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -607,6 +669,12 @@ def portal_claim_bank(request: Request, token: str, db: Session = Depends(get_db
 @limiter.limit("30/minute")
 def portal_claim_pto(request: Request, token: str, db: Session = Depends(get_db)):
     return _claim(token, "/portal/pto", db, request)
+
+
+@router.get("/portal/{token}/time")
+@limiter.limit("30/minute")
+def portal_claim_time(request: Request, token: str, db: Session = Depends(get_db)):
+    return _claim(token, "/portal/time", db, request)
 
 
 # POST routes with token in the URL — process inline, stamp the cookie, then
@@ -728,25 +796,6 @@ def portal_claim_pto_request(
 # --- Documents / e-signature -------------------------------------------------
 
 
-@router.get("/portal/documents")
-@limiter.limit("30/minute")
-def portal_documents(request: Request, signed: int = 0, db: Session = Depends(get_db)):
-    from app.models.esign import EnvelopeStatus, SignatureEnvelope
-
-    emp = _employee_from_cookie(request, db)
-    rows = (
-        db.query(SignatureEnvelope)
-        .filter(SignatureEnvelope.employee_id == emp.id)
-        .order_by(SignatureEnvelope.id.desc())
-        .all()
-    )
-    pending = [r for r in rows if r.status == EnvelopeStatus.PENDING]
-    completed = [r for r in rows if r.status == EnvelopeStatus.SIGNED]
-    return _render(
-        "documents.html", db, pending=pending, completed=completed, signed=signed
-    )
-
-
 @router.post("/portal/documents/{envelope_id}/sign")
 @limiter.limit("10/minute")
 def portal_sign_document(
@@ -777,6 +826,7 @@ def portal_sign_document(
             SignatureEnvelope.id == envelope_id,
             SignatureEnvelope.employee_id == emp.id,
         )
+        .with_for_update()
         .first()
     )
     if not envelope:
@@ -792,7 +842,7 @@ def portal_sign_document(
 
     signed_at = _now()
     seal = signature_hash(envelope.content_hash, signer_name, signed_at.isoformat())
-    audit = record_doc_audit(db, "esign", f"env{envelope.id}", seal)
+    audit = record_doc_audit(db, "esign", f"env{envelope.id}", seal, commit=False)
 
     envelope.status = EnvelopeStatus.SIGNED
     envelope.signer_name = signer_name

@@ -54,6 +54,8 @@ def test_server_env_lan_bind_sets_server_mode():
     env = desktop_launcher._server_env("sqlite:///x.db", 3001, bind_host="0.0.0.0")
     assert env["APP_HOST"] == "0.0.0.0"
     assert env["SLOWBOOKS_SERVER_MODE"] == "1"
+    assert env["APP_DEBUG"] == "false"
+    assert env["FORCE_HTTPS"] == "true"
     env = desktop_launcher._server_env(
         "sqlite:///x.db", 3001, bind_host="192.168.68.50"
     )
@@ -87,9 +89,9 @@ def test_system_info_reports_server_mode(authed_client, monkeypatch):
 
 def test_serve_banner_lists_all_addresses():
     text = desktop_launcher._compose_serve_banner(3001, ["OFFICE-PC", "192.168.68.50"])
-    assert "http://OFFICE-PC:3001" in text
-    assert "http://192.168.68.50:3001" in text
-    assert "plain HTTP" in text
+    assert "https://OFFICE-PC:3001" in text
+    assert "https://192.168.68.50:3001" in text
+    assert "HTTPS is required" in text
     # No addresses discovered: still renders something actionable
     fallback = desktop_launcher._compose_serve_banner(3001, [])
     assert "3001" in fallback

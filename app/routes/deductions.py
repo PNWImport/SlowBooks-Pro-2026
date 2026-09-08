@@ -6,9 +6,11 @@
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
+from app.routes._helpers import clamp_pagination
 from app.models.payroll import Employee
 from app.models.deductions import (
     GarnishmentOrder,
@@ -27,12 +29,16 @@ router = APIRouter(prefix="/api/deductions", tags=["deductions"])
 # --- Garnishment orders ----------------------------------------------------
 @router.get("/garnishments", response_model=list[GarnishmentOrderResponse])
 def list_garnishments(
-    employee_id: int = Query(default=None), db: Session = Depends(get_db)
+    employee_id: int = Query(default=None),
+    skip: int = 0,
+    limit: int = 500,
+    db: Session = Depends(get_db),
 ):
+    skip, limit = clamp_pagination(skip, limit)
     q = db.query(GarnishmentOrder)
     if employee_id:
         q = q.filter(GarnishmentOrder.employee_id == employee_id)
-    return q.order_by(GarnishmentOrder.priority).all()
+    return q.order_by(GarnishmentOrder.priority).offset(skip).limit(limit).all()
 
 
 @router.post("/garnishments", response_model=GarnishmentOrderResponse, status_code=201)
@@ -79,14 +85,18 @@ def remove_garnishment(order_id: int, db: Session = Depends(get_db)):
 @router.get("/garnishments/remittances")
 def list_remittances(
     status: str = Query(default="pending"),
+    skip: int = 0,
+    limit: int = 500,
     db: Session = Depends(get_db),
 ):
     """The remittance register: what withheld garnishment money still owes
     an agency a payment. ?status=pending|remitted|all."""
     from app.models.deductions import GarnishmentRemittance
 
-    q = db.query(GarnishmentRemittance).order_by(
-        GarnishmentRemittance.withheld_date, GarnishmentRemittance.id
+    skip, limit = clamp_pagination(skip, limit)
+    q = db.query(GarnishmentRemittance).options(
+        joinedload(GarnishmentRemittance.employee),
+        joinedload(GarnishmentRemittance.order),
     )
     if status == "pending":
         q = q.filter(GarnishmentRemittance.remitted_at.is_(None))
@@ -96,12 +106,24 @@ def list_remittances(
         raise HTTPException(
             status_code=400, detail="status must be pending, remitted, or all"
         )
-    rows = q.all()
-
-    total_pending = sum(
-        (Decimal(str(r.amount or 0)) for r in rows if r.remitted_at is None),
-        Decimal("0"),
+    rows = (
+        q.order_by(GarnishmentRemittance.withheld_date, GarnishmentRemittance.id)
+        .offset(skip)
+        .limit(limit)
+        .all()
     )
+
+    # Keep the register headline meaningful when the caller requests a page:
+    # it is the whole outstanding balance, not merely the displayed slice.
+    total_pending = Decimal("0")
+    if status != "remitted":
+        total_pending = Decimal(
+            str(
+                db.query(func.coalesce(func.sum(GarnishmentRemittance.amount), 0))
+                .filter(GarnishmentRemittance.remitted_at.is_(None))
+                .scalar()
+            )
+        )
     return {
         "total_pending": float(total_pending),
         "rows": [
@@ -144,6 +166,7 @@ def mark_remitted(
     row = (
         db.query(GarnishmentRemittance)
         .filter(GarnishmentRemittance.id == remittance_id)
+        .with_for_update()
         .first()
     )
     if not row:

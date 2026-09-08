@@ -22,16 +22,35 @@ separate download, free either way.
 
 ## Quick trial (no install, stops when you close it)
 
-On the machine that will host:
+Configure these settings in the data home's `.env` before starting. Use
+absolute paths to a PEM certificate chain and unencrypted PEM private key:
+
+```dotenv
+SLOWBOOKS_TLS_CERTFILE=C:/ProgramData/SlowBooksPro/tls/server.pem
+SLOWBOOKS_TLS_KEYFILE=C:/ProgramData/SlowBooksPro/tls/server-key.pem
+SLOWBOOKS_TLS_CA_FILE=C:/ProgramData/SlowBooksPro/tls/office-ca.pem
+SLOWBOOKS_TLS_HEALTH_HOST=books.office.example
+```
+
+The CA bundle is needed for a private CA; otherwise system trust is used.
+Clients must trust the issuer. The certificate must cover the hostname clients
+use. Set `SLOWBOOKS_TLS_HEALTH_HOST` to that name, resolving to this server
+locally, so the health check does not require a loopback IP certificate.
+For the Windows updater, pass the same name as `-HealthHost`; its default
+is the Windows computer name. Without the launcher setting, the probe uses
+the bound interface IP (loopback for `0.0.0.0`). Do not bypass certificate warnings.
+Plain-HTTP LAN startup is disabled; local desktop mode is unchanged.
+
+On the machine that will host, using the configured data home:
 
 ```powershell
 cd <folder containing SlowBooksPro.exe>
-.\SlowBooksPro.exe --serve-lan
+.\SlowBooksPro.exe --serve-lan --data-dir C:\ProgramData\SlowBooksPro
 ```
 
 A popup shows the connect URLs (also written to `connect-urls.txt` in the
 data folder). Allow the Windows Firewall prompt. From any other computer
-on the network, browse to `http://<host-name>:3001`.
+on the network, browse to `https://<host-name>:3001`.
 
 ## Permanent install (starts with Windows, no login needed)
 
@@ -41,13 +60,19 @@ From an **elevated** PowerShell in the folder containing the exe:
 powershell -ExecutionPolicy Bypass -File _internal\scripts\windows\serveredition-install.ps1
 ```
 
-This registers a startup task (runs as SYSTEM before anyone logs in),
-opens the firewall port, sets the data home to
+This registers a startup task as LOCAL SERVICE, permits only local-subnet
+clients on Private/Domain firewall profiles, and sets the data home to
 `C:\ProgramData\SlowBooksPro` (machine-wide, not one user's profile),
 starts the server, and prints your team's connect URLs. If you already
 have desktop-mode books in `%LOCALAPPDATA%\SlowBooksPro`, the script
 copies them (company files, encryption key, uploads, backups) into the
 new data home the first time — your desktop copies are left untouched.
+Existing destination files are not overwritten. Reconcile any conflicts and
+preserve the original encryption keys before proceeding. Configure TLS in this
+data home's `.env`; the installer stops if certificate/key paths are missing.
+LOCAL SERVICE needs read access to the installed application and TLS files;
+it receives modify access to the data home. Protect private keys and audit
+existing file permissions. Native Windows installation remains a release test gate.
 
 Run it from an **elevated** PowerShell (right-click → Run as
 Administrator) and from the installed app's folder — a wrong location
@@ -72,12 +97,15 @@ Your books survive uninstall — the script never deletes data.
    post an entry; a bookkeeper cannot touch Settings, Users, backups, or
    migrations. The last active admin can never be locked out — the app
    refuses to demote or deactivate them.
+4. Account status and credentials are checked on subsequent requests. Changing
+   a role or password requires signing in again; disabled/deleted accounts are
+   denied. Pre-upgrade session cookies also require a fresh login.
 
 ## Honest limits (current release)
 
-- **Plain HTTP** — run this on a network you trust (an office LAN behind
-  your router). TLS support is planned; until then do not port-forward
-  it to the internet.
+- **Deployment validation required** — verify certificate trust, service file
+  permissions, firewall scope, and backup/restore before use. These changes are
+  not enterprise certification; do not expose the service to the internet.
 - Comfortable for small teams (2–10 people). The database serializes
   writes; hundreds of concurrent users is not the design target.
 - The update badge appears in-app as usual; updating means running the

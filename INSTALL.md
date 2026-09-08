@@ -126,11 +126,17 @@ git clone https://github.com/VonHoltenCodes/SlowBooks-Pro-2026.git
 cd SlowBooks-Pro-2026
 cp .env.example .env
 
-# Set a strong encryption secret for employee bank PII. The app refuses to
-# start against Postgres with the shipped dev default, so this is required:
+# Generate separate secrets for employee PII and cookie signing.
+# Docker Compose requires both values; empty values will prevent startup:
 #   Linux/macOS:  openssl rand -base64 32
-#   any OS:       python -c "import secrets; print(secrets.token_urlsafe(32))"
-# Put the result on the PAYROLL_ENCRYPTION_SECRET= line in .env.
+#   any OS with Docker (no host Python needed):
+#     docker run --rm python:3.13-slim python -c "import secrets; print(secrets.token_urlsafe(32))"
+# Set PAYROLL_ENCRYPTION_SECRET in .env, then generate another value and
+# set SESSION_SECRET_KEY.
+# Generate the SETTINGS_ENCRYPTION_KEY exactly as documented in .env; it is a
+# Fernet key protecting saved provider credentials. Generate the separate audit
+# signing key there as well; keep all four stable.
+# For this localhost-only walkthrough, also set FORCE_HTTPS=false in .env.
 
 docker compose up
 ```
@@ -145,16 +151,22 @@ Open **http://localhost:3001** in your browser.
 > ([docs/tls-proxy-setup.md](docs/tls-proxy-setup.md)), set `FORCE_HTTPS=true`,
 > add `?sslmode=require` to `DATABASE_URL`, and unset that flag.
 
+> Keep `.env` with your backups. PostgreSQL retains encrypted credentials, but
+> they cannot be recovered if `SETTINGS_ENCRYPTION_KEY` is lost or changed.
+> Existing Docker installs upgrading from before 2.9.4 must preserve the key
+> from the running container before replacing it; follow
+> [the Docker key upgrade steps](docs/operations.md#docker-settings-key-upgrade).
+
 > On Windows, **Option 0** avoids all of this (no Docker at all, secret
 > generated for you, opens a desktop window) — prefer it unless you
 > specifically want a multi-user Docker + PostgreSQL server.
 
 ### What happens on first run
 
-1. PostgreSQL 17 starts and creates the `bookkeeper` database
+1. A constrained one-shot task repairs backup/upload volume ownership; PostgreSQL 17 starts and creates the `bookkeeper` database
 2. Alembic runs all migrations (the complete schema — no table depends on app startup)
 3. Chart of Accounts is seeded (57 accounts — Contractor template, includes the payroll-liability accounts and 6810 Depreciation Expense) and a default Equipment asset type
-4. Uvicorn starts serving the app on port 3001
+4. The non-root app starts with a read-only filesystem and serves port 3001
 5. On first visit, you'll be prompted to set an operator password (min 8 characters)
 
 ### Loading demo data
@@ -164,6 +176,11 @@ To populate the IRS Publication 583 mock data (Henry Brown's Auto Body Shop):
 ```bash
 docker compose exec slowbooks python scripts/seed_irs_mock_data.py
 ```
+
+Use a separate demo company/database. Existing demo records persist in the
+database; rebuilding the app or running `alembic upgrade head` does not require
+reseeding. Back up before upgrades and retain the same database volume or
+company file. See [upgrade and validation notes](docs/validation.md).
 
 ### Stopping and restarting
 

@@ -407,7 +407,10 @@ _add(
             ],
         ),
         base_exemption=_sd(15000, 24000, 19000),
-        employee_items=(OtherItem("CT Paid Leave", D("0.005"), SS_BASE),),
+        # 2026: CT contributions follow the SSA cap ($184,500).
+        # https://www.ctpaidleave.org/how-ct-paid-leave-works/contributions
+        # https://www.ssa.gov/OACT/cola/cbbdet.html
+        employee_items=(OtherItem("CT Paid Leave", D("0.005"), D(184500)),),
         year="2026",
         source=f"Connecticut Circular CT; CT Paid Leave 0.5% (ctpaidleave.org); {TF}; {SUI}",
         notes="Personal exemption phases out above $30k/$48k; the full amount is used. Withholding codes A–F map to filing status here.",
@@ -610,8 +613,10 @@ _add(
         ),
         std_deduction=_sd(15300, 30600, 22950),
         exemption=D(5300),
-        employee_items=(OtherItem("MN Paid Leave (employee)", D("0.0044"), SS_BASE),),
-        employer_items=(OtherItem("MN Paid Leave (employer)", D("0.0044"), SS_BASE),),
+        # MN rounds the Social Security wage base to the nearest $1,000.
+        # 2026 DEED guidance: $185,000 (not the unrounded federal cap).
+        employee_items=(OtherItem("MN Paid Leave (employee)", D("0.0044"), D(185000)),),
+        employer_items=(OtherItem("MN Paid Leave (employer)", D("0.0044"), D(185000)),),
         year="2026",
         source=f"Minnesota Income Tax Withholding Instruction Booklet; Paid Leave 0.88% from 2026-01-01 split 50/50 (pl.mn.gov); {TF}; {SUI}",
         notes="Small employers pay a reduced 0.66% total Paid Leave premium.",

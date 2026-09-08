@@ -2,7 +2,7 @@
 # SlowBooks Pro - Server Edition install (Windows)
 #
 # Registers a scheduled task that runs the server at machine startup as
-# SYSTEM (no login required), stores books machine-wide under
+# LOCAL SERVICE (no login required), stores books machine-wide under
 # C:\ProgramData\SlowBooksPro, and opens the firewall port. Run from an
 # elevated PowerShell:
 #
@@ -12,7 +12,7 @@
 # ============================================================================
 #Requires -RunAsAdministrator
 param(
-    [int]$Port = 3001,
+    [ValidateRange(1, 65535)][int]$Port = 3001,
     [string]$ExePath = "",
     [string]$DataDir = "$env:ProgramData\SlowBooksPro"
 )
@@ -55,9 +55,17 @@ function Test-HasBooks([string]$dir) {
 $serverHasBooks = Test-HasBooks $DataDir
 $desktopHasBooks = Test-HasBooks $DesktopDir
 if (-not $serverHasBooks -and $desktopHasBooks) {
+    # Validate the entire copy set before writing anything. A late collision
+    # must not leave a partially copied company that looks ready on retry.
+    $DesktopFiles = @(Get-ChildItem -Path $DesktopDir -File -Force |
+        Where-Object { $_.Extension -in ".db", ".json" -or $_.Name -like ".env*" })
+    foreach ($ItemName in @($DesktopFiles.Name) + @('companies', 'uploads', 'backups')) {
+        if ((Test-Path (Join-Path $DesktopDir $ItemName)) -and (Test-Path (Join-Path $DataDir $ItemName))) {
+            throw "Destination already exists: $ItemName. Reconcile desktop/server data before installing."
+        }
+    }
     Write-Host ">> Copying your desktop books from $DesktopDir"
-    Get-ChildItem -Path $DesktopDir -File -Force |
-        Where-Object { $_.Extension -in ".db", ".json" -or $_.Name -like ".env*" } |
+    $DesktopFiles |
         ForEach-Object {
             Copy-Item $_.FullName -Destination $DataDir -Force
             Write-Host ("   " + $_.Name)
@@ -74,12 +82,31 @@ if (-not $serverHasBooks -and $desktopHasBooks) {
     Write-Host ">> $DataDir already has company files - leaving them as-is"
 }
 
-Write-Host ">> Opening firewall port $Port (rule: $RuleName)"
+# TLS settings belong in the server data home's .env, not an interactive
+# administrator's environment (which the startup account does not inherit).
+$ServerEnv = Join-Path $DataDir '.env'
+if (-not (Test-Path $ServerEnv)) { throw 'Configure server .env and TLS first; see docs/server-edition.md.' }
+foreach ($TlsSetting in 'SLOWBOOKS_TLS_CERTFILE', 'SLOWBOOKS_TLS_KEYFILE') {
+    $Entry = Get-Content $ServerEnv | Where-Object { $_ -match "^\s*$TlsSetting=" } | Select-Object -First 1
+    if (-not $Entry) { throw "Missing $TlsSetting in server .env" }
+    $TlsPath = ($Entry -split '=', 2)[1].Trim().Trim('"').Trim("'")
+    if (-not [IO.Path]::IsPathRooted($TlsPath) -or -not (Test-Path $TlsPath -PathType Leaf)) {
+        throw "$TlsSetting must name an existing absolute file path"
+    }
+}
+
+# Give the service access to its data, not administrator privileges. Numeric
+# SIDs work on localized Windows installations too. Existing books survive.
+icacls $DataDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)M' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Could not set service data permissions' }
+
+Write-Host ">> Opening firewall port $Port (private/domain local subnet only)"
 netsh advfirewall firewall delete rule name="$RuleName" | Out-Null
 netsh advfirewall firewall add rule name="$RuleName" dir=in action=allow `
-    protocol=TCP localport=$Port | Out-Null
+    protocol=TCP localport=$Port profile=private,domain remoteip=localsubnet program="$ExePath" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Could not create restricted firewall rule' }
 
-Write-Host ">> Registering startup task $TaskName (runs as SYSTEM, no login needed)"
+Write-Host ">> Registering startup task $TaskName (runs as LOCAL SERVICE)"
 # PowerShell 5.1 mangles embedded double quotes when handing arguments to
 # native commands: with the app in "C:\Program Files\SlowBooks Pro 2026",
 # schtasks saw /TR split at the first space and rejected it (Invalid
@@ -87,7 +114,7 @@ Write-Host ">> Registering startup task $TaskName (runs as SYSTEM, no login need
 # a normal installed location. Backslash-quote is the one form PS passes
 # through literally.
 $TaskCmd = "\`"$ExePath\`" --serve-lan --port $Port --data-dir \`"$DataDir\`""
-schtasks /Create /TN $TaskName /SC ONSTART /RU SYSTEM /RL HIGHEST /F /TR $TaskCmd | Out-Null
+schtasks /Create /TN $TaskName /SC ONSTART /RU 'NT AUTHORITY\LOCALSERVICE' /RL LIMITED /F /TR $TaskCmd | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw "schtasks could not register the $TaskName task (exit $LASTEXITCODE)"
 }
@@ -107,8 +134,8 @@ Write-Host ""
 Write-Host "SlowBooks Pro Server Edition is installed." -ForegroundColor Green
 Write-Host "Books live in: $DataDir"
 Write-Host "Your team connects at:"
-Write-Host "    http://$($env:COMPUTERNAME):$Port"
-foreach ($ip in $ips) { Write-Host "    http://${ip}:$Port" }
+Write-Host "    https://$($env:COMPUTERNAME):$Port"
+foreach ($ip in $ips) { Write-Host "    https://${ip}:$Port" }
 Write-Host ""
 Write-Host "It starts automatically with Windows (before anyone logs in)."
-Write-Host "Plain HTTP - trusted networks only."
+Write-Host "HTTPS required - use a certificate-covered hostname trusted by your clients."

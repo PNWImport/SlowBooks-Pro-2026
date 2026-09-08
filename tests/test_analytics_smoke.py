@@ -12,9 +12,7 @@ def test_dashboard_auth_required(unauthed_client):
 
 def test_dashboard_reachable_when_authed(authed_client):
     r = authed_client.get("/api/analytics/dashboard")
-    # Either 200 (happy path on empty DB) or a deterministic 422/500 from
-    # missing seed data — but NEVER 401 since we're authed
-    assert r.status_code != 401
+    assert r.status_code == 200, r.text
 
 
 def test_ai_config_rejects_bad_account_id(authed_client):

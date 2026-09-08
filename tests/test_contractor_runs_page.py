@@ -187,3 +187,10 @@ def test_status_badges_cover_all_states():
     assert "processed" in js
     assert "void" in js
     assert "draft" in js
+
+
+def test_processed_run_exposes_void_action():
+    js = (JS / "contractor_runs.js").read_text()
+    assert "ContractorRunsPage.voidRun" in js
+    assert "/contractor-runs/${runId}/void" in js
+    assert "does not recall an ACH" in js

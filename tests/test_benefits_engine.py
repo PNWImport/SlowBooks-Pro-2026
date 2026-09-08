@@ -770,9 +770,9 @@ def test_payroll_burden_distributes_to_jobs_by_hours(
 
     ids = []
     for day, hrs, job in (
-        ("2026-07-06", 30, job_a),
-        ("2026-07-07", 10, job_b),
-        ("2026-07-08", 40, None),
+        ("2026-07-06", 18, job_a),
+        ("2026-07-07", 6, job_b),
+        ("2026-07-08", 24, None),
     ):
         body = {"employee_id": emp["id"], "date": day, "hours_regular": hrs}
         if job:
@@ -785,11 +785,11 @@ def test_payroll_burden_distributes_to_jobs_by_hours(
         ids.append(te["id"])
     # with burden_method=payroll the time entry posts base labor only
     posted = client.post(f"/api/time-entries/{ids[0]}/post-to-job").json()
-    assert posted["total"] == 1500.0  # 30h × $50, no flat 20%
+    assert posted["total"] == 900.0  # 18h × $50, no flat 20%
 
     run = _run(client, emp["id"], use_time_entries=True, process=True)
     stub = run["stubs"][0]
-    assert stub["hours"] == 80.0
+    assert stub["hours"] == 48.0
     taxes = round(
         stub["employer_ss_tax"]
         + stub["employer_medicare_tax"]
@@ -806,9 +806,9 @@ def test_payroll_burden_distributes_to_jobs_by_hours(
     for ln in jc["lines"]:
         assert ln["is_burden"]
         by_job[ln["job_id"]] = by_job.get(ln["job_id"], 0) + float(ln["amount"])
-    # 30/80 and 10/80 of (taxes + 300); the 40 no-job hours stay in the pool
-    assert round(by_job[job_a["id"]], 2) == round((taxes + 300) * 30 / 80, 2)
-    assert round(by_job[job_b["id"]], 2) == round((taxes + 300) * 10 / 80, 2)
+    # 18/48 and 6/48 of (taxes + 300); the 24 no-job hours stay in the pool
+    assert round(by_job[job_a["id"]], 2) == round((taxes + 300) * 18 / 48, 2)
+    assert round(by_job[job_b["id"]], 2) == round((taxes + 300) * 6 / 48, 2)
     assert round(sum(by_job.values()), 2) == round((taxes + 300) * 0.5, 2)
     assert not any(
         "GTL" in (ln["description"] or "") for ln in jc["lines"]
@@ -827,7 +827,7 @@ def test_payroll_burden_distributes_to_jobs_by_hours(
     tree = client.get(f"/api/jobs/{job_a['id']}/cost-tree").json()
     labor = next(t for t in tree["types"] if t["cost_type"] == "labor")
     assert round(labor["figures"]["actual"], 2) == round(
-        1500 + (taxes + 300) * 30 / 80, 2
+        900 + (taxes + 300) * 18 / 48, 2
     )
 
 

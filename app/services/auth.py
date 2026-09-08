@@ -11,6 +11,9 @@
 # ============================================================================
 
 import logging
+import hashlib
+import hmac
+import json
 import os
 import secrets
 from pathlib import Path
@@ -30,6 +33,48 @@ AUTH_PASSWORD_KEY = "auth_password_hash"
 # Session cookie name + lifetime
 SESSION_COOKIE_NAME = "slowbooks_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
+
+
+def session_credential(user) -> str:
+    """Bind a signed session to the current credentials and authorization.
+
+    Never put the password verifier itself in the readable session cookie.
+    Changing the password or role invalidates previously issued credentials.
+    """
+    principal = json.dumps(
+        ["slowbooks-session-v1", user.id, user.username, user.role],
+        separators=(",", ":"),
+    )
+    return hmac.new(
+        user.password_hash.encode(), principal.encode(), hashlib.sha256
+    ).hexdigest()
+
+
+def refresh_session_principal(session: dict) -> bool:
+    """Fail closed for revoked, deleted, or pre-upgrade cookie principals."""
+    from app import database
+    from app.models.users import User, VALID_ROLES
+
+    user_id = session.get("user_id")
+    credential = session.get("credential")
+    if type(user_id) is not int or not isinstance(credential, str):
+        session.clear()
+        return False
+    with database.SessionLocal() as db:
+        user = db.get(User, user_id)
+        if (
+            user is None
+            or not user.is_active
+            or user.role not in VALID_ROLES
+            or not hmac.compare_digest(credential, session_credential(user))
+        ):
+            session.clear()
+            return False
+        session.update(
+            username=user.username, display_name=user.display_name, role=user.role
+        )
+    return True
+
 
 # Minimum password length for setup
 MIN_PASSWORD_LEN = 8

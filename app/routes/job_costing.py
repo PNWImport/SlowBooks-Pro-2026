@@ -8,13 +8,15 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
 from app.models.accounts import Account, AccountType
 from app.models.cost_codes import CostCode
 from app.models.job_costing import CostType, Equipment, JobCost, JobCostLine
 from app.models.jobs import Job
+from app.models.time_entries import TimeEntry
+from app.routes._helpers import clamp_pagination
 from app.schemas.job_costing import (
     AllocationCreate,
     CostTypeCreate,
@@ -296,7 +298,7 @@ def _jc_response(jc: JobCost) -> JobCostResponse:
 def _jc_get(db: Session, jc_id: int) -> JobCost:
     jc = (
         db.query(JobCost)
-        .options(joinedload(JobCost.job), joinedload(JobCost.lines))
+        .options(*_job_cost_loaders())
         .filter(JobCost.id == jc_id)
         .first()
     )
@@ -305,15 +307,31 @@ def _jc_get(db: Session, jc_id: int) -> JobCost:
     return jc
 
 
+def _job_cost_loaders():
+    """Preload every relationship rendered by ``_jc_response``."""
+    return (
+        joinedload(JobCost.job).joinedload(Job.customer),
+        selectinload(JobCost.lines)
+        .joinedload(JobCostLine.job)
+        .joinedload(Job.customer),
+        selectinload(JobCost.lines).joinedload(JobCostLine.cost_code),
+        selectinload(JobCost.lines).joinedload(JobCostLine.debit_account),
+        selectinload(JobCost.lines).joinedload(JobCostLine.credit_account),
+    )
+
+
 @job_costs_router.get("", response_model=list[JobCostResponse])
 def list_job_costs(
     job_id: Optional[int] = None,
     status: Optional[str] = None,
     start_date: Optional[date] = Query(default=None),
     end_date: Optional[date] = Query(default=None),
+    skip: int = 0,
+    limit: int = 500,
     db: Session = Depends(get_db),
 ):
-    q = db.query(JobCost).options(joinedload(JobCost.job), joinedload(JobCost.lines))
+    skip, limit = clamp_pagination(skip, limit)
+    q = db.query(JobCost).options(*_job_cost_loaders())
     if job_id is not None:
         q = q.filter(
             (JobCost.job_id == job_id)
@@ -327,10 +345,13 @@ def list_job_costs(
         q = q.filter(JobCost.date >= start_date)
     if end_date:
         q = q.filter(JobCost.date <= end_date)
-    return [
-        _jc_response(jc)
-        for jc in q.order_by(JobCost.date.desc(), JobCost.id.desc()).all()
-    ]
+    rows = (
+        q.order_by(JobCost.date.desc(), JobCost.id.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return [_jc_response(jc) for jc in rows]
 
 
 @job_costs_router.get("/{jc_id}", response_model=JobCostResponse)
@@ -461,7 +482,12 @@ def allocate(data: AllocationCreate, db: Session = Depends(get_db)):
 
 @job_costs_router.post("/{jc_id}/void", response_model=JobCostResponse)
 def void(jc_id: int, db: Session = Depends(get_db)):
-    jc = _jc_get(db, jc_id)
+    # Lock linked time first, matching the time-entry reject path, then the
+    # job-cost header. This prevents two void paths from posting reversals.
+    db.query(TimeEntry).filter(TimeEntry.job_cost_id == jc_id).with_for_update().all()
+    jc = db.query(JobCost).filter(JobCost.id == jc_id).with_for_update().first()
+    if not jc:
+        raise HTTPException(status_code=404, detail="Job cost entry not found")
     check_closing_date(db, jc.date)
     try:
         void_job_cost(db, jc)

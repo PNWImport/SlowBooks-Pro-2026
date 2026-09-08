@@ -39,13 +39,16 @@ MIGRATIONS_DIR = (
 )
 
 # Structural drift that predates the migration-parity work and is deliberate:
-# these two columns were migrated with a looser type than the model declares.
+# this column was migrated with a looser type than the model declares.
 # Widening/narrowing them is a behavioural change, not a parity fix, so they
 # are recorded here rather than silently "corrected".
 KNOWN_TYPE_DRIFT = {
     ("inventory_movements", "movement_type"),  # VARCHAR(20) vs Enum(movementtype)
-    ("settings", "value"),  # VARCHAR(500) vs Text
 }
+
+# d5e6f7a8b9c0 explicitly preserves these source tables after copying their
+# rows into the benefits engine. Their presence protects historical data.
+PRESERVED_LEGACY_TABLES = {"deduction_types", "employee_deductions"}
 
 
 def _migration_files():
@@ -164,8 +167,32 @@ def _pg_url():
         return None
 
 
+def _scratch_database_url(admin_url, database):
+    # Preserve socket paths, ports, TLS options, and escaped credentials.
+    return (
+        sa.engine.make_url(admin_url)
+        .set(database=database)
+        .render_as_string(hide_password=False)
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://validation@/postgres?host=/tmp/test-pg&port=57431",
+        "postgresql://validation@localhost:57431/postgres?sslmode=verify-full",
+        "postgresql://validation:synthetic%2Fpassword@localhost/postgres",
+    ],
+)
+def test_scratch_database_url_preserves_connection_options(url):
+    original = sa.engine.make_url(url)
+    target = sa.engine.make_url(_scratch_database_url(url, "scratch_test"))
+    assert target == original.set(database="scratch_test")
+
+
 @pytest.mark.skipif(_pg_url() is None, reason="no PostgreSQL available")
-def test_upgrade_head_matches_model_metadata():
+@pytest.mark.parametrize("legacy_data", [False, True])
+def test_upgrade_head_matches_model_metadata(legacy_data):
     """`alembic upgrade head` on an empty PostgreSQL must reproduce the models.
 
     Runs the real chain, then asks Alembic to autogenerate a diff against the
@@ -181,7 +208,7 @@ def test_upgrade_head_matches_model_metadata():
     admin_url = _pg_url()
     dbname = f"sbparity_{uuid.uuid4().hex[:12]}"
     admin = sa.create_engine(admin_url, isolation_level="AUTOCOMMIT")
-    target = admin_url.rsplit("/", 1)[0] + "/" + dbname
+    target = _scratch_database_url(admin_url, dbname)
 
     try:
         with admin.connect() as conn:
@@ -194,7 +221,7 @@ def test_upgrade_head_matches_model_metadata():
         pytest.skip(f"cannot create a scratch database: {exc.orig}")
     try:
         cfg = Config(str(MIGRATIONS_DIR.parent.parent / "alembic.ini"))
-        cfg.set_main_option("sqlalchemy.url", target)
+        cfg.set_main_option("sqlalchemy.url", target.replace("%", "%%"))
         cfg.set_main_option("script_location", str(MIGRATIONS_DIR.parent))
         # migrations/env.py overrides sqlalchemy.url from DATABASE_URL, which
         # the test harness points at its SQLite database — so the env var has
@@ -202,6 +229,34 @@ def test_upgrade_head_matches_model_metadata():
         previous = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = target
         try:
+            if legacy_data:
+                command.upgrade(cfg, "c3d4e5f6a7b8")
+                legacy_engine = sa.create_engine(target)
+                try:
+                    with legacy_engine.begin() as conn:
+                        conn.execute(
+                            sa.text(
+                                "INSERT INTO deduction_types (name, code) "
+                                "VALUES ('Legacy retirement deduction', 'LEGACY401K')"
+                            )
+                        )
+                        employee_id = conn.execute(
+                            sa.text(
+                                "INSERT INTO employees (first_name, last_name) "
+                                "VALUES ('Legacy', 'Employee') RETURNING id"
+                            )
+                        ).scalar_one()
+                        conn.execute(
+                            sa.text(
+                                "INSERT INTO employee_deductions "
+                                "(employee_id, deduction_type_id, amount, annual_limit) "
+                                "SELECT :employee, id, 125.50, 1500 FROM deduction_types "
+                                "WHERE code = 'LEGACY401K'"
+                            ),
+                            {"employee": employee_id},
+                        )
+                finally:
+                    legacy_engine.dispose()
             command.upgrade(cfg, "head")
         finally:
             if previous is None:
@@ -212,6 +267,32 @@ def test_upgrade_head_matches_model_metadata():
         engine = sa.create_engine(target)
         with engine.connect() as conn:
             diffs = compare_metadata(MigrationContext.configure(conn), Base.metadata)
+            if legacy_data:
+                election = conn.execute(
+                    sa.text(
+                        "SELECT employee_rate, annual_cap FROM employee_benefits "
+                        "WHERE employee_id = :employee"
+                    ),
+                    {"employee": employee_id},
+                ).one()
+                assert str(election.employee_rate) == "125.5000"
+                assert str(election.annual_cap) == "1500.00"
+                assert (
+                    conn.execute(
+                        sa.text(
+                            "SELECT name FROM benefit_codes WHERE code = 'LEGACY401K'"
+                        )
+                    ).scalar()
+                    == "Legacy retirement deduction"
+                )
+                assert (
+                    conn.execute(
+                        sa.text(
+                            "SELECT count(*) FROM deduction_types WHERE code = 'LEGACY401K'"
+                        )
+                    ).scalar()
+                    == 1
+                )
         engine.dispose()
 
         structural = []
@@ -226,6 +307,11 @@ def test_upgrade_head_matches_model_metadata():
                 if kind in ("add_column", "remove_column"):
                     structural.append(f"{kind}: {entry[2]}.{entry[3].name}")
                 elif kind in ("add_table", "remove_table"):
+                    if (
+                        kind == "remove_table"
+                        and entry[1].name in PRESERVED_LEGACY_TABLES
+                    ):
+                        continue
                     structural.append(f"{kind}: {entry[1].name}")
                 elif kind == "modify_type":
                     if (entry[2], entry[3]) in KNOWN_TYPE_DRIFT:

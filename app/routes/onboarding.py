@@ -105,7 +105,12 @@ def create_task(data: OnboardingTaskCreate, db: Session = Depends(get_db)):
 def update_task(
     task_id: int, data: OnboardingTaskUpdate, db: Session = Depends(get_db)
 ):
-    task = db.query(OnboardingTask).filter(OnboardingTask.id == task_id).first()
+    task = (
+        db.query(OnboardingTask)
+        .filter(OnboardingTask.id == task_id)
+        .with_for_update()
+        .first()
+    )
     if not task:
         raise HTTPException(status_code=404, detail="Onboarding task not found")
     fields = data.model_dump(exclude_unset=True)
@@ -135,9 +140,16 @@ def update_task(
 def complete_task(
     task_id: int, completed_by: str = "admin", db: Session = Depends(get_db)
 ):
-    task = db.query(OnboardingTask).filter(OnboardingTask.id == task_id).first()
+    task = (
+        db.query(OnboardingTask)
+        .filter(OnboardingTask.id == task_id)
+        .with_for_update()
+        .first()
+    )
     if not task:
         raise HTTPException(status_code=404, detail="Onboarding task not found")
+    if task.status == OnboardingTaskStatus.COMPLETE:
+        return task
     task.status = OnboardingTaskStatus.COMPLETE
     task.completed_at = datetime.now(timezone.utc)
     task.completed_by = completed_by

@@ -197,7 +197,12 @@ def create_review(data: ReviewCreate, db: Session = Depends(get_db)):
 
 @router.put("/reviews/{review_id}")
 def update_review(review_id: int, data: ReviewUpdate, db: Session = Depends(get_db)):
-    r = db.query(PerformanceReview).filter(PerformanceReview.id == review_id).first()
+    r = (
+        db.query(PerformanceReview)
+        .filter(PerformanceReview.id == review_id)
+        .with_for_update()
+        .first()
+    )
     if not r:
         raise HTTPException(status_code=404, detail="Review not found")
     if r.status != ReviewStatus.DRAFT:
@@ -213,7 +218,12 @@ def update_review(review_id: int, data: ReviewUpdate, db: Session = Depends(get_
 
 @router.post("/reviews/{review_id}/submit")
 def submit_review(review_id: int, db: Session = Depends(get_db)):
-    r = db.query(PerformanceReview).filter(PerformanceReview.id == review_id).first()
+    r = (
+        db.query(PerformanceReview)
+        .filter(PerformanceReview.id == review_id)
+        .with_for_update()
+        .first()
+    )
     if not r:
         raise HTTPException(status_code=404, detail="Review not found")
     if r.status != ReviewStatus.DRAFT:
@@ -228,7 +238,12 @@ def submit_review(review_id: int, db: Session = Depends(get_db)):
 def acknowledge_review(
     review_id: int, data: AcknowledgeRequest, db: Session = Depends(get_db)
 ):
-    r = db.query(PerformanceReview).filter(PerformanceReview.id == review_id).first()
+    r = (
+        db.query(PerformanceReview)
+        .filter(PerformanceReview.id == review_id)
+        .with_for_update()
+        .first()
+    )
     if not r:
         raise HTTPException(status_code=404, detail="Review not found")
     if r.status != ReviewStatus.SUBMITTED:

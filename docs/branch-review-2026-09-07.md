@@ -109,21 +109,19 @@ blocking the fixes were ones we wrote ourselves.**
 ePHI above. Fernet's format is stable across these releases; existing
 ciphertext still decrypts, verified by the full suite on 50.0.1.
 
-**Still open: `weasyprint` `PYSEC-2026-3412` — no fixed release exists.**
-Not applicable to us: the advisory requires HTML presentational hints to be
-enabled, and every call site uses `write_pdf()` with the default `False`.
-Because that is a call-site property one edit could undo,
-`tests/test_pdf_security.py` pins it and also asserts every string-rendered
-PDF passes the SSRF-blocking `url_fetcher`.
+**Resolved after this point-in-time review:** WeasyPrint was upgraded from
+68.1 to 69.0, which fixes `PYSEC-2026-3412` / `CVE-2026-49452`. The original
+call-site guard remains useful defense in depth: presentational hints stay
+disabled and every string-rendered PDF uses the SSRF-blocking `url_fetcher`.
 
 ---
 
 ## 5. Environment discrepancy worth knowing
 
-`Dockerfile` and all four CI jobs target **Python 3.13**. The container
-these 1365 tests ran in is **Python 3.11.15**. Nothing failed because of
-it, but the suite has not actually been exercised on the version that ships.
-Worth one CI run before trusting the result.
+`Dockerfile` and all four CI jobs target **Python 3.13**. The container used
+for this historical review was **Python 3.11.15**. The final release-candidate
+validation later exercised the complete suite on Python 3.13; see
+[final validation](final-validation-2026-09-07.md).
 
 ---
 

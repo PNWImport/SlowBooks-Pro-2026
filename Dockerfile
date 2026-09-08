@@ -45,19 +45,20 @@ RUN python -m compileall -q -j 0 /usr/local/lib/python3.13/site-packages /app ||
 
 RUN chmod +x docker-entrypoint.sh
 
-RUN useradd -m -u 1000 slowbooks && chown -R slowbooks:slowbooks /app
+RUN useradd -m -u 1000 slowbooks \
+    && mkdir -p /app/backups /app/app/static/uploads \
+    && chown -R slowbooks:slowbooks /app
 USER slowbooks
 
 EXPOSE 3001
 
-# Liveness probe — hits the unauthenticated /health endpoint. Uses
-# urllib from the stdlib so we don't need to install curl just for this.
+# Liveness probe — hits the unauthenticated /health endpoint. The script treats
+# the production HTTP-to-HTTPS redirect as healthy without following it: TLS
+# terminates at the external proxy, so there is no HTTPS listener in this image.
 # Marks the container unhealthy after 3 consecutive failures (90s),
 # which is short enough for orchestrators to restart promptly and long
 # enough to ride out a single GC pause or migration replay.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request,sys; \
-        sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:3001/health', timeout=3).status == 200 else sys.exit(1)" \
-        || exit 1
+    CMD python scripts/docker_healthcheck.py
 
 ENTRYPOINT ["./docker-entrypoint.sh"]

@@ -13,7 +13,7 @@ what's in each tier, where each piece lives, and what's still pending.
 | **Tier 3 — Tax forms (JSON)** | W-2, W-3, Form 940, Form 941 endpoints — machine-readable | ✅ | ✅ | ✅ |
 | **Tier 3 — Tax forms (PDF)** | WeasyPrint-rendered, employer-branded, audit-hashed | ✅ | ✅ | ✅ |
 | **Tier 3 — Document audit hashes** | Per-document SHA-256 in PDF footer + `document_audits` as a linked hash chain with signed, exportable checkpoints | ✅ | ✅ | ✅ |
-| **Tier 3 — Portal** | Token-accessed self-service for pay stubs, W-4, bank, PTO | ✅ | n/a | ✅ |
+| **Tier 3 — Portal** | Cookie-backed pay stubs, W-4, bank, PTO, documents, time submission | ✅ | n/a | ✅ |
 | **Tier 3 — Portal cookie session** | URL token only at first claim; subsequent navigation is cookieless | ✅ | n/a | ✅ |
 | **Tier 3 — Portal hardening** | Expiration, no-referrer, rate limiting, employer branding | ✅ | ✅ | ✅ |
 | **PTO year-end carryover** | Batch endpoint applies policy carryover caps + resets YTD | ✅ | n/a | ✅ |
@@ -22,9 +22,9 @@ what's in each tier, where each piece lives, and what's still pending.
 | **Local/municipal taxes** | PA EIT+LST, OH muni+SD, NYC/Yonkers, MD/IN county, KY, MI | ✅ | n/a | ✅ |
 | **Quarterly SUI** | Per-employee wage report, JSON + audit-hashed PDF | ✅ | ✅ | ✅ |
 | **E-file exports** | EFW2 (SSA Pub 42-007) + IRS Pub 1220 1099-NEC | ✅ | ✅ | ✅ |
-| **Deposit schedule** | Pub 15 lookback, $100k next-day, FUTA floor, liability calendar | ✅ | ✅ | ✅ |
-| **Contractor pay runs** | Batch pay 1099 payees, JE + NACHA, feeds 1099 totals | ✅ | ✅ | ✅ |
-| **Pay schedules** | Anchored calendars, cutoffs, weekend shifting | ✅ | ✅ | ✅ |
+| **Deposit schedule** | Pub 15 lookback/holidays, $100k next-day, FUTA, liability calendar | ✅ | ✅ | ✅ |
+| **Contractor pay runs** | Batch pay, JE/NACHA, guarded reversal, 1099 totals | ✅ | ✅ | ✅ |
+| **Pay schedules** | Anchored calendars, cutoffs, bank holidays, custom blackouts | ✅ | ✅ | ✅ |
 | **Retro pay / proration** | Mid-period salary blend + retro shortfall staging | ✅ | ✅ | ✅ |
 | **Termination** | Per-state final-paycheck deadlines + PTO payout staging | ✅ | ✅ | ✅ |
 | **Garnishment remittance** | Agency payees + pending register + mark-remitted | ✅ | ✅ | ✅ |
@@ -194,14 +194,14 @@ All return `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 
 | Method + Path | Rate limit | Purpose |
 |---------------|------------|---------|
-| `GET /portal/{token}` | 30/min | Dashboard |
-| `GET /portal/{token}/paystubs` | 30/min | List processed pay stubs |
-| `GET /portal/{token}/profile` | 30/min | W-4 + address form |
-| `POST /portal/{token}/profile` | 10/min | Save W-4 + address |
-| `GET /portal/{token}/bank` | 30/min | List direct-deposit accounts |
-| `POST /portal/{token}/bank` | 10/min | Add bank account (Fernet-encrypted at rest) |
-| `GET /portal/{token}/pto` | 30/min | Balances + request form |
-| `POST /portal/{token}/pto` | 10/min | Submit a PTO request |
+| `GET /portal/{token}` | 30/min | Claim the session, then redirect to `/portal/` |
+| `GET /portal/paystubs` | 30/min | List processed pay stubs |
+| `GET/POST /portal/profile` | 30/10 min | View/save W-4 + address |
+| `GET/POST /portal/bank` | 30/10 min | List/add encrypted direct-deposit accounts |
+| `GET/POST /portal/pto` | 30/10 min | View balances / submit a PTO request |
+| `GET /portal/time` | 30/min | List the employee's time entries |
+| `POST /portal/time/{id}/submit` | 10/min | Submit an owned draft/rejected entry |
+| `GET /portal/documents` | 30/min | Review signature envelopes |
 
 ### Token lifecycle
 
@@ -227,7 +227,7 @@ All return `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 | `#/hr/team` | Org chart, team PTO calendar, performance reviews | `hr_views.js` |
 | `#/payroll/schedules` | Pay cadences, upcoming-date preview, assignment | `pay_schedules.js` |
 | `#/payroll/locations` | Work locations, jurisdictions, employee roster | `locations.js` |
-| `#/payroll/contractors` | Contractor pay runs, JE posting, NACHA export | `contractor_runs.js` |
+| `#/payroll/contractors` | Contractor runs, JE posting/reversal, NACHA export | `contractor_runs.js` |
 | `#/payroll/remittances` | Garnishment remittance register, mark-remitted | `garnishment_remittances.js` |
 | `#/payroll/deposit-calendar` | Depositor classification + liability calendar | `deposit_calendar.js` |
 | `#/payroll/workers-comp` | Class rates + premium-audit report | `workers_comp.js` |
@@ -248,11 +248,10 @@ The major Tier 3 work has shipped — tax PDFs with audit hashes, the
 cookie-based portal session, PTO year-end carryover, and time-entry →
 pay-run auto-population are all live. What's left is in `docs/todo.md`:
 
-- **State tax table verification** — all 47 table-driven states ship
-  `"verified": false`. Verify the states you pay in against their published
-  withholding guides; see [state-tax-tables.md](state-tax-tables.md)
-- **State W-4 allowances** — `exemption_allowance` assumes one allowance
-  per employee because `Employee` has no `state_allowances` column
+- **State tax verification** — independently verify jurisdictions used against
+  current published guides; see [state-withholding.md](state-withholding.md)
+- **State W-4 inputs** — allowances are implemented; validate each state's
+  formula and required employee elections before live payroll
 - **E-Verify submission flow** — schema has `everify_case_number` but
   no integration with the federal system
 - **CSP nonce mode** — `script-src` still carries `'unsafe-inline'`. The

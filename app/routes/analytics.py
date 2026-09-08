@@ -56,7 +56,7 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 class AIConfigUpdate(StrictModel):
     provider: Optional[str] = None
-    model: Optional[str] = None
+    model: Optional[str] = Field(None, max_length=255)
     api_key: Optional[str] = Field(
         None,
         description=(
@@ -330,15 +330,14 @@ def export_pdf(
 # AI Insights — Phase 9.5
 #
 # Configuration lives in the `settings` table under well-known keys:
-#   ai_provider          — machine id (grok / groq / cloudflare / anthropic /
-#                          openai / gemini)
-#   ai_model             — user-editable model string
+#   ai_provider          — one of the eight registered provider IDs
+#   ai_model             — opaque, user-editable provider model ID
 #   ai_api_key           — FERNET-ENCRYPTED api key (never returned raw)
 #   ai_cloudflare_account_id — only populated when provider == cloudflare
 #
 # The /ai-config endpoints treat the key as write-only: GET never returns
 # it, and PUT only touches it when a non-empty string is supplied (empty
-# string = "keep existing").
+# string = "remove stored key").
 # ===========================================================================
 
 
@@ -400,6 +399,11 @@ def _require_provider_extras(provider: str, cfg: dict) -> None:
                 "cloudflare/worker.js in your own account first, then "
                 "paste the printed Worker URL into AI settings"
             ),
+        )
+    if provider == "custom" and not cfg.get("model"):
+        raise HTTPException(
+            status_code=400,
+            detail="Custom provider requires a model ID",
         )
     if provider == "custom" and not cfg.get("endpoint_url"):
         raise HTTPException(
@@ -474,6 +478,14 @@ def put_ai_config(
     account_id = (payload.cloudflare_account_id or "").strip()
     worker_url_raw = (payload.worker_url or "").strip()
     endpoint_url_raw = (payload.endpoint_url or "").strip()
+
+    # Model IDs are intentionally not allowlisted: every provider can ship a
+    # new ID without requiring a Slowbooks release. The curated UI list is a
+    # convenience only. Custom has no default, so its ID is mandatory.
+    if provider == "custom" and not model:
+        raise HTTPException(
+            status_code=400, detail="Custom provider requires a model ID"
+        )
 
     # SSRF guard #1: CF account_id must be exactly 32 hex chars.
     if account_id and not CLOUDFLARE_ACCOUNT_ID_RE.match(account_id):

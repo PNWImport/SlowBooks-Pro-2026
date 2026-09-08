@@ -3,7 +3,7 @@
 # ----------------------------------------------------------------------------
 # Pins the Pub 15 mechanics: the lookback window (Jul 1 Y-2 .. Jun 30 Y-1),
 # the $50k monthly/semiweekly threshold, monthly due-the-15th (rolled off
-# weekends), the semiweekly Wed-Fri->Wednesday / Sat-Tue->Friday mapping,
+# weekends/holidays), the semiweekly three-business-day rule,
 # the $100k next-day rule, de-minimis quarters, the FUTA $500 floor with
 # carryover, and the merged calendar ordering.
 # ============================================================================
@@ -20,6 +20,7 @@ from app.services.tax_forms.deposit_schedule import (
     futa_deposit_events,
     liability_calendar,
 )
+from app.services.federal_holidays import federal_tax_legal_holidays
 
 
 def _create_employee(client, **overrides):
@@ -65,10 +66,21 @@ def _run_payroll(client, emp_id, pay_date, gross=None, hours=80):
 # --- date helpers -----------------------------------------------------------
 
 
-def test_next_business_day_rolls_weekends():
+def test_next_business_day_rolls_weekends_and_legal_holidays():
     assert _next_business_day(date(2026, 8, 15)) == date(2026, 8, 17)  # Sat -> Mon
     assert _next_business_day(date(2026, 8, 16)) == date(2026, 8, 17)  # Sun -> Mon
     assert _next_business_day(date(2026, 8, 17)) == date(2026, 8, 17)  # Mon stays
+    assert _next_business_day(date(2026, 4, 16)) == date(2026, 4, 17)
+    assert _next_business_day(date(2026, 7, 3)) == date(2026, 7, 6)
+
+
+def test_legal_holiday_calendar_includes_observed_and_cross_year_dates():
+    holidays = federal_tax_legal_holidays(2026)
+    assert date(2026, 4, 16) in holidays  # D.C. Emancipation Day
+    assert date(2026, 6, 19) in holidays  # Juneteenth
+    assert date(2026, 7, 3) in holidays  # July 4 observed
+    assert date(2021, 12, 31) in federal_tax_legal_holidays(2021)  # 2022 New Year
+    assert date(2025, 1, 20) in federal_tax_legal_holidays(2025)  # MLK + inaugural
 
 
 @pytest.mark.parametrize(
@@ -83,6 +95,13 @@ def test_next_business_day_rolls_weekends():
 )
 def test_semiweekly_due_mapping(pay_date, due):
     assert _semiweekly_due(pay_date) == due
+
+
+def test_semiweekly_due_preserves_three_business_days_across_holiday():
+    # Friday period close; MLK Day Monday leaves Tue/Wed/Thu as business days.
+    assert _semiweekly_due(date(2026, 1, 16)) == date(2026, 1, 22)
+    # Tuesday period close; D.C. Emancipation Day Thursday pushes Friday to Monday.
+    assert _semiweekly_due(date(2026, 4, 14)) == date(2026, 4, 20)
 
 
 # --- lookback determination -------------------------------------------------
@@ -120,6 +139,23 @@ def test_semiweekly_when_lookback_exceeds_50k(client, db_session, seed_accounts)
     result = determine_deposit_schedule(db_session, 2026)
     assert result["lookback_total"] > 50000
     assert result["schedule"] == "semiweekly"
+
+
+def test_prior_year_100k_event_forces_current_year_semiweekly(
+    client, db_session, seed_accounts
+):
+    first = _create_employee(client, first_name="First")
+    second = _create_employee(client, first_name="Second")
+    # Second-half 2025 pay is outside the ordinary 2026 lookback, but the
+    # next-day rule still carries semiweekly status into 2026.
+    _run_payroll(client, first["id"], "2025-11-03", gross=200000)
+    _run_payroll(client, second["id"], "2025-11-04", gross=200000)
+
+    result = determine_deposit_schedule(db_session, 2026)
+    assert result["lookback_total"] == 0
+    assert result["next_day_carryover"] is True
+    assert result["schedule"] == "semiweekly"
+    assert "$100,000" in result["note"]
 
 
 # --- deposit events ---------------------------------------------------------
@@ -163,6 +199,17 @@ def test_semiweekly_events_group_by_due_date(client, db_session, seed_accounts):
     assert result["events"][0]["due_date"] == "2026-08-19"
 
 
+def test_semiweekly_events_split_at_941_quarter_boundary(
+    client, db_session, seed_accounts
+):
+    emp = _create_employee(client)
+    _run_payroll(client, emp["id"], "2026-09-30")  # Q3 Wednesday
+    _run_payroll(client, emp["id"], "2026-10-02")  # Q4 Friday, same window
+    result = federal_deposit_events(db_session, 2026, schedule="semiweekly")
+    assert len(result["events"]) == 2
+    assert {event["due_date"] for event in result["events"]} == {"2026-10-07"}
+
+
 def test_100k_next_day_rule(client, db_session, seed_accounts):
     emp = _create_employee(client)
     # $400k gross on one day: 941 tax comfortably over $100k. ($300k is a
@@ -172,7 +219,30 @@ def test_100k_next_day_rule(client, db_session, seed_accounts):
     next_day = [e for e in result["events"] if e["rule"] == "next_day"]
     assert len(next_day) == 1
     assert next_day[0]["due_date"] == "2026-06-11"
+    assert result["events"] == next_day  # liability is not duplicated monthly
     assert any("next-day" in w or "$100k" in w for w in result["warnings"])
+
+
+def test_100k_rule_accumulates_runs_and_switches_monthly_filer(
+    client, db_session, seed_accounts
+):
+    first = _create_employee(client, first_name="First")
+    second = _create_employee(client, first_name="Second")
+    small = _create_employee(client, first_name="After")
+    _run_payroll(client, first["id"], "2026-01-05", gross=200000)
+    _run_payroll(client, second["id"], "2026-01-06", gross=200000)
+    _run_payroll(client, small["id"], "2026-01-08")
+
+    result = federal_deposit_events(db_session, 2026, schedule="monthly")
+    next_day = [event for event in result["events"] if event["rule"] == "next_day"]
+    later = [event for event in result["events"] if event["rule"] == "semiweekly"]
+    assert len(next_day) == 1
+    assert next_day[0]["period"] == "2026-01-06"
+    assert next_day[0]["due_date"] == "2026-01-07"
+    assert next_day[0]["amount"] >= 100000
+    assert len(later) == 1
+    assert later[0]["due_date"] == "2026-01-14"
+    assert not [event for event in result["events"] if event["rule"] == "monthly"]
 
 
 def test_de_minimis_quarter_warned(client, db_session, seed_accounts):

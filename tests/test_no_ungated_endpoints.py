@@ -38,6 +38,7 @@ EXPECTED_PUBLIC = {
     # with a request signature the handler checks. Exempted from the session
     # middleware by _AUTH_EXEMPT_RE in app/main.py.
     "/api/payments/{provider_name}/webhook": "payment-provider request-signature auth",
+    "/api/payments/{provider_name}/create-checkout-session": "per-invoice payment token required",
     # Serves the employer logo (204 when unset) as the portal favicon. The
     # same logo already appears on the unauthenticated portal login and the
     # public pay page, so this discloses nothing new.
@@ -63,10 +64,16 @@ def _concrete(path: str) -> str:
 
 
 def _all_routes() -> list[tuple[str, str]]:
+    def walk(routes):
+        for route in routes:
+            if isinstance(route, APIRoute):
+                yield route
+            inner = getattr(route, "original_router", None)
+            if inner is not None:
+                yield from walk(inner.routes)
+
     out = []
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
-            continue
+    for route in walk(app.routes):
         for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
             out.append((method, route.path))
     return sorted(set(out))

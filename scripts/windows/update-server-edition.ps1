@@ -19,7 +19,8 @@ param(
     [string]$ZipPath = "",
     [string]$InstallDir = "C:\SlowBooksServer\SlowBooksPro-windows-x64",
     [string]$Repo = "VonHoltenCodes/SlowBooks-Pro-2026",
-    [int]$Port = 3001
+    [int]$Port = 3001,
+    [string]$HealthHost = $env:COMPUTERNAME
 )
 
 $ErrorActionPreference = "Stop"
@@ -84,7 +85,9 @@ try {
     foreach ($i in 1..30) {
         Start-Sleep -Seconds 2
         try {
-            $h = Invoke-RestMethod "http://127.0.0.1:$Port/health" -TimeoutSec 3
+            # Keep certificate validation enabled. Install the office CA in
+            # Windows trust before updating a private-CA deployment.
+            $h = Invoke-RestMethod "https://${HealthHost}:$Port/health" -TimeoutSec 3
             Write-Host ("UPDATED OK - server healthy, version " + $h.version) -ForegroundColor Green
             $ok = $true
             break

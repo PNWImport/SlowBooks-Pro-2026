@@ -16,6 +16,20 @@ def _raw_row(db, key):
     return db.query(Settings).filter(Settings.key == key).first()
 
 
+def test_configured_settings_key_is_validated_before_use(monkeypatch):
+    from app.services import crypto
+
+    monkeypatch.setenv("SETTINGS_ENCRYPTION_KEY", "not-a-fernet-key")
+    crypto.reset_cache_for_tests()
+    try:
+        import pytest
+
+        with pytest.raises(ValueError):
+            crypto.validate_master_key()
+    finally:
+        crypto.reset_cache_for_tests()
+
+
 def test_secret_settings_are_ciphertext_at_rest(client, db_session):
     r = client.put("/api/settings", json={"smtp_password": "hunter2-smtp"})
     assert r.status_code == 200

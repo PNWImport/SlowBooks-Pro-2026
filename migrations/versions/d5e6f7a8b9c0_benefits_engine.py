@@ -408,7 +408,7 @@ def upgrade() -> None:
                     "reduces_federal, reduces_state, reduces_fica, sequence, is_active, "
                     "burden_routing, tracks_balance, employer_taxable) "
                     "VALUES (:code, :name, 'deduction', :category, 'fixed_amount', "
-                    ":rf, :rs, :rfi, :seq, :active, 'fringe_pool', 0, 0)"
+                    ":rf, :rs, :rfi, :seq, :active, 'fringe_pool', :tracks, :taxable)"
                 ),
                 {
                     "code": code,
@@ -419,6 +419,8 @@ def upgrade() -> None:
                     "rfi": bool(t.reduces_fica),
                     "seq": seq,
                     "active": bool(t.is_active) if t.is_active is not None else True,
+                    "tracks": False,
+                    "taxable": False,
                 },
             )
             new_id = res.lastrowid

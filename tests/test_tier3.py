@@ -505,7 +505,14 @@ def test_portal_end_to_end_flow(client: any, db_session: Session, seed_accounts)
     assert r.status_code == 200
 
     # 4. Every cookieless page returns HTML
-    for path in ("/portal/paystubs", "/portal/profile", "/portal/bank", "/portal/pto"):
+    for path in (
+        "/portal/paystubs",
+        "/portal/profile",
+        "/portal/bank",
+        "/portal/pto",
+        "/portal/time",
+        "/portal/documents",
+    ):
         r = client.get(path, follow_redirects=False)
         assert r.status_code == 200, f"{path} returned {r.status_code}"
 
@@ -564,7 +571,7 @@ def test_portal_end_to_end_flow(client: any, db_session: Session, seed_accounts)
 
     # 8. The audit log captured every step
     audits = db_session.query(PortalAccess).order_by(PortalAccess.id).all()
-    # Claim (1) + 5 cookieless GETs (2-6) + PTO POST + 2 GETs after POST
+    # Claim + cookieless GETs + PTO POST/redirects, then failure/rotation checks.
     # + cold /portal/ (failure) + expired claim (failure) + new claim (success)
     assert len(audits) >= 8
     assert any(not a.success for a in audits)

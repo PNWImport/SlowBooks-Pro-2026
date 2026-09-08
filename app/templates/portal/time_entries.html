@@ -1,0 +1,53 @@
+{% extends "portal/base.html" %}
+{% set active = 'time' %}
+{% block title %}Time Entries{% endblock %}
+
+{% block content %}
+<h2>Time Entries</h2>
+
+{% if submitted %}
+<div class="banner banner-success">Your time entry has been submitted for approval.</div>
+{% endif %}
+
+{% if entries %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th class="num">Regular</th>
+            <th class="num">Overtime</th>
+            <th class="num">Double time</th>
+            <th>Job</th>
+            <th>Notes</th>
+            <th>Status</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in entries %}
+        <tr>
+            <td>{{ entry.date }}</td>
+            <td class="num">{{ "%.2f"|format(entry.hours_regular|float) }}</td>
+            <td class="num">{{ "%.2f"|format(entry.hours_overtime|float) }}</td>
+            <td class="num">{{ "%.2f"|format(entry.hours_doubletime|float) }}</td>
+            <td>{{ entry.job.full_name if entry.job else '—' }}</td>
+            <td>{{ entry.notes or '—' }}</td>
+            <td><span class="pill pill-{{ entry.status.value }}">{{ entry.status.value }}</span></td>
+            <td>
+                {% if entry.status in editable_statuses and not entry.pay_run_id %}
+                <form method="post" action="/portal/time/{{ entry.id }}/submit">
+                    <button type="submit" class="btn">Submit</button>
+                </form>
+                {% else %}
+                —
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+<p class="muted">Showing up to 100 most recent entries. Contact your manager to correct submitted or approved time.</p>
+{% else %}
+<p class="muted">You have no time entries to submit.</p>
+{% endif %}
+{% endblock %}

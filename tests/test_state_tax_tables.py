@@ -106,6 +106,22 @@ def _calc(engine, **overrides):
 # --- structural -------------------------------------------------------------
 
 
+def test_ct_paid_leave_uses_2026_social_security_cap():
+    assert STATES["CT"].employee_items[0].wage_base == Decimal("184500")
+    engine = get_engine("CT")
+    assert _calc(engine, ytd_gross=Decimal("176100")).employee_other == Decimal("10.00")
+    assert _calc(engine, ytd_gross=Decimal("184000")).employee_other == Decimal("2.50")
+    assert _calc(engine, ytd_gross=Decimal("184500")).employee_other == Decimal("0.00")
+
+
+def test_mn_paid_leave_uses_rounded_2026_cap():
+    engine = get_engine("MN")
+    for ytd, expected in [(176100, "8.80"), (184500, "2.20"), (185000, "0.00")]:
+        result = _calc(engine, ytd_gross=Decimal(ytd))
+        assert result.employee_other == Decimal(expected)
+        assert result.employer_other == Decimal(expected)
+
+
 def test_every_jurisdiction_resolves_to_a_real_engine():
     """No state should silently fall through to the zero-rate generic engine."""
     for code in ALL_JURISDICTIONS:

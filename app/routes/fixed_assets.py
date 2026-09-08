@@ -214,7 +214,9 @@ def depreciation_run(data: DepreciationRunRequest, db: Session = Depends(get_db)
 
 @router.post("/{asset_id}/dispose")
 def dispose(asset_id: int, data: DisposalRequest, db: Session = Depends(get_db)):
-    asset = db.get(FixedAsset, asset_id)
+    asset = (
+        db.query(FixedAsset).filter(FixedAsset.id == asset_id).with_for_update().first()
+    )
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     return dispose_asset(

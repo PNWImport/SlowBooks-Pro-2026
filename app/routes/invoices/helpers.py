@@ -8,7 +8,6 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models.accounts import Account
 from app.models.items import Item
 from app.services.accounting import (
     compute_line_totals,
@@ -131,8 +130,11 @@ def _reverse_and_delete_journal(db: Session, transaction_id: int):
         .filter(TransactionLine.transaction_id == transaction_id)
         .all()
     )
+    from app.services.accounting import lock_accounts
+
+    locked_accounts = lock_accounts(db, (line.account_id for line in old_lines))
     for ol in old_lines:
-        account = db.query(Account).filter(Account.id == ol.account_id).first()
+        account = locked_accounts.get(ol.account_id)
         if account:
             if account.account_type.value in ("asset", "expense", "cogs"):
                 account.balance -= ol.debit - ol.credit

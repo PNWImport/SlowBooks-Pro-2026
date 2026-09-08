@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
 echo "Slowbooks Pro 2026 — Starting up..."
 
@@ -63,7 +63,7 @@ fi
 echo "Starting Slowbooks Pro 2026 on port ${APP_PORT:-3001}..."
 # Multi-worker production mode.
 # uvloop + httptools come from uvicorn[standard], explicit for clarity.
-# APP_WORKERS defaults to 2 (tunable via docker-compose env or .env).
+# APP_WORKERS defaults to 1; configure shared rate-limit storage before scaling.
 # APP_HOST is honored rather than hardcoded. It defaults to 0.0.0.0 because
 # that is CORRECT inside a container: binding 127.0.0.1 here would make the
 # app unreachable even through Docker's own port forwarding. The exposure
@@ -73,7 +73,7 @@ echo "Starting Slowbooks Pro 2026 on port ${APP_PORT:-3001}..."
 exec uvicorn app.main:app \
     --host "${APP_HOST:-0.0.0.0}" \
     --port "${APP_PORT:-3001}" \
-    --workers "${APP_WORKERS:-2}" \
+    --workers "${APP_WORKERS:-1}" \
     --loop uvloop \
     --http httptools \
     --access-log

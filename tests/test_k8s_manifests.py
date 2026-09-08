@@ -141,6 +141,27 @@ def test_containers_run_unprivileged(manifest, kind):
     sec = container["securityContext"]
     assert sec["allowPrivilegeEscalation"] is False
     assert sec["capabilities"]["drop"] == ["ALL"]
+    assert sec["readOnlyRootFilesystem"] is True
+
+
+@pytest.mark.parametrize(
+    "manifest,kind",
+    [
+        ("deployment.yaml", "Deployment"),
+        ("migrate-job.yaml", "Job"),
+    ],
+)
+def test_read_only_containers_have_bounded_writable_temp_storage(manifest, kind):
+    doc = _one(manifest, kind)
+    pod = doc["spec"]["template"]["spec"]
+    container = pod["containers"][0]
+    mounts = {m["mountPath"]: m["name"] for m in container["volumeMounts"]}
+    volumes = {v["name"]: v for v in pod["volumes"]}
+
+    for path, size in (("/tmp", "128Mi"), ("/home/slowbooks/.cache", "16Mi")):
+        volume = volumes[mounts[path]]["emptyDir"]
+        assert volume["medium"] == "Memory"
+        assert volume["sizeLimit"] == size
 
 
 def test_deployment_runs_as_nonroot():
@@ -159,6 +180,18 @@ def test_secret_template_holds_no_real_values():
                 f"secret.example.yaml key {key} looks like a real value — "
                 "never commit a filled-in secret"
             )
+
+
+def test_secret_template_supplies_every_required_application_secret():
+    secret = _one("secret.example.yaml", "Secret")["stringData"]
+    assert {
+        "DATABASE_URL",
+        "POSTGRES_PASSWORD",
+        "PAYROLL_ENCRYPTION_SECRET",
+        "SESSION_SECRET_KEY",
+        "SETTINGS_ENCRYPTION_KEY",
+        "AUDIT_CHECKPOINT_SIGNING_SECRET",
+    } <= set(secret)
 
 
 def test_kustomization_excludes_the_secret_template():

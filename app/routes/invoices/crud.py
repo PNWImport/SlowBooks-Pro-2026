@@ -6,7 +6,6 @@ from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
 from app.routes._helpers import clamp_pagination
-from app.models.accounts import Account
 from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
 from app.models.items import Item
 from app.models.contacts import Customer
@@ -376,7 +375,6 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
             tax_account_id = get_sales_tax_account_id(db)
 
             if ar_id and default_income_id:
-                _reverse_and_delete_journal(db, invoice.transaction_id)
                 new_journal_lines = _build_invoice_journal_lines(
                     db,
                     total,
@@ -389,6 +387,19 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
                 )
                 # Rebuild txn lines under the same transaction_id
                 from app.models.transactions import Transaction, TransactionLine
+                from app.services.accounting import lock_accounts
+
+                old_account_ids = (
+                    db.query(TransactionLine.account_id)
+                    .filter(TransactionLine.transaction_id == invoice.transaction_id)
+                    .all()
+                )
+                locked_accounts = lock_accounts(
+                    db,
+                    [row[0] for row in old_account_ids]
+                    + [line["account_id"] for line in new_journal_lines],
+                )
+                _reverse_and_delete_journal(db, invoice.transaction_id)
 
                 txn = (
                     db.query(Transaction)
@@ -411,9 +422,7 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
                             description=jl.get("description", ""),
                         )
                     )
-                    account = (
-                        db.query(Account).filter(Account.id == jl["account_id"]).first()
-                    )
+                    account = locked_accounts.get(jl["account_id"])
                     if account:
                         if account.account_type.value in ("asset", "expense", "cogs"):
                             account.balance += debit - credit

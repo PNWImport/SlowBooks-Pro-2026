@@ -19,13 +19,16 @@ barrier as a bug.
   difference reads "Balanced" / "Out of balance").
 - Muted text meets the 4.5:1 contrast ratio in both the light and dark
   themes.
-- **Every PDF the app generates is tagged (PDF/UA-1)** and declares its
-  language and title — invoices, statements, estimates, pay stubs, W-2s,
-  1099s, Forms 940/941, checks, reports — so screen readers receive
-  headings, tables and reading order rather than a flat image of text.
+- The shared PDF renderer requests PDF/UA-1 tagging. COBRA and state SUI
+  reports also use that renderer. If tagged rendering fails, it falls back
+  to an ordinary PDF; tagging and full PDF/UA conformance are not guaranteed.
 
 ## What we know is still open
 
+- Full keyboard, screen-reader, and rendered contrast testing across workflows
+  remains outstanding. Source checks and PDF structure checks are not a WCAG
+  or PDF/UA conformance assessment. No browser was available for the 2026-09-07
+  validation pass; see [validation results](validation.md).
 - The chart-of-accounts tree and some long entry forms could use landmark
   regions and skip links.
 - Colour-coding on the dashboard charts (A/R aging) has text equivalents in

@@ -6,9 +6,10 @@
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
+from app.routes._helpers import clamp_pagination
 from app.models.bills import Bill, BillStatus, BillPayment, BillPaymentAllocation
 from app.models.contacts import Vendor
 from app.models.accounts import Account
@@ -20,11 +21,17 @@ router = APIRouter(prefix="/api/bill-payments", tags=["bill_payments"])
 
 
 @router.get("", response_model=list[BillPaymentResponse])
-def list_bill_payments(vendor_id: int = None, db: Session = Depends(get_db)):
-    q = db.query(BillPayment)
+def list_bill_payments(
+    vendor_id: int = None,
+    skip: int = 0,
+    limit: int = 500,
+    db: Session = Depends(get_db),
+):
+    skip, limit = clamp_pagination(skip, limit)
+    q = db.query(BillPayment).options(joinedload(BillPayment.vendor))
     if vendor_id:
         q = q.filter(BillPayment.vendor_id == vendor_id)
-    payments = q.order_by(BillPayment.date.desc()).all()
+    payments = q.order_by(BillPayment.date.desc()).offset(skip).limit(limit).all()
     results = []
     for p in payments:
         resp = BillPaymentResponse.model_validate(p)

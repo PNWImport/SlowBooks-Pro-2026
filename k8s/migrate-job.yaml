@@ -56,3 +56,18 @@ spec:
             runAsUser: 1000
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /home/slowbooks/.cache
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Mi
+        - name: cache
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi

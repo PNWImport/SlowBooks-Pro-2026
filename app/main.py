@@ -11,6 +11,7 @@
 
 import logging
 import os
+import posixpath
 import re as _re
 import time as _time
 from contextlib import asynccontextmanager
@@ -160,16 +161,31 @@ def _run_startup_security_checks():
     # silently leave every employee's bank PII decryptable with the key
     # that ships in the source tree. SQLite (dev/test) is exempt, so this
     # never trips local development or the test suite.
-    if _is_real_db and PAYROLL_ENCRYPTION_SECRET == _DEV_KEY:
+    invalid_encryption_secret = PAYROLL_ENCRYPTION_SECRET.strip() in ("", _DEV_KEY)
+    if _is_real_db and invalid_encryption_secret:
         raise RuntimeError(
-            "FATAL: PAYROLL_ENCRYPTION_SECRET is the public dev default while "
+            "FATAL: PAYROLL_ENCRYPTION_SECRET is empty or the public dev default while "
             "connected to a non-SQLite database. All employee bank PII would be "
             "decryptable by anyone with the source code — even with APP_DEBUG=true. "
             "Set a unique, strong PAYROLL_ENCRYPTION_SECRET before deploying."
         )
 
+    # Stored provider credentials can outlive an app container. Validate their
+    # external Fernet key before serving, even when the database has no secret
+    # rows yet; otherwise a malformed value stays hidden until the first save.
+    try:
+        from app.services.crypto import validate_master_key
+
+        validate_master_key()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RuntimeError(
+            "FATAL: SETTINGS_ENCRYPTION_KEY is not a valid Fernet key or its "
+            "fallback key file cannot be persisted. Generate the documented "
+            "key and keep it stable across restarts."
+        ) from exc
+
     if not APP_DEBUG:
-        if PAYROLL_ENCRYPTION_SECRET == _DEV_KEY:
+        if invalid_encryption_secret:
             raise RuntimeError(
                 "FATAL: PAYROLL_ENCRYPTION_SECRET has not been set in production. "
                 "All employee bank account data would be decryptable by anyone with the source code. "
@@ -192,11 +208,18 @@ def _run_startup_security_checks():
                 "leaves this host. Do not expose this instance beyond the "
                 "host without a TLS proxy (docs/tls-proxy-setup.md)."
             )
+            _warn_on_proxy_misconfiguration()
             _create_missing_tables()
             return
 
         if not DATABASE_URL.startswith("sqlite"):
-            if "sslmode" not in DATABASE_URL and "ssl" not in DATABASE_URL.lower():
+            from sqlalchemy.engine import make_url
+
+            if make_url(DATABASE_URL).query.get("sslmode") not in {
+                "require",
+                "verify-ca",
+                "verify-full",
+            }:
                 raise RuntimeError(
                     "FATAL: DATABASE_URL does not specify TLS mode in production. "
                     "Unencrypted database connections leak sensitive financial and payroll data. "
@@ -503,6 +526,20 @@ async def security_headers(request: Request, call_next):
     # forbids serving from cache without asking.
     _set_if_unset(response.headers, "Cache-Control", "no-cache")
     _set_if_unset(response.headers, "Content-Security-Policy", _csp_for(request))
+    normalized_path = "/" + posixpath.normpath(
+        request.url.path.replace("\\", "/")
+    ).lstrip("/")
+    if normalized_path.startswith("/static/uploads/") and (
+        normalized_path.lower().endswith(".svg")
+        or response.headers.get("Content-Type", "").split(";", 1)[0] == "image/svg+xml"
+    ):
+        # SVG logos are untrusted documents when opened directly. The SPA's
+        # inline-script policy must not grant them the application's origin.
+        response.headers["Content-Security-Policy"] = (
+            "sandbox; default-src 'none'; script-src 'none'; "
+            "style-src 'unsafe-inline'; img-src data:; "
+            "base-uri 'none'; form-action 'none'"
+        )
     # HSTS instructs browsers to refuse plain HTTP for HSTS_MAX_AGE seconds.
     # Only emit when HTTPS is actually enforced; sending it under plain HTTP
     # would lock users out if they later visit via http://.
@@ -587,6 +624,19 @@ _ADMIN_ONLY_PREFIXES = (
     "/api/benefits",
     "/api/deductions",
     "/api/onboarding",
+    # Branch additions follow upstream's admin-only payroll/HR contract.
+    "/api/benefit-coverage",
+    "/api/contractor-runs",
+    "/api/pay-schedules",
+    "/api/locations",
+    "/api/hr",
+    "/api/workers-comp",
+    "/api/reports/payroll-journal",
+    "/api/reports/deduction-register",
+    "/api/reports/contractor-payments",
+    # Historical audit payloads can contain full payroll/benefits records.
+    "/api/audit",
+    "/api/document-audits",
 )
 # The parts of an employee record that are a credential or a bank account:
 # the self-service portal token (a full login as that employee —
@@ -625,8 +675,23 @@ def _role_allows(role: str, method: str, path: str) -> bool:
 
 @app.middleware("http")
 async def require_session(request: Request, call_next):
+    # Check even auth/status and static requests: a signed cookie is not
+    # evidence that its account is still active or has the same permissions.
+    if request.session.get("authenticated") is True:
+        from starlette.concurrency import run_in_threadpool
+        from app.services.auth import refresh_session_principal
+
+        await run_in_threadpool(refresh_session_principal, request.session)
     path = request.url.path
-    if (
+    normalized_path = "/" + posixpath.normpath(path.replace("\\", "/")).lstrip("/")
+    private_upload = (
+        normalized_path == "/static/uploads"
+        or normalized_path.startswith("/static/uploads/")
+    ) and normalized_path not in {
+        f"/static/uploads/company_logo.{ext}"
+        for ext in ("png", "jpg", "gif", "webp", "svg")
+    }
+    if not private_upload and (
         path in _AUTH_EXEMPT_EXACT
         or path.startswith(_AUTH_EXEMPT_PREFIXES)
         or _AUTH_EXEMPT_RE.match(path)

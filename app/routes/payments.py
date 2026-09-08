@@ -129,6 +129,11 @@ def create_payment(data: PaymentCreate, db: Session = Depends(get_db)):
             raise HTTPException(
                 status_code=404, detail=f"Invoice {alloc_data.invoice_id} not found"
             )
+        if invoice.customer_id != data.customer_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Allocated invoice does not belong to the payment customer",
+            )
         if alloc_data.amount > invoice.balance_due:
             raise HTTPException(
                 status_code=400,

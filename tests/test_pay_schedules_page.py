@@ -50,6 +50,7 @@ def test_create_schedule(client):
         "anchor_pay_date",
         "submission_lead_days",
         "weekend_shift",
+        "blackout_dates",
         "is_active",
     ):
         assert key in data, f"missing key {key}"
@@ -170,3 +171,10 @@ def test_nav_entry_in_index():
     resp = _raw.get("/")
     assert "payroll-schedules" in resp.text
     assert "Pay Schedules" in resp.text
+
+
+def test_page_wires_federal_holidays_and_custom_blackouts():
+    js = _raw.get("/static/js/pay_schedules.js").text
+    assert "Federal Reserve holidays" in js
+    assert "blackout_dates: PaySchedulesPage.blackoutDates()" in js
+    assert "Original Date" in js

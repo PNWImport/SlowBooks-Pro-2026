@@ -148,6 +148,49 @@ def test_signing_is_employee_scoped(client):
     assert r.status_code == 404
 
 
+def test_failed_signing_rolls_back_its_audit_row(client, db_session):
+    """An envelope write failure must not leave a committed signature audit."""
+    import pytest
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+    from app.models.document_audit import DocumentAudit
+    from app.models.esign import EnvelopeStatus, SignatureEnvelope
+
+    emp = _create_employee(client)
+    envelope = _create_envelope(client, emp["id"])
+    _portal_session(client, emp["id"])
+
+    def fail_envelope_write(session, *_):
+        if any(
+            isinstance(obj, SignatureEnvelope) and obj.status == EnvelopeStatus.SIGNED
+            for obj in session.dirty
+        ):
+            raise RuntimeError("synthetic envelope persistence failure")
+
+    event.listen(Session, "before_flush", fail_envelope_write)
+    try:
+        with pytest.raises(
+            RuntimeError, match="synthetic envelope persistence failure"
+        ):
+            client.post(
+                f"/portal/documents/{envelope['id']}/sign",
+                data={"signer_name": "Pat Worker", "consent": "yes"},
+            )
+    finally:
+        event.remove(Session, "before_flush", fail_envelope_write)
+    db_session.expire_all()
+    assert (
+        db_session.get(SignatureEnvelope, envelope["id"]).status
+        == EnvelopeStatus.PENDING
+    )
+    assert (
+        db_session.query(DocumentAudit)
+        .filter_by(doc_key=f"env{envelope['id']}")
+        .count()
+        == 0
+    )
+
+
 def test_tampered_body_detected(client, db_session):
     emp = _create_employee(client)
     env = _create_envelope(client, emp["id"])

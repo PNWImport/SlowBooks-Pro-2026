@@ -53,6 +53,7 @@ const ContractorRunsPage = {
             }
             if (r.status === 'processed') {
                 actions.push(`<button class="btn" onclick="ContractorRunsPage.nachaModal(${r.id})">NACHA</button>`);
+                actions.push(`<button class="btn btn-danger" onclick="ContractorRunsPage.voidRun(${r.id})">Void</button>`);
             }
             actions.push(`<button class="btn" onclick="ContractorRunsPage.detailModal(${r.id})">Details</button>`);
             html += `<tr>
@@ -175,6 +176,17 @@ const ContractorRunsPage = {
         try {
             const result = await API.post(`/contractor-runs/${runId}/process`);
             toast(`Processed — JE #${result.transaction_id}`);
+            App.navigate('#/payroll/contractors');
+        } catch (e) {
+            toast(e.message, 'error');
+        }
+    },
+
+    async voidRun(runId) {
+        if (!confirm('Void this contractor run and reverse its journal entry? This does not recall an ACH file already sent to the bank.')) return;
+        try {
+            const result = await API.post(`/contractor-runs/${runId}/void`);
+            toast(`Voided — reversing JE #${result.void_transaction_id}`);
             App.navigate('#/payroll/contractors');
         } catch (e) {
             toast(e.message, 'error');

@@ -41,14 +41,15 @@
 //
 //   ALLOWED_MODELS — Comma-separated list of permitted model IDs.
 //                    If not set, defaults to:
+//                      @cf/openai/gpt-oss-120b,
+//                      @cf/openai/gpt-oss-20b,
 //                      @cf/meta/llama-3.3-70b-instruct-fp8-fast,
-//                      @cf/meta/llama-3.1-8b-instruct,
-//                      @cf/mistral/mistral-7b-instruct-v0.2-lora
+//                      @cf/meta/llama-4-scout-17b-16e-instruct
 //                    Set via wrangler.toml [vars] or dashboard.
 //
 //   DEFAULT_MODEL — Model to use if request doesn't specify one.
 //                   Must be in ALLOWED_MODELS.
-//                   Defaults to @cf/meta/llama-3.3-70b-instruct-fp8-fast
+//                   Defaults to @cf/openai/gpt-oss-120b
 //
 //   ALLOWED_ORIGINS — Comma-separated list of origins allowed for CORS
 //                     (browser requests). If not set, CORS checks skipped.
@@ -77,11 +78,12 @@ const MAX_TOTAL_TEXT_CHARS = 200_000; // 200 KB total across all messages
 const MAX_TOOLS = 32;
 
 // Model constraints
-const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+const DEFAULT_MODEL = "@cf/openai/gpt-oss-120b";
 const DEFAULT_ALLOWED_MODELS = new Set([
+  "@cf/openai/gpt-oss-120b",
+  "@cf/openai/gpt-oss-20b",
   "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-  "@cf/meta/llama-3.1-8b-instruct",
-  "@cf/mistral/mistral-7b-instruct-v0.2-lora",
+  "@cf/meta/llama-4-scout-17b-16e-instruct",
 ]);
 
 // Parameter bounds

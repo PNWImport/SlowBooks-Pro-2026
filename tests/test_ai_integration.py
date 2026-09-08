@@ -6,11 +6,13 @@ tests stay offline and deterministic.
 """
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from app.services.ai_service import (
+    PROVIDERS,
     _extract_tool_calls,
     _parse_json_args,
     build_request,
@@ -47,6 +49,7 @@ def test_extract_openai_tool_calls():
     }
     calls = _extract_tool_calls("openai", body)
     assert len(calls) == 1
+    assert calls[0]["id"] == "c_1"
     assert calls[0]["name"] == "list_customers"
     assert calls[0]["arguments"] == {"limit": 5, "search": "Acme"}
 
@@ -61,11 +64,17 @@ def test_extract_anthropic_tool_use_blocks():
     body = {
         "content": [
             {"type": "text", "text": "Let me look that up."},
-            {"type": "tool_use", "name": "get_pl_summary", "input": {"year": 2026}},
+            {
+                "type": "tool_use",
+                "id": "toolu_3",
+                "name": "get_pl_summary",
+                "input": {"year": 2026},
+            },
         ],
     }
     calls = _extract_tool_calls("anthropic", body)
     assert len(calls) == 1
+    assert calls[0]["id"] == "toolu_3"
     assert calls[0]["name"] == "get_pl_summary"
     assert calls[0]["arguments"] == {"year": 2026}
 
@@ -203,7 +212,7 @@ def test_call_with_tools_openai_roundtrip_with_one_tool_call():
     result = call_with_tools(
         provider_key="openai",
         api_key="sk-fake",
-        model="gpt-5.4-mini",
+        model="gpt-5.6-terra",
         user_question="How many customers do I have?",
         tools=_FAKE_TOOLS,
         tool_executor=tool_executor,
@@ -215,6 +224,12 @@ def test_call_with_tools_openai_roundtrip_with_one_tool_call():
     assert "2 customers" in result["final_response"]
     assert len(result["tool_calls"]) == 1
     tool_executor.assert_called_once_with("list_customers", limit=2)
+    second_payload = client.request.call_args_list[1].kwargs["json"]
+    assert second_payload["messages"][1]["tool_calls"][0]["id"] == "t1"
+    assert second_payload["messages"][2]["tool_call_id"] == "t1"
+    assert json.loads(
+        second_payload["messages"][1]["tool_calls"][0]["function"]["arguments"]
+    ) == {"limit": 2}
 
 
 def test_call_with_tools_anthropic_roundtrip():
@@ -225,6 +240,7 @@ def test_call_with_tools_anthropic_roundtrip():
                 "content": [
                     {
                         "type": "tool_use",
+                        "id": "toolu_roundtrip",
                         "name": "list_customers",
                         "input": {"limit": 3},
                     },
@@ -245,7 +261,7 @@ def test_call_with_tools_anthropic_roundtrip():
     result = call_with_tools(
         provider_key="anthropic",
         api_key="sk-ant-fake",
-        model="claude-sonnet-4-6",
+        model="claude-sonnet-5",
         user_question="How many?",
         tools=_FAKE_TOOLS,
         tool_executor=tool_executor,
@@ -255,6 +271,11 @@ def test_call_with_tools_anthropic_roundtrip():
     assert result["success"] is True
     assert "3" in result["final_response"]
     tool_executor.assert_called_once_with("list_customers", limit=3)
+    second_payload = client.request.call_args_list[1].kwargs["json"]
+    assert second_payload["messages"][1]["content"][0]["id"] == "toolu_roundtrip"
+    assert (
+        second_payload["messages"][2]["content"][0]["tool_use_id"] == "toolu_roundtrip"
+    )
 
 
 def test_call_with_tools_gemini_roundtrip():
@@ -294,7 +315,7 @@ def test_call_with_tools_gemini_roundtrip():
     result = call_with_tools(
         provider_key="gemini",
         api_key="gemini-fake",
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         user_question="Names?",
         tools=_FAKE_TOOLS,
         tool_executor=tool_executor,
@@ -303,6 +324,8 @@ def test_call_with_tools_gemini_roundtrip():
 
     assert result["success"] is True
     assert "A" in result["final_response"]
+    second_payload = client.request.call_args_list[1].kwargs["json"]
+    assert second_payload["contents"][2]["role"] == "user"
 
 
 def test_call_with_tools_max_iterations_stops_loop():
@@ -335,7 +358,7 @@ def test_call_with_tools_max_iterations_stops_loop():
     result = call_with_tools(
         provider_key="openai",
         api_key="sk-fake",
-        model="gpt-5.4-mini",
+        model="gpt-5.6-terra",
         user_question="...",
         tools=_FAKE_TOOLS,
         tool_executor=tool_executor,
@@ -459,11 +482,41 @@ def test_ai_config_get_returns_provider_list(client):
     assert r.status_code == 200
     body = r.json()
     assert "providers" in body
-    # Should list all 7 providers
+    # All eight adapters are public configuration options.
     provider_keys = {p["key"] for p in body["providers"]}
     assert {"openai", "anthropic", "gemini", "grok", "groq", "cloudflare"}.issubset(
         provider_keys
     )
+    assert {"cloudflare_worker", "custom"}.issubset(provider_keys)
+
+
+def test_settings_intro_names_both_configurable_endpoint_paths():
+    settings_js = (
+        Path(__file__).resolve().parents[1] / "app" / "static" / "js" / "settings.js"
+    ).read_text()
+    assert "self-hosted gateway" in settings_js
+    assert "custom OpenAI-compatible endpoint" in settings_js
+
+
+def test_provider_defaults_are_current_and_manual_ids_remain_supported():
+    assert PROVIDERS["grok"].default_model == "grok-4.6"
+    assert PROVIDERS["groq"].default_model == "openai/gpt-oss-120b"
+    assert PROVIDERS["cloudflare"].default_model == "@cf/openai/gpt-oss-120b"
+    assert PROVIDERS["anthropic"].default_model == "claude-sonnet-5"
+    assert PROVIDERS["openai"].default_model == "gpt-5.6-terra"
+    assert PROVIDERS["gemini"].default_model == "gemini-3.8-flash"
+    assert "$25" not in PROVIDERS["grok"].free_tier_hint
+
+
+def test_current_openai_and_groq_models_use_completion_token_parameter():
+    openai_req = build_request("openai", "sk-test", "gpt-5.6-terra", "sys", "user")
+    assert openai_req["json"]["max_completion_tokens"] == 1024
+    assert "max_tokens" not in openai_req["json"]
+    assert "temperature" not in openai_req["json"]
+
+    groq_req = build_request("groq", "gsk-test", "openai/gpt-oss-120b", "sys", "user")
+    assert groq_req["json"]["max_completion_tokens"] == 1024
+    assert "max_tokens" not in groq_req["json"]
 
 
 def test_ai_config_rejects_bad_cloudflare_account_id(client):
@@ -510,6 +563,26 @@ def test_ai_config_never_returns_raw_api_key(client, db_session):
 # ---------------------------------------------------------------------------
 # custom (OpenAI-compatible) provider
 # ---------------------------------------------------------------------------
+
+
+def test_ai_config_custom_requires_model_id(client):
+    r = client.put(
+        "/api/analytics/ai-config",
+        json={"provider": "custom", "endpoint_url": "https://api.example.com/v1"},
+    )
+    assert r.status_code == 400
+    assert "model ID" in r.json()["detail"]
+
+
+def test_ai_config_preserves_manual_model_id(client):
+    manual_model = "vendor/accounting-model-2026-09-07"
+    r = client.put(
+        "/api/analytics/ai-config",
+        json={"provider": "openai", "model": manual_model},
+    )
+    assert r.status_code == 200
+    assert r.json()["model"] == manual_model
+    assert client.get("/api/analytics/ai-config").json()["model"] == manual_model
 
 
 def test_build_request_custom_appends_chat_completions():
@@ -597,3 +670,6 @@ def test_call_with_tools_custom_roundtrip():
     # The client should have been hit with the /chat/completions URL.
     req_url = client.request.call_args_list[0].args[1]
     assert req_url == "https://api.commandcode.ai/provider/v1/chat/completions"
+    second_payload = client.request.call_args_list[1].kwargs["json"]
+    assert second_payload["messages"][1]["tool_calls"][0]["id"] == "t1"
+    assert second_payload["messages"][2]["tool_call_id"] == "t1"

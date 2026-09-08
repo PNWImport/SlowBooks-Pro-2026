@@ -46,17 +46,25 @@ copy touches git:
 ```bash
 kubectl create namespace slowbooks
 
+POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+
 kubectl create secret generic slowbooks-secrets -n slowbooks \
   --from-literal=PAYROLL_ENCRYPTION_SECRET="$(openssl rand -base64 32)" \
   --from-literal=SESSION_SECRET_KEY="$(openssl rand -hex 32)" \
-  --from-literal=POSTGRES_PASSWORD="$(openssl rand -base64 24)" \
-  --from-literal=DATABASE_URL="postgresql://bookkeeper:THAT_PASSWORD@slowbooks-postgres:5432/slowbooks?sslmode=require" \
+  --from-literal=SETTINGS_ENCRYPTION_KEY="$(openssl rand -base64 32 | tr '+/' '-_')" \
+  --from-literal=AUDIT_CHECKPOINT_SIGNING_SECRET="$(openssl rand -base64 48)" \
+  --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+  --from-literal=DATABASE_URL="postgresql://bookkeeper:$POSTGRES_PASSWORD@slowbooks-postgres:5432/slowbooks?sslmode=require" \
   --from-literal=EMPLOYER_EIN=""
+
+unset POSTGRES_PASSWORD
 ```
 
-> **Back up `PAYROLL_ENCRYPTION_SECRET` somewhere that is not this cluster.**
-> It decrypts employee bank PII and the benefits ePHI. Lose it and you lose
-> that data — there is no recovery path.
+> **Back up the payroll, settings, and audit keys somewhere that is not this
+> cluster.** `PAYROLL_ENCRYPTION_SECRET` protects employee/benefit data;
+> `SETTINGS_ENCRYPTION_KEY` protects saved provider credentials. Losing either
+> loses that data. Keep the audit signing key off-host so exported checkpoints
+> can be independently verified.
 
 **3. Set the two values that depend on your cluster**, in `configmap.yaml`:
 

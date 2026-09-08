@@ -2,6 +2,22 @@
 .github
 .claude
 .env
+# Local credentials and customer data must never enter image layers.
+**/.env*
+**/.slowbooks-*.key
+**/slowbooks-settings-master.key
+certs/
+**/*.db
+**/*.db-*
+**/*.sqlite
+**/*.sqlite-*
+**/*.sqlite3
+**/*.sqlite3-*
+**/*.log
+**/*.pid
+app/static/uploads/
+.coverage*
+htmlcov/
 __pycache__
 *.pyc
 *.pyo
@@ -16,4 +32,3 @@ venv/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
-

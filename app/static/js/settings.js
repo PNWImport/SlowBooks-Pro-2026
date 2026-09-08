@@ -235,7 +235,7 @@ const SettingsPage = {
                 <div class="settings-section" id="settings-ai">
                     <h3>AI Insights</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
-                        Bring-your-own-key access to xAI Grok, Groq, Cloudflare Workers AI, Anthropic Claude, OpenAI, or Google Gemini.
+                        Bring your own key for xAI Grok, Groq, Cloudflare Workers AI (direct or self-hosted gateway), Anthropic Claude, OpenAI, Google Gemini, or a custom OpenAI-compatible endpoint.
                         Used by the Analytics dashboard to generate observations, risks, and recommendations.
                         API keys are encrypted at rest with Fernet (AES-128-CBC + HMAC-SHA256).
                     </div>
@@ -807,6 +807,7 @@ const SettingsPage = {
         const needsEndpoint = !!currentSpec.needs_endpoint_url;
         const hasKey = !!cfg.has_api_key;
         const currentModel = cfg.model || '';
+        const displayedModel = currentModel || currentSpec.default_model || '';
 
         const providerOptions = providers.map(p =>
             `<option value="${escapeHtml(p.key)}"${p.key === currentProvider ? ' selected' : ''}>` +
@@ -825,12 +826,14 @@ const SettingsPage = {
             <label class="form-field">
                 <span>Model</span>
                 <select id="ai-settings-model-select">
-                    ${SettingsPage._modelOptionsHtml(currentSpec, currentModel)}
+                    ${SettingsPage._modelOptionsHtml(currentSpec, displayedModel)}
                 </select>
                 <input type="text" id="ai-settings-model-custom"
-                       value="${escapeHtml(currentModel || '')}"
-                       placeholder="Type a model ID"
-                       style="margin-top:6px; ${SettingsPage._isCustomModel(currentSpec, currentModel) ? '' : 'display:none;'}">
+                       value="${escapeHtml(SettingsPage._isCustomModel(currentSpec, displayedModel) ? displayedModel : '')}"
+                       placeholder="Type any provider model ID"
+                       maxlength="255"
+                       style="margin-top:6px; ${SettingsPage._isCustomModel(currentSpec, displayedModel) ? '' : 'display:none;'}">
+                <small>Choose a tested default or select Custom… to enter a current model ID.</small>
             </label>
             <label class="form-field" id="ai-settings-cf-wrap" style="${needsAccount ? '' : 'display:none'}">
                 <span>Cloudflare Account ID</span>
@@ -902,11 +905,11 @@ const SettingsPage = {
         `;
     },
 
-    // True when the saved model isn't in the curated list — the dropdown
-    // should show "Custom…" pre-selected and reveal the text input.
+    // True when the model isn't in the curated list. Providers without a
+    // bundled default (the generic adapter) must also start in Custom mode.
     _isCustomModel(spec, model) {
-        if (!model) return false;
         const choices = (spec && spec.model_choices) || [];
+        if (!model) return choices.length === 0 && !(spec && spec.default_model);
         return choices.indexOf(model) === -1;
     },
 
@@ -944,6 +947,7 @@ const SettingsPage = {
                 modelSel.value === '__custom__' ? '' : 'none';
         };
         modelSel.addEventListener('change', syncCustomVisibility);
+        syncCustomVisibility();
 
         providerSel.addEventListener('change', () => {
             const spec = providers.find(p => p.key === providerSel.value) || {};
@@ -1396,4 +1400,3 @@ SettingsPage.toggleEquipment = async function (id, active) {
         SettingsPage.loadEquipment();
     } catch (err) { toast(err.message, 'error'); }
 };
-

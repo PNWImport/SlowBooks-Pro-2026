@@ -27,7 +27,7 @@ from app.models.contractor_payments import (
     ContractorRunStatus,
     VendorBankAccount,
 )
-from app.services.accounting import create_journal_entry
+from app.services.accounting import create_journal_entry, reversing_lines
 from app.services.encryption import encrypt
 from app.schemas.common import StrictModel
 
@@ -168,8 +168,8 @@ def process_run(run_id: int, db: Session = Depends(get_db)):
 
     run = (
         db.query(ContractorPayRun)
-        .options(joinedload(ContractorPayRun.payments))
         .filter(ContractorPayRun.id == run_id)
+        .with_for_update()
         .first()
     )
     if not run:
@@ -229,6 +229,63 @@ def process_run(run_id: int, db: Session = Depends(get_db)):
         "status": "processed",
         "contractor_run_id": run.id,
         "transaction_id": txn.id,
+    }
+
+
+@router.post("/{run_id}/void")
+def void_run(run_id: int, db: Session = Depends(get_db)):
+    """Void a processed run with a same-date reversing journal entry.
+
+    This reverses the books and removes the run from 1099 totals. It cannot
+    recall a NACHA file already submitted to a bank.
+    """
+    from app.models.transactions import TransactionLine
+    from app.services.closing_date import check_closing_date
+
+    run = (
+        db.query(ContractorPayRun)
+        .filter(ContractorPayRun.id == run_id)
+        .with_for_update()
+        .first()
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Contractor run not found")
+    if run.status == ContractorRunStatus.VOID:
+        raise HTTPException(status_code=400, detail="Run already void")
+    if run.status != ContractorRunStatus.PROCESSED:
+        raise HTTPException(status_code=400, detail="Only processed runs can be voided")
+    if not run.transaction_id:
+        raise HTTPException(
+            status_code=409, detail="Processed run has no journal entry"
+        )
+
+    check_closing_date(db, run.pay_date)
+    original_lines = (
+        db.query(TransactionLine)
+        .filter(TransactionLine.transaction_id == run.transaction_id)
+        .all()
+    )
+    reverse_lines = reversing_lines(original_lines)
+    if not reverse_lines:
+        raise HTTPException(status_code=409, detail="Run journal entry has no lines")
+
+    reversal = create_journal_entry(
+        db,
+        run.pay_date,
+        f"VOID: Contractor payments {run.pay_date}"
+        + (f" — {run.memo}" if run.memo else ""),
+        reverse_lines,
+        source_type="contractor_run_void",
+        source_id=run.id,
+    )
+    run.status = ContractorRunStatus.VOID
+    db.commit()
+    return {
+        "status": "void",
+        "contractor_run_id": run.id,
+        "original_transaction_id": run.transaction_id,
+        "void_transaction_id": reversal.id,
+        "warning": "Accounting reversed; any submitted ACH must be handled with the bank.",
     }
 
 

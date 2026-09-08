@@ -18,6 +18,8 @@ data:
   HSTS_MAX_AGE: "63072000"
   SESSION_IDLE_TIMEOUT_SECONDS: "14400"
   RATE_LIMIT_ENABLED: "1"
+  # Identifier stored with signed audit checkpoints; change on key rotation.
+  AUDIT_CHECKPOINT_KEY_ID: "ops-2026"
 
   # Shared rate-limit counters. Without this each pod counts separately,
   # so a "5 per minute" login limit becomes 5 x replicas per minute.

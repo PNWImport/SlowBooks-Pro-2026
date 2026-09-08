@@ -107,7 +107,11 @@ def create_in_kind_gift(data: InKindGiftCreate, db: Session = Depends(get_db)):
 
 @router.post("/{gift_id}/void", response_model=InKindGiftResponse)
 def void_in_kind_gift_route(gift_id: int, db: Session = Depends(get_db)):
-    gift = _get(db, gift_id)
+    gift = (
+        db.query(InKindGift).filter(InKindGift.id == gift_id).with_for_update().first()
+    )
+    if not gift:
+        raise HTTPException(status_code=404, detail="In-kind gift not found")
     check_closing_date(db, gift.date)
     try:
         void_in_kind_gift(db, gift)

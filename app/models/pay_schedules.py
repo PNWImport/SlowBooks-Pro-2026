@@ -11,6 +11,9 @@
 #     +15 capped to month end; monthly pays the anchor's day-of-month).
 #   * submission_lead_days         — cutoff = pay date minus this many days.
 #   * weekend_shift                — none / previous / next business day.
+#   * blackout_dates               — organization-specific non-processing days.
+#
+# Business-day shifts also exclude recurring Federal Reserve Bank holidays.
 #
 # Employees keep their pay_frequency column (it drives the withholding
 # annualization) — attaching a schedule sets it as the source of truth and
@@ -26,6 +29,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     Integer,
+    JSON,
     String,
     func,
 )
@@ -51,5 +55,6 @@ class PaySchedule(Base):
     weekend_shift = Column(
         Enum(WeekendShift), default=WeekendShift.PREVIOUS_BUSINESS_DAY
     )
+    blackout_dates = Column(JSON, nullable=False, default=list)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

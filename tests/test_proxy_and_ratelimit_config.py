@@ -10,12 +10,12 @@ behind a TLS-terminating proxy:
    bucket and writing the proxy address into login_attempts and
    portal_accesses.
 
-2. RATE_LIMIT_STORAGE_URI unset with APP_WORKERS=4. slowapi's default
-   MemoryStorage is per-process, so the configured limit is silently
-   multiplied by the worker count.
+2. RATE_LIMIT_STORAGE_URI unset with multiple workers. slowapi's default
+   MemoryStorage is per-process, so the configured limit is multiplied by the
+   worker count. Compose now defaults to one worker.
 
-Neither is fatal, so the app warns rather than refuses. These tests pin
-the warnings and the storage wiring.
+Explicit overrides still warn rather than refuse. These tests pin the safe
+Compose default, warnings, and storage wiring.
 """
 
 import importlib
@@ -28,16 +28,26 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_prod_compose_requires_forwarded_allow_ips():
     """Compose must refuse to start without it, like the other secrets."""
-    text = (ROOT / "docker-compose.prod.yml").read_text()
-    assert "FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:?" in text, (
+    import yaml
+
+    compose = yaml.safe_load((ROOT / "docker-compose.prod.yml").read_text())
+    value = compose["services"]["slowbooks"]["environment"]["FORWARDED_ALLOW_IPS"]
+    assert value.startswith("${FORWARDED_ALLOW_IPS:?"), (
         "docker-compose.prod.yml must hard-require FORWARDED_ALLOW_IPS — it "
         "puts the app behind a proxy, which makes client IPs wrong without it"
     )
 
 
-def test_prod_compose_exposes_rate_limit_storage():
-    text = (ROOT / "docker-compose.prod.yml").read_text()
+@pytest.mark.parametrize("compose", ["docker-compose.yml", "docker-compose.prod.yml"])
+def test_compose_exposes_rate_limit_storage(compose):
+    text = (ROOT / compose).read_text()
     assert "RATE_LIMIT_STORAGE_URI" in text
+
+
+@pytest.mark.parametrize("compose", ["docker-compose.yml", "docker-compose.prod.yml"])
+def test_compose_defaults_to_one_worker_without_shared_rate_limits(compose):
+    text = (ROOT / compose).read_text()
+    assert 'APP_WORKERS: "${APP_WORKERS:-1}"' in text
 
 
 def test_limiter_defaults_to_memory_storage(monkeypatch):

@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import Depends, HTTPException
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.routes._helpers import clamp_pagination
@@ -52,7 +52,10 @@ def list_pay_runs(skip: int = 0, limit: int = 200, db: Session = Depends(get_db)
     skip, limit = clamp_pagination(skip, limit, max_limit=500)
     runs = (
         db.query(PayRun)
-        .options(joinedload(PayRun.stubs).joinedload(PayStub.employee))
+        .options(
+            selectinload(PayRun.stubs).joinedload(PayStub.employee),
+            selectinload(PayRun.stubs).selectinload(PayStub.benefits),
+        )
         .order_by(PayRun.pay_date.desc())
         .offset(skip)
         .limit(limit)
@@ -65,7 +68,10 @@ def list_pay_runs(skip: int = 0, limit: int = 200, db: Session = Depends(get_db)
 def get_pay_run(run_id: int, db: Session = Depends(get_db)):
     run = (
         db.query(PayRun)
-        .options(joinedload(PayRun.stubs).joinedload(PayStub.employee))
+        .options(
+            selectinload(PayRun.stubs).joinedload(PayStub.employee),
+            selectinload(PayRun.stubs).selectinload(PayStub.benefits),
+        )
         .filter(PayRun.id == run_id)
         .first()
     )
@@ -200,6 +206,7 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
                         TimeEntry.date >= data.period_start,
                         TimeEntry.date <= data.period_end,
                     )
+                    .with_for_update()
                     .all()
                 )
                 for te in entries:
@@ -473,8 +480,9 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
 
     run = (
         db.query(PayRun)
-        .options(joinedload(PayRun.stubs).joinedload(PayStub.benefits))
+        .options(selectinload(PayRun.stubs).selectinload(PayStub.benefits))
         .filter(PayRun.id == run_id)
+        .with_for_update()
         .first()
     )
     if not run:

@@ -280,7 +280,12 @@ def create_request(data: PTORequestCreate, db: Session = Depends(get_db)):
 def decide_request(
     request_id: int, data: PTORequestDecision, db: Session = Depends(get_db)
 ):
-    req = db.query(PTORequest).filter(PTORequest.id == request_id).first()
+    req = (
+        db.query(PTORequest)
+        .filter(PTORequest.id == request_id)
+        .with_for_update()
+        .first()
+    )
     if not req:
         raise HTTPException(status_code=404, detail="PTO request not found")
     if data.status not in ("approved", "denied"):
@@ -295,11 +300,13 @@ def decide_request(
     if req.status == PTORequestStatus.APPROVED:
         accrual = (
             db.query(PTOAccrual)
-            .join(PTOPolicy, PTOAccrual.policy_id == PTOPolicy.id)
             .filter(
                 PTOAccrual.employee_id == req.employee_id,
-                PTOPolicy.pto_type == req.pto_type,
+                PTOAccrual.policy_id.in_(
+                    db.query(PTOPolicy.id).filter(PTOPolicy.pto_type == req.pto_type)
+                ),
             )
+            .with_for_update()
             .first()
         )
         if accrual:

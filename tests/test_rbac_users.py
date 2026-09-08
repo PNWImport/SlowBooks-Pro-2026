@@ -199,6 +199,8 @@ def test_audit_api_returns_username_field(client, db_session):
     _login_as(client, "keeper", "keeper-password-1")
     client.post("/api/customers", json={"name": "API Visibility Inc"})
 
+    assert client.get("/api/audit").status_code == 403
+    _login_as(client, "admin", FIXTURE_PW)
     rows = client.get("/api/audit", params={"table_name": "customers"}).json()
     assert rows, "expected at least one customers audit row"
     assert "username" in rows[0], "response model is stripping username"

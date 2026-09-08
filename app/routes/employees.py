@@ -102,6 +102,7 @@ _EMPLOYEE_PRIVATE_DEFAULTS = {
     "state": None,
     "zip": None,
     "residence_state": None,
+    "residence_locality": None,
     "wc_class_code": None,
     "state_allowances": 0,
     "state_extra_withholding": 0,
@@ -518,6 +519,9 @@ class TerminateRequest(StrictModel):
     include_sick_payout: bool = False
     # Payout accrued PTO even when the state does not require it.
     payout_pto: bool | None = None
+    # Defaults to the employment termination date. Operators may choose a
+    # later plan-specific coverage end (for example, end of month).
+    benefit_coverage_end: date | None = None
 
 
 @router.post("/{emp_id}/terminate")
@@ -539,6 +543,7 @@ def terminate_employee(
     """
     from decimal import Decimal
 
+    from app.models.benefit_coverage import BenefitEnrollment, EnrollmentStatus
     from app.models.benefits import EmployeeBenefit
     from app.services.termination import (
         compute_pto_payout,
@@ -596,6 +601,28 @@ def terminate_employee(
         )
         .update({"is_active": False})
     )
+
+    coverage_end = data.benefit_coverage_end or data.termination_date
+    open_enrollments = (
+        db.query(BenefitEnrollment)
+        .filter(
+            BenefitEnrollment.employee_id == emp_id,
+            BenefitEnrollment.coverage_end.is_(None),
+        )
+        .all()
+    )
+    ended_enrollments = 0
+    future_enrollments = []
+    for enrollment in open_enrollments:
+        # Do not fabricate a coverage day for an enrollment scheduled to begin
+        # after the chosen end date. Surface it for explicit administrator
+        # review instead of creating an invalid or filing-visible date range.
+        if enrollment.coverage_start > coverage_end:
+            future_enrollments.append(enrollment.id)
+            continue
+        enrollment.coverage_end = coverage_end
+        enrollment.status = EnrollmentStatus.TERMINATED
+        ended_enrollments += 1
 
     staged_run_id = None
     if do_payout:
@@ -673,5 +700,8 @@ def terminate_employee(
         "pto_payout_staged": do_payout,
         "pto_payout_run_id": staged_run_id,
         "deductions_deactivated": deactivated,
+        "benefit_coverage_end": coverage_end.isoformat(),
+        "benefit_enrollments_ended": ended_enrollments,
+        "future_benefit_enrollment_ids": future_enrollments,
         "portal_token_revoked": True,
     }

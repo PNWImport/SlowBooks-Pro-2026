@@ -300,6 +300,32 @@ def test_time_entry_posts_labor_at_loaded_rate_with_burden(
     assert [r["ok"] for r in bulk.json()["results"]] == [False, False]
 
 
+def test_time_entry_job_posting_takes_row_lock(
+    client, seed_accounts, seed_customer, monkeypatch
+):
+    from sqlalchemy.orm import Query
+
+    locked_entities = []
+    original = Query.with_for_update
+
+    def spy(query, *args, **kwargs):
+        entity = (
+            query.column_descriptions[0].get("entity")
+            if query.column_descriptions
+            else None
+        )
+        if entity is not None:
+            locked_entities.append(entity.__name__)
+        return original(query, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "with_for_update", spy)
+    _setup(client)
+    job = _job(client, seed_customer.id)
+    employee_id = _hourly(client, "Lock")
+    entry_id, _ = _posted_entry(client, job["id"], employee_id)
+    assert "TimeEntry" in locked_entities
+
+
 # ── Allocations ──────────────────────────────────────────────────────────
 
 
@@ -316,8 +342,10 @@ def test_allocation_spreads_by_hours_and_percent(client, seed_accounts, seed_cus
             "pay_rate": 20,
         },
     ).json()
-    for job, hrs in ((a, 30), (b, 10)):
-        client.post(
+    # Keep each daily entry within the API's 24-hour safety bound while
+    # preserving the 75/25 allocation ratio this test exercises.
+    for job, hrs in ((a, 18), (b, 6)):
+        created = client.post(
             "/api/time-entries",
             json={
                 "employee_id": emp["id"],
@@ -326,6 +354,7 @@ def test_allocation_spreads_by_hours_and_percent(client, seed_accounts, seed_cus
                 "job_id": job["id"],
             },
         )
+        assert created.status_code == 201, created.text
     resp = client.post(
         "/api/job-costs/allocate",
         json={

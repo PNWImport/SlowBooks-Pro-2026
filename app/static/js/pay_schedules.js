@@ -36,7 +36,7 @@ const PaySchedulesPage = {
         let html = `<div class="table-container"><table>
             <thead><tr>
                 <th scope="col">Name</th><th scope="col">Frequency</th><th scope="col">Anchor Date</th>
-                <th scope="col">Lead Days</th><th scope="col">Weekend Shift</th><th scope="col">Status</th><th scope="col">Actions</th>
+                <th scope="col">Lead Days</th><th scope="col">Non-business Shift</th><th scope="col">Blackouts</th><th scope="col">Status</th><th scope="col">Actions</th>
             </tr></thead><tbody>`;
         for (const s of schedules) {
             html += `<tr>
@@ -45,13 +45,14 @@ const PaySchedulesPage = {
                 <td>${formatDate(s.anchor_pay_date)}</td>
                 <td>${s.submission_lead_days}</td>
                 <td>${escapeHtml((s.weekend_shift || '').replace(/_/g, ' '))}</td>
+                <td>${(s.blackout_dates || []).length}</td>
                 <td>${s.is_active
                     ? '<span class="badge badge-paid">active</span>'
                     : '<span class="badge badge-void">inactive</span>'}</td>
                 <td>
                     <button class="btn" onclick="PaySchedulesPage.editModal(${s.id})">Edit</button>
                     <button class="btn" onclick="PaySchedulesPage.previewUpcoming(${s.id})">Preview</button>
-                    <button class="btn" onclick="PaySchedulesPage.assignModal(${s.id})">Assign</button>
+                    ${s.is_active ? `<button class="btn" onclick="PaySchedulesPage.assignModal(${s.id})">Assign</button>` : ''}
                 </td>
             </tr>`;
         }
@@ -60,7 +61,7 @@ const PaySchedulesPage = {
 
     newModal() {
         const freqs = ['weekly', 'biweekly', 'semimonthly', 'monthly'];
-        const shifts = ['previous_business_day', 'next_business_day'];
+        const shifts = ['previous_business_day', 'next_business_day', 'none'];
         openModal('New Pay Schedule', `
             <div class="form-group">
                 <label>Name</label>
@@ -81,10 +82,16 @@ const PaySchedulesPage = {
                 <input type="number" id="ps-lead" value="2" min="0">
             </div>
             <div class="form-group">
-                <label>Weekend shift</label>
+                <label>Non-business-day shift</label>
                 <select id="ps-shift">
                     ${shifts.map(s => `<option value="${s}">${s.replace(/_/g, ' ')}</option>`).join('')}
                 </select>
+                <small>Weekends, Federal Reserve holidays, and the custom dates below.</small>
+            </div>
+            <div class="form-group">
+                <label>Custom blackout dates</label>
+                <input type="text" id="ps-blackouts" placeholder="2026-12-24, 2026-12-31">
+                <small>Optional comma-separated YYYY-MM-DD dates.</small>
             </div>
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -94,7 +101,7 @@ const PaySchedulesPage = {
 
     async editModal(scheduleId) {
         const freqs = ['weekly', 'biweekly', 'semimonthly', 'monthly'];
-        const shifts = ['previous_business_day', 'next_business_day'];
+        const shifts = ['previous_business_day', 'next_business_day', 'none'];
         try {
             const schedules = await API.get('/pay-schedules');
             const s = schedules.find(x => x.id === scheduleId);
@@ -120,10 +127,17 @@ const PaySchedulesPage = {
                     <input type="number" id="ps-lead" value="${s.submission_lead_days}" min="0">
                 </div>
                 <div class="form-group">
-                    <label>Weekend shift</label>
+                    <label>Non-business-day shift</label>
                     <select id="ps-shift">
                         ${shifts.map(sh => `<option value="${sh}" ${s.weekend_shift === sh ? 'selected' : ''}>${sh.replace(/_/g, ' ')}</option>`).join('')}
                     </select>
+                    <small>Weekends, Federal Reserve holidays, and the custom dates below.</small>
+                </div>
+                <div class="form-group">
+                    <label>Custom blackout dates</label>
+                    <input type="text" id="ps-blackouts" value="${escapeHtml((s.blackout_dates || []).join(', '))}"
+                           placeholder="2026-12-24, 2026-12-31">
+                    <small>Optional comma-separated YYYY-MM-DD dates.</small>
                 </div>
                 <div class="form-group">
                     <label>Active</label>
@@ -149,6 +163,7 @@ const PaySchedulesPage = {
                 anchor_pay_date: $('#ps-anchor').value,
                 submission_lead_days: parseInt($('#ps-lead').value, 10),
                 weekend_shift: $('#ps-shift').value,
+                blackout_dates: PaySchedulesPage.blackoutDates(),
                 is_active: $('#ps-active').value === 'true',
             });
             closeModal();
@@ -169,6 +184,7 @@ const PaySchedulesPage = {
                 anchor_pay_date: $('#ps-anchor').value,
                 submission_lead_days: parseInt($('#ps-lead').value, 10) || 0,
                 weekend_shift: $('#ps-shift').value,
+                blackout_dates: PaySchedulesPage.blackoutDates(),
             });
             closeModal();
             toast(`Schedule "${name}" created`);
@@ -185,10 +201,11 @@ const PaySchedulesPage = {
             const data = await API.get(`/pay-schedules/${scheduleId}/upcoming?count=12`);
             let html = `<h3 style="margin-top:18px;">Upcoming: ${escapeHtml(data.schedule.name)}</h3>
                 <div class="table-container"><table>
-                <thead><tr><th scope="col">Pay Date</th><th scope="col">Submission Cutoff</th></tr></thead><tbody>`;
+                <thead><tr><th scope="col">Pay Date</th><th scope="col">Original Date</th><th scope="col">Submission Cutoff</th></tr></thead><tbody>`;
             for (const d of data.dates) {
                 html += `<tr>
                     <td>${formatDate(d.pay_date)}</td>
+                    <td>${d.shifted ? formatDate(d.unshifted_date) : '—'}</td>
                     <td>${formatDate(d.submission_cutoff)}</td>
                 </tr>`;
             }
@@ -196,6 +213,13 @@ const PaySchedulesPage = {
         } catch (e) {
             toast(e.message, 'error');
         }
+    },
+
+    blackoutDates() {
+        return ($('#ps-blackouts')?.value || '')
+            .split(/[\s,]+/)
+            .map(value => value.trim())
+            .filter(Boolean);
     },
 
     assignModal(scheduleId) {
@@ -221,6 +245,7 @@ const PaySchedulesPage = {
             await API.post(`/pay-schedules/${scheduleId}/assign/${empId}`);
             closeModal();
             toast('Employee assigned');
+            await App.navigate('#/payroll/schedules');
         } catch (e) {
             toast(e.message, 'error');
         }

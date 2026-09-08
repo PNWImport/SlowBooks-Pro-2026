@@ -727,44 +727,57 @@ const EmployeesPage = {
     // draft off-cycle run. The final regular paycheck stays manual.
     showTerminateForm(id) {
         openModal('Terminate Employee', `
-            <div style="background:#fef3c7;border:1px solid #fbbf24;padding:6px 10px;margin-bottom:10px;font-size:10px;color:#92400e;">
-                This deactivates the employee, their deductions, and portal access.
-                Run their final regular paycheck separately — the statutory deadline
-                is shown after termination.
+            <div id="term-form-fields">
+                <div style="background:#fef3c7;border:1px solid #fbbf24;padding:6px 10px;margin-bottom:10px;font-size:10px;color:#92400e;">
+                    This deactivates the employee, their deductions, and portal access.
+                    Run their final regular paycheck separately — the statutory deadline
+                    is shown after termination.
+                </div>
+                <div class="form-group"><label>Termination date</label>
+                    <input type="date" id="term-date" value="${todayISO()}"
+                           onchange="document.getElementById('term-benefit-end').value=this.value"></div>
+                <div class="form-group"><label>Reason</label>
+                    <select id="term-reason">
+                        <option value="voluntary">Voluntary (quit)</option>
+                        <option value="involuntary">Involuntary (fired / laid off)</option>
+                    </select></div>
+                <div class="form-group"><label>Pay out accrued PTO</label>
+                    <select id="term-payout">
+                        <option value="yes">Yes (default; state may require it)</option>
+                        <option value="no">No (forfeit, where the state allows)</option>
+                    </select></div>
+                <div class="form-group"><label>Include sick balance in payout</label>
+                    <select id="term-sick">
+                        <option value="no">No</option>
+                        <option value="yes">Yes</option>
+                    </select></div>
+                <div class="form-group"><label>Benefit coverage end</label>
+                    <input type="date" id="term-benefit-end" value="${todayISO()}">
+                    <small>Defaults to the termination date; use the plan's actual end date.</small></div>
             </div>
-            <div class="form-group"><label>Termination date</label>
-                <input type="date" id="term-date" value="${todayISO()}"></div>
-            <div class="form-group"><label>Reason</label>
-                <select id="term-reason">
-                    <option value="voluntary">Voluntary (quit)</option>
-                    <option value="involuntary">Involuntary (fired / laid off)</option>
-                </select></div>
-            <div class="form-group"><label>Pay out accrued PTO</label>
-                <select id="term-payout">
-                    <option value="yes">Yes (default; state may require it)</option>
-                    <option value="no">No (forfeit, where the state allows)</option>
-                </select></div>
-            <div class="form-group"><label>Include sick balance in payout</label>
-                <select id="term-sick">
-                    <option value="no">No</option>
-                    <option value="yes">Yes</option>
-                </select></div>
             <div id="term-result"></div>
-            <div class="form-actions">
+            <div class="form-actions" id="term-actions">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button class="btn btn-danger" onclick="EmployeesPage.terminate(${id})">Terminate</button>
+                <button class="btn btn-danger" id="term-submit" onclick="EmployeesPage.terminate(${id})">Terminate</button>
             </div>`);
     },
 
     async terminate(id) {
         const termDate = $('#term-date')?.value;
         if (!termDate) return toast('Termination date is required', 'error');
+        const submit = $('#term-submit');
+        if (submit?.disabled) return;
+        if (submit) {
+            submit.disabled = true;
+            submit.textContent = 'Terminating…';
+        }
         try {
             const result = await API.post(`/employees/${id}/terminate`, {
                 termination_date: termDate,
                 reason: $('#term-reason').value,
                 payout_pto: $('#term-payout').value === 'yes',
                 include_sick_payout: $('#term-sick').value === 'yes',
+                benefit_coverage_end: $('#term-benefit-end')?.value || termDate,
             });
             const d = result.final_paycheck;
             const p = result.pto_payout;
@@ -779,13 +792,26 @@ const EmployeesPage = {
                         ? ` — staged as draft run #${result.pto_payout_run_id}`
                         : ' — not staged'}<br>
                     Deductions deactivated: ${result.deductions_deactivated};
-                    portal token revoked.
-                </div>
-                <div class="form-actions">
-                    <button class="btn btn-primary" onclick="closeModal(); App.navigate('#/employees')">Done</button>
+                    portal token revoked.<br>
+                    Benefit enrollments ended: ${result.benefit_enrollments_ended || 0}
+                    ${result.future_benefit_enrollment_ids?.length
+                        ? `; review ${result.future_benefit_enrollment_ids.length} future enrollment(s)`
+                        : ''}.
                 </div>`;
+            const fields = $('#term-form-fields');
+            if (fields) fields.hidden = true;
+            const actions = $('#term-actions');
+            if (actions) actions.innerHTML =
+                `<button class="btn btn-primary" onclick="closeModal(); App.navigate('#/employees')">Done</button>`;
             toast('Employee terminated');
+            // Refresh now, not only through the Done button: X/Escape must
+            // also leave the employee list showing the saved status.
+            await App.navigate('#/employees');
         } catch (err) {
+            if (submit) {
+                submit.disabled = false;
+                submit.textContent = 'Terminate';
+            }
             toast(err.message, 'error');
         }
     },

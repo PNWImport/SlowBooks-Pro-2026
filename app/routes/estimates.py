@@ -157,7 +157,9 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
 def update_estimate(
     estimate_id: int, data: EstimateUpdate, db: Session = Depends(get_db)
 ):
-    estimate = db.query(Estimate).filter(Estimate.id == estimate_id).first()
+    estimate = (
+        db.query(Estimate).filter(Estimate.id == estimate_id).with_for_update().first()
+    )
     if not estimate:
         raise HTTPException(status_code=404, detail="Estimate not found")
 
@@ -252,7 +254,9 @@ def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
     """Convert to invoice — deep-copies all fields and lines."""
     from app.services.closing_date import check_closing_date
 
-    estimate = db.query(Estimate).filter(Estimate.id == estimate_id).first()
+    estimate = (
+        db.query(Estimate).filter(Estimate.id == estimate_id).with_for_update().first()
+    )
     if not estimate:
         raise HTTPException(status_code=404, detail="Estimate not found")
     if estimate.status == EstimateStatus.CONVERTED:

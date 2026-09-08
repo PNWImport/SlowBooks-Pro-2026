@@ -523,7 +523,13 @@ const App = {
     // served raw, so the sidebar and toolbar arrive as business-worded
     // HTML; this runs once at boot, before the first page renders.
     // Sidebar entries the server serves to admins only (app.main RBAC).
-    ADMIN_ONLY_PAGES: ['employees', 'payroll', 'hr-onboarding', 'hr-benefits', 'hr-deductions', 'hr-tax-forms', 'users'],
+    ADMIN_ONLY_PAGES: [
+        'employees', 'payroll', 'hr-onboarding', 'hr-benefits', 'hr-deductions',
+        'hr-tax-forms', 'users', 'hr-benefit-coverage', 'payroll-contractors',
+        'payroll-remittances', 'payroll-schedules', 'payroll-locations', 'hr-team',
+        'payroll-deposit-calendar', 'payroll-workers-comp', 'payroll-reports',
+        'compliance', 'audit',
+    ],
 
     applyTerminology() {
         for (const r of Object.values(App.routes)) r.label = T(r.label);

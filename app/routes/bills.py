@@ -317,7 +317,7 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
 
 @router.post("/{bill_id}/void", response_model=BillResponse)
 def void_bill(bill_id: int, db: Session = Depends(get_db)):
-    bill = db.query(Bill).filter(Bill.id == bill_id).first()
+    bill = db.query(Bill).filter(Bill.id == bill_id).with_for_update().first()
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
     if bill.status == BillStatus.VOID:

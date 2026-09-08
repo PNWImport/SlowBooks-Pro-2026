@@ -31,7 +31,9 @@ from app.routes.invoices._router import router
 @router.post("/{invoice_id}/void", response_model=InvoiceResponse)
 def void_invoice(invoice_id: int, db: Session = Depends(get_db)):
     """Void — creates a reversing journal entry."""
-    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    invoice = (
+        db.query(Invoice).filter(Invoice.id == invoice_id).with_for_update().first()
+    )
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     if invoice.status == InvoiceStatus.VOID:

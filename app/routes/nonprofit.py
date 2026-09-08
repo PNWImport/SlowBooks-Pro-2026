@@ -144,7 +144,14 @@ def create_release(data: ReleaseCreate, db: Session = Depends(get_db)):
 
 @router.post("/releases/{rel_id}/void", response_model=ReleaseResponse)
 def void_release_route(rel_id: int, db: Session = Depends(get_db)):
-    rel = _release_get(db, rel_id)
+    rel = (
+        db.query(RestrictionRelease)
+        .filter(RestrictionRelease.id == rel_id)
+        .with_for_update()
+        .first()
+    )
+    if not rel:
+        raise HTTPException(status_code=404, detail="Release not found")
     check_closing_date(db, rel.date)
     try:
         void_release(db, rel)
@@ -433,7 +440,14 @@ def create_allocation(data: FunctionalAllocationCreate, db: Session = Depends(ge
 
 @router.post("/allocations/{fa_id}/void", response_model=FunctionalAllocationResponse)
 def void_allocation(fa_id: int, db: Session = Depends(get_db)):
-    fa = _fa_get(db, fa_id)
+    fa = (
+        db.query(FunctionalAllocation)
+        .filter(FunctionalAllocation.id == fa_id)
+        .with_for_update()
+        .first()
+    )
+    if not fa:
+        raise HTTPException(status_code=404, detail="Allocation not found")
     check_closing_date(db, fa.date)
     try:
         void_functional_allocation(db, fa)

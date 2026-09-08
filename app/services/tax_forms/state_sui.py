@@ -128,10 +128,9 @@ def generate_sui_pdf(
     layouts only, so match the figures against the state's form or upload
     portal before filing.
     """
-    from app.services.pdf_service import _jinja_env, _safe_url_fetcher
-    from weasyprint import HTML
+    from app.services.pdf_service import _jinja_env, render_pdf
 
     data = compute_sui(db, year, quarter, state)
     template = _jinja_env.get_template("state_sui.html")
     html_str = template.render(data=data, company=company or {}, audit=audit or {})
-    return HTML(string=html_str, url_fetcher=_safe_url_fetcher).write_pdf()
+    return render_pdf(html_str)

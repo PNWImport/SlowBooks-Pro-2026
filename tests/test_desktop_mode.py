@@ -275,6 +275,28 @@ def test_sqlite_create_backup_snapshots_file(sqlite_live_db, db_session):
     assert [f["filename"] for f in listed] == [result["filename"]]
 
 
+def test_backups_in_same_second_preserve_both_snapshots(
+    sqlite_live_db, db_session, monkeypatch
+):
+    from datetime import datetime
+
+    class FrozenDateTime:
+        @staticmethod
+        def now():
+            return datetime(2026, 9, 7, 12, 0, 0)
+
+    monkeypatch.setattr(backup_service, "datetime", FrozenDateTime)
+    live, backup_dir = sqlite_live_db
+    first = backup_service.create_backup(db_session)
+    with sqlite3.connect(live) as conn:
+        conn.execute("UPDATE t SET v = 'changed'")
+    second = backup_service.create_backup(db_session)
+    assert first["success"] and second["success"]
+    assert first["filename"] != second["filename"]
+    with sqlite3.connect(backup_dir / first["filename"]) as conn:
+        assert conn.execute("SELECT v FROM t").fetchone() == ("original",)
+
+
 def test_sqlite_restore_backup_overwrites_live_db(sqlite_live_db, db_session):
     live, backup_dir = sqlite_live_db
     created = backup_service.create_backup(db_session)
