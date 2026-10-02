@@ -7,6 +7,14 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+- ACH File button on processed pay runs: downloads the NACHA direct-deposit
+  file from `/api/payroll/{id}/nacha`. The endpoint existed but had no UI.
+- Every payroll and tax document names the company from Settings (company
+  name and EIN), instead of placeholder text.
+- The ungated-endpoint guard unwraps included routers, so the "no endpoint
+  without login" test checks every route again instead of silently passing.
+- Company ACH details are saved encrypted, behind a per-user access flag,
+  with a masked view and a password prompt to show full numbers.
 - Refuse migration journal references over 100 characters before posting, preventing inconsistent replay identity handling across database backends.
 
 Target version: **2.18.0**, following upstream 2.17.3. These branch changes are not yet released.
