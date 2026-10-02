@@ -229,11 +229,11 @@ def cobra_notice(enrollment_id: int, db: Session = Depends(get_db)):
     review against DOL model notices before sending.
     """
     from app.routes.payroll.tax_forms import (
-        _company_for_pdf,
         _hash_and_audit,
         _pdf_response,
     )
     from app.services.pdf_service import _jinja_env, _safe_url_fetcher
+    from app.services.settings_service import company_identity
     from weasyprint import HTML
 
     e = (
@@ -268,7 +268,7 @@ def cobra_notice(enrollment_id: int, db: Session = Depends(get_db)):
         "monthly_premium": round(full_premium * 1.02, 2),
         "full_premium": round(full_premium, 2),
     }
-    company = _company_for_pdf(db)
+    company = company_identity(db)
     audit = _hash_and_audit(db, "cobra", f"enr{enrollment_id}", company, data)
     template = _jinja_env.get_template("cobra_notice.html")
     html_str = template.render(data=data, company=company, audit=audit)

@@ -14,7 +14,7 @@ from app.models.payroll import (
     PayRunStatus,
     Employee,
 )
-from app import config
+from app.services.settings_service import company_identity
 
 
 @router.get("/{run_id}/paystub/{stub_id}")
@@ -33,12 +33,7 @@ def download_paystub(run_id: int, stub_id: int, db: Session = Depends(get_db)):
     emp = db.query(Employee).filter(Employee.id == stub.employee_id).first()
 
     ytd = employee_ytd(db, stub.employee_id, run.pay_date.year)
-    company = {
-        "name": config.COMPANY_NAME,
-        "address": config.COMPANY_ADDRESS,
-        "phone": config.COMPANY_PHONE,
-        "ein": config.EMPLOYER_EIN,
-    }
+    company = company_identity(db)
     pdf = generate_paystub_pdf(
         stub, emp, run, company, {k: str(v) for k, v in ytd.items()}
     )
@@ -80,10 +75,11 @@ def export_nacha(
     orig = originating.model_dump()
     if not orig.get("effective_date"):
         orig["effective_date"] = run.pay_date
+    co = company_identity(db)
     if not orig.get("company_name"):
-        orig["company_name"] = config.COMPANY_NAME
+        orig["company_name"] = co["name"]
     if not orig.get("company_id"):
-        orig["company_id"] = config.EMPLOYER_EIN
+        orig["company_id"] = co["ein"]
 
     try:
         nacha = generate_nacha_file(db, run_id, orig)

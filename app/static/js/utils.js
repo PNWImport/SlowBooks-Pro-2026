@@ -102,6 +102,34 @@ function escapeHtml(str) {
     return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// POST a JSON body and save the reply as a file. The desktop header makes
+// the server answer inline: WebView2 swallows a fetch() of an attachment.
+async function postAndSaveFile(url, body, fallbackName) {
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Slowbooks-Desktop': '1' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+        let msg = `Request failed (HTTP ${res.status})`;
+        try {
+            const detail = (await res.json()).detail;
+            if (typeof detail === 'string') msg = detail;
+        } catch (_) { /* not JSON */ }
+        throw new Error(msg);
+    }
+    const m = /filename="?([^";]+)"?/i.exec(res.headers.get('Content-Disposition') || '');
+    const filename = m ? m[1] : fallbackName;
+    const u = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = u;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(u), 15000);
+    return filename;
+}
+
 function disableSubmitButtons() {
     document.querySelectorAll('#modal .btn-primary').forEach(b => { b.disabled = true; b.dataset.origText = b.textContent; b.textContent = 'Saving...'; });
 }

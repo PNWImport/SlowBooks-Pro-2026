@@ -26,6 +26,14 @@ on what the software does, not on what sprint shipped what.
 
 ### Fixed
 
+- Pay stubs, W-2/W-3, 940, 941, 1099-NEC/1096, the IRS FIRE file, the
+  new-hire report and both ACH files named the company from the
+  `COMPANY_NAME`/`EMPLOYER_EIN` env vars — "My Company" and a blank EIN on
+  any install that never set them — instead of Settings. One source now,
+  env vars only filling blanks. The 1099-NEC and 1096 payer block gained
+  the city/state/ZIP line the W-2 already had.
+- Contractor ACH export opened the file as raw text in a new tab, and in the
+  desktop app the fetch failed outright; it now saves `contractors_{id}.ach`.
 - CORS preflight answered 401 with no `Access-Control-Allow-Origin`, and every
   401/403 shipped with no CSP or other security headers — both middlewares
   were registered inside the session gate instead of around it.

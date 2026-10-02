@@ -28,6 +28,7 @@
                 <div class="box-value">{{ payer.get('name', '') }}</div>
                 <div class="box-value" style="font-size:9pt;">
                     {{ payer.get('address', '') }}
+                    {% if payer.get('city') %}<br>{{ payer.get('city') }}, {{ payer.get('state', '') }} {{ payer.get('zip', '') }}{% endif %}
                 </div>
             </div>
             <div class="box">
