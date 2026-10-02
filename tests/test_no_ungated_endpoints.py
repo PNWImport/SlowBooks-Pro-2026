@@ -62,9 +62,20 @@ def _concrete(path: str) -> str:
     return re.sub(r"\{[^}]+\}", "1", path)
 
 
+def _iter_app_routes(routes):
+    """FastAPI 0.141 wraps each include_router() in an _IncludedRouter whose
+    APIRoutes live on .original_router; older versions list them directly."""
+    for route in routes:
+        if hasattr(route, "path"):
+            yield route
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            yield from _iter_app_routes(inner.routes)
+
+
 def _all_routes() -> list[tuple[str, str]]:
     out = []
-    for route in app.routes:
+    for route in _iter_app_routes(app.routes):
         if not isinstance(route, APIRoute):
             continue
         for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
