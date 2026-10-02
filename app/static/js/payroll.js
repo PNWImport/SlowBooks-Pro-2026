@@ -32,6 +32,7 @@ const PayrollPage = {
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="PayrollPage.view(${r.id})">View</button>
                         ${r.status === 'draft' ? `<button class="btn btn-sm btn-primary" onclick="PayrollPage.process(${r.id})">Process</button>` : ''}
+                        ${r.status === 'processed' ? `<button class="btn btn-sm btn-secondary" onclick="PayrollPage.nachaModal(${r.id})">ACH File</button>` : ''}
                     </td>
                 </tr>`;
             }
@@ -191,6 +192,72 @@ const PayrollPage = {
             toast('Payroll processed');
             App.navigate('#/payroll');
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // The bank, not SlowBooks, moves the money: this builds the NACHA file
+    // the operator uploads to their bank's ACH origination portal.
+    nachaModal(runId) {
+        openModal('Direct Deposit — ACH File', `
+            <p style="font-size:10px;color:var(--text-muted);">
+                Origination details come from your bank's ACH agreement. The file
+                credits each employee's active bank account(s) on file; upload it
+                to your bank's ACH portal to send the deposits.
+            </p>
+            <div class="form-group">
+                <label>Immediate Destination (your bank's routing)</label>
+                <input type="text" id="pr-nc-dest" maxlength="9" placeholder="021000021">
+            </div>
+            <div class="form-group">
+                <label>Immediate Origin (company ID from your bank, often EIN)</label>
+                <input type="text" id="pr-nc-origin" placeholder="123456789">
+            </div>
+            <div class="form-group">
+                <label>Originating DFI ID (first 8 digits of your bank's routing)</label>
+                <input type="text" id="pr-nc-dfi" maxlength="8" placeholder="02100002">
+            </div>
+            <div class="form-group">
+                <label>Company account number (funds the deposits)</label>
+                <input type="text" id="pr-nc-acct">
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="PayrollPage.exportNacha(${runId})">Download</button>
+            </div>`);
+    },
+
+    async exportNacha(runId) {
+        const dest = ($('#pr-nc-dest')?.value || '').trim();
+        const origin = ($('#pr-nc-origin')?.value || '').trim();
+        const dfi = ($('#pr-nc-dfi')?.value || '').trim();
+        const acct = ($('#pr-nc-acct')?.value || '').trim();
+        if (!dest || !origin || !dfi || !acct) {
+            return toast('All four origination fields are required', 'error');
+        }
+        try {
+            const res = await fetch(`/api/payroll/${runId}/nacha`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    immediate_destination: dest,
+                    immediate_origin: origin,
+                    originating_dfi_id: dfi,
+                    company_account: acct,
+                }),
+            });
+            if (!res.ok) {
+                let msg = 'ACH export failed';
+                try { msg = (await res.json()).detail || msg; } catch (_) {}
+                return toast(msg, 'error');
+            }
+            const url = URL.createObjectURL(await res.blob());
+            window.open(url, '_blank');
+            setTimeout(() => URL.revokeObjectURL(url), 15000);
+            closeModal();
+            toast('ACH file generated');
+        } catch (e) {
+            toast(e.message, 'error');
+        }
     },
 
     // Retro pay — preview the shortfall from a raise, then apply it

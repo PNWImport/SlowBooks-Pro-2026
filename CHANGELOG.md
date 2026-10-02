@@ -21,6 +21,8 @@ on what the software does, not on what sprint shipped what.
 - Retro-pay form in the payroll page, calling
   `/api/payroll/retro-pay/{preview,apply}`.
 - `SLOWBOOKS_PRIVATE_NETWORK` and `FORCE_HTTPS` in `docker-compose.yml`.
+- ACH File button on processed pay runs: downloads the NACHA direct-deposit
+  file from `/api/payroll/{id}/nacha`. The endpoint existed but had no UI.
 
 ### Fixed
 
