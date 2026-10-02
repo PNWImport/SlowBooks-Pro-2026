@@ -240,7 +240,7 @@ const PayrollPage = {
     // the operator uploads to their bank's ACH origination portal.
     nachaModal(runId) {
         openModal('Direct Deposit — ACH File', `
-            <p style="font-size:10px;color:var(--text-muted);">
+            <p style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">
                 Origination details come from your bank's ACH agreement. The file
                 credits each employee's active bank account(s) on file; upload it
                 to your bank's ACH portal to send the deposits.
@@ -276,27 +276,14 @@ const PayrollPage = {
             return toast('All four origination fields are required', 'error');
         }
         try {
-            const res = await fetch(`/api/payroll/${runId}/nacha`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'same-origin',
-                body: JSON.stringify({
-                    immediate_destination: dest,
-                    immediate_origin: origin,
-                    originating_dfi_id: dfi,
-                    company_account: acct,
-                }),
-            });
-            if (!res.ok) {
-                let msg = 'ACH export failed';
-                try { msg = (await res.json()).detail || msg; } catch (_) {}
-                return toast(msg, 'error');
-            }
-            const url = URL.createObjectURL(await res.blob());
-            window.open(url, '_blank');
-            setTimeout(() => URL.revokeObjectURL(url), 15000);
+            const name = await postAndSaveFile(`/api/payroll/${runId}/nacha`, {
+                immediate_destination: dest,
+                immediate_origin: origin,
+                originating_dfi_id: dfi,
+                company_account: acct,
+            }, `payroll_${runId}.ach`);
             closeModal();
-            toast('ACH file generated');
+            toast(`Saved ${name}`);
         } catch (e) {
             toast(e.message, 'error');
         }

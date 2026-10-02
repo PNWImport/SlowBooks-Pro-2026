@@ -16,7 +16,7 @@ from typing import Optional
 from pydantic import model_validator
 from sqlalchemy.orm import Session, joinedload
 
-from app import config
+from app.services.settings_service import company_identity
 from app.database import get_db
 from app.models.accounts import Account
 from app.models.bank_accounts import BankAccountKind
@@ -307,10 +307,11 @@ def export_contractor_nacha(
     orig = originating.model_dump()
     if not orig.get("effective_date"):
         orig["effective_date"] = run.pay_date
+    co = company_identity(db)
     if not orig.get("company_name"):
-        orig["company_name"] = config.COMPANY_NAME
+        orig["company_name"] = co["name"]
     if not orig.get("company_id"):
-        orig["company_id"] = config.EMPLOYER_EIN
+        orig["company_id"] = co["ein"]
     return generate_contractor_nacha_file(db, run_id, orig)
 
 

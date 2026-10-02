@@ -253,26 +253,13 @@ const ContractorRunsPage = {
             return toast('All three origination fields are required', 'error');
         }
         try {
-            const res = await fetch(`/api/contractor-runs/${runId}/nacha`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'same-origin',
-                body: JSON.stringify({
-                    immediate_destination: dest,
-                    immediate_origin: origin,
-                    originating_dfi_id: dfi,
-                }),
-            });
-            if (!res.ok) {
-                let msg = 'NACHA export failed';
-                try { msg = (await res.json()).detail || msg; } catch (_) {}
-                return toast(msg, 'error');
-            }
-            const url = URL.createObjectURL(await res.blob());
-            window.open(url, '_blank');
-            setTimeout(() => URL.revokeObjectURL(url), 15000);
+            const name = await postAndSaveFile(`/api/contractor-runs/${runId}/nacha`, {
+                immediate_destination: dest,
+                immediate_origin: origin,
+                originating_dfi_id: dfi,
+            }, `contractors_${runId}.ach`);
             closeModal();
-            toast('NACHA file exported');
+            toast(`Saved ${name}`);
         } catch (e) {
             toast(e.message, 'error');
         }

@@ -7,17 +7,17 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.routes.payroll._router import router
 from app.routes.payroll.tax_forms import (
-    _company_for_pdf,
     _hash_and_audit,
     _pdf_response,
 )
+from app.services.settings_service import company_identity
 from app.services.tax_forms.state_sui import compute_sui, generate_sui_pdf
 from app.services.tax_forms.efw2 import generate_efw2
 
 
 @router.post("/forms/efw2/{year}")
 def generate_efw2_file(year: int, db: Session = Depends(get_db)):
-    company = _company_for_pdf(db)
+    company = company_identity(db)
     try:
         content, warnings = generate_efw2(db, year, company)
     except ValueError as e:
@@ -67,7 +67,7 @@ def generate_sui_report_pdf(
     if quarter not in (1, 2, 3, 4):
         raise HTTPException(status_code=400, detail="quarter must be 1-4")
     st = state.upper() if state else None
-    company = _company_for_pdf(db)
+    company = company_identity(db)
     key = f"yr{year}-q{quarter}" + (f"-{st}" if st else "")
     audit = _hash_and_audit(db, "sui", key, company, compute_sui(db, year, quarter, st))
     pdf = generate_sui_pdf(db, year, quarter, st, company, audit=audit)

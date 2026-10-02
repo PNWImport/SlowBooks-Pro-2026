@@ -234,3 +234,38 @@ def is_nonprofit(db: Session) -> bool:
     """True when the company file is set to nonprofit mode (Settings ->
     company_type). Gates the nonprofit documents, reports and vocabulary."""
     return get_setting_raw(db, "company_type") == "nonprofit"
+
+
+def company_identity(db: Session) -> dict:
+    """Employer identity for documents, from the Settings screen.
+
+    Env vars (COMPANY_NAME, EMPLOYER_EIN, …) only fill fields left blank
+    there, so a pay stub or W-2 names the same company the app shows.
+    """
+    from app import config
+
+    s = get_all_settings(db)
+    name = s.get("company_name") or ""
+    if not name or name == DEFAULT_SETTINGS["company_name"]:
+        name = config.COMPANY_NAME
+    line1 = ", ".join(
+        p for p in (s.get("company_address1"), s.get("company_address2")) if p
+    )
+    city = s.get("company_city") or ""
+    state = s.get("company_state") or ""
+    zip_code = s.get("company_zip") or ""
+    if not (line1 or city or state or zip_code):
+        line1 = config.COMPANY_ADDRESS
+    state = state or config.EMPLOYER_STATE
+    locality = f"{city}, {state} {zip_code}".strip() if city else ""
+    return {
+        "name": name,
+        "address": line1,
+        "city": city,
+        "state": state,
+        "zip": zip_code,
+        "full_address": ", ".join(p for p in (line1, locality) if p),
+        "phone": s.get("company_phone") or config.COMPANY_PHONE,
+        "email": s.get("company_email") or config.COMPANY_EMAIL,
+        "ein": s.get("company_tax_id") or config.EMPLOYER_EIN,
+    }
