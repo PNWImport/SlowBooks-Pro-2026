@@ -23,6 +23,12 @@ on what the software does, not on what sprint shipped what.
 - `SLOWBOOKS_PRIVATE_NETWORK` and `FORCE_HTTPS` in `docker-compose.yml`.
 - ACH File button on processed pay runs: downloads the NACHA direct-deposit
   file from `/api/payroll/{id}/nacha`. The endpoint existed but had no UI.
+- Company ACH details saved for future runs: encrypted at rest, shown masked,
+  full numbers only after re-entering your password. Reveals and ACH
+  downloads are written to the audit log.
+- Per-user **Bank details** access (Settings → Users). Admins always have it;
+  bookkeepers only when granted; read-only users and API tokens never.
+  Required to save, reveal, or download an ACH file, payroll or contractor.
 
 ### Fixed
 

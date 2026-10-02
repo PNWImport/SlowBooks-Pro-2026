@@ -401,6 +401,8 @@ const SettingsPage = {
                                 <option value="readonly">Read-only — reports and lookups</option>
                                 <option value="admin">Admin — everything</option>
                             </select></div>
+                        <div class="form-group"><label style="font-weight:normal;font-size:11px;">
+                            <input type="checkbox" id="user-new-bank"> Can access bank details</label></div>
                     </div>
                     <button type="button" class="btn btn-primary" onclick="SettingsPage.createUser()">Add User</button>
                 </div>
@@ -460,6 +462,7 @@ const SettingsPage = {
                             `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
                     </select>
                 </td>
+                <td>${SettingsPage._bankAccessCell(u)}</td>
                 <td>${u.last_login_at ? formatDate(u.last_login_at) : '—'}</td>
                 <td>${u.is_active
                     ? `<button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.updateUser(${u.id}, {is_active: false})">Deactivate</button>`
@@ -468,9 +471,22 @@ const SettingsPage = {
                 </td>
             </tr>`).join('');
             $('#users-list').innerHTML = `<div class="table-container"><table>
-                <thead><tr><th scope="col">Username</th><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Last login</th><th scope="col"></th></tr></thead>
+                <thead><tr><th scope="col">Username</th><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Bank details</th><th scope="col">Last login</th><th scope="col"></th></tr></thead>
                 <tbody>${rows}</tbody></table></div>`;
         } catch (e) { /* non-admin or pre-upgrade server: section stays hidden */ }
+    },
+
+    // Admins always have it; read-only users never can (they cannot POST).
+    _bankAccessCell(u) {
+        if (u.role === 'admin') {
+            return '<input type="checkbox" checked disabled title="Admins always have access" aria-label="Bank details access (admin)">';
+        }
+        if (u.role === 'readonly') {
+            return '<input type="checkbox" disabled title="Read-only users cannot use bank details" aria-label="Bank details access (not available)">';
+        }
+        return `<input type="checkbox" ${u.can_access_bank_details ? 'checked' : ''}
+            aria-label="Bank details access for ${escapeHtml(u.username)}"
+            onchange="SettingsPage.updateUser(${u.id}, {can_access_bank_details: this.checked})">`;
     },
 
     // ------------------------------------------------------------------
@@ -534,11 +550,13 @@ const SettingsPage = {
                 display_name: $('#user-new-display').value.trim(),
                 password: $('#user-new-password').value,
                 role: $('#user-new-role').value,
+                can_access_bank_details: $('#user-new-bank').checked,
             });
             toast('User added — this deployment is now Server Edition');
             $('#user-new-username').value = '';
             $('#user-new-display').value = '';
             $('#user-new-password').value = '';
+            $('#user-new-bank').checked = false;
             SettingsPage.loadUsers();
         } catch (err) { toast(err.message, 'error'); }
     },

@@ -16,7 +16,7 @@ from app.schemas.common import StrictModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.users import ROLE_ADMIN, VALID_ROLES, User
+from app.models.users import ROLE_ADMIN, ROLE_READONLY, VALID_ROLES, User
 from app.services.auth import MIN_PASSWORD_LEN, hash_password
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -36,6 +36,8 @@ def _user_out(u: User) -> dict:
         "display_name": u.display_name,
         "role": u.role,
         "is_active": u.is_active,
+        "can_access_bank_details": u.role == ROLE_ADMIN
+        or (u.role != ROLE_READONLY and bool(u.can_access_bank_details)),
         "created_at": u.created_at.isoformat() if u.created_at else None,
         "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
     }
@@ -55,6 +57,7 @@ class UserCreate(StrictModel):
     display_name: str = Field("", max_length=200)
     password: str = Field(..., min_length=1, max_length=512)
     role: str = Field(...)
+    can_access_bank_details: bool = False
 
 
 class UserUpdate(StrictModel):
@@ -62,6 +65,7 @@ class UserUpdate(StrictModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
     password: Optional[str] = Field(None, max_length=512)
+    can_access_bank_details: Optional[bool] = None
 
 
 @router.get("")
@@ -94,6 +98,7 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
         password_hash=hash_password(payload.password),
         role=payload.role,
         is_active=True,
+        can_access_bank_details=payload.can_access_bank_details,
     )
     db.add(user)
     db.commit()
@@ -126,6 +131,8 @@ def update_user(
         if payload.role not in VALID_ROLES:
             raise HTTPException(status_code=400, detail="Invalid role")
         user.role = payload.role
+    if payload.can_access_bank_details is not None:
+        user.can_access_bank_details = payload.can_access_bank_details
     if payload.display_name is not None:
         user.display_name = payload.display_name.strip()
     if payload.is_active is not None:
