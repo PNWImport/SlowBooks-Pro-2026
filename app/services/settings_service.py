@@ -22,6 +22,11 @@ _SENSITIVE_KEYS = frozenset(
         "session_secret",
         # which company a sign-in belongs to (app/services/auth.py)
         "company_session_id",
+        # Company ACH origination: read only through app/services/ach_settings.
+        "ach_immediate_destination",
+        "ach_immediate_origin",
+        "ach_originating_dfi_id",
+        "ach_company_account",
     }
 )
 
@@ -43,6 +48,10 @@ ENCRYPTED_SETTINGS_KEYS = frozenset(
         "qbo_access_token",
         "qbo_refresh_token",
         "simplefin_access_url",
+        "ach_immediate_destination",
+        "ach_immediate_origin",
+        "ach_originating_dfi_id",
+        "ach_company_account",
     }
 )
 
@@ -110,6 +119,11 @@ def get_setting_raw(db: Session, key: str) -> str | None:
     """Return a single setting value by key (including sensitive keys)."""
     row = db.query(Settings).filter(Settings.key == key).first()
     return _maybe_decrypt(key, row.value) if row else None
+
+
+def get_decrypted_setting(db: Session, key: str) -> str:
+    """One setting's plaintext, sensitive keys included."""
+    return _maybe_decrypt(key, get_setting_raw(db, key) or "") or ""
 
 
 def set_setting(db: Session, key: str, value: str) -> None:

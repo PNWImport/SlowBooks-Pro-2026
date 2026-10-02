@@ -518,7 +518,9 @@ All endpoints under `/api/`. Swagger docs at `/docs`. 300+ routes across 50 rout
 | `/api/employees/{id}/bank-accounts` | GET, POST, DELETE | ACH direct deposit routing/account numbers (encrypted) |
 | `/api/payroll` | GET, POST | Pay run CRUD |
 | `/api/payroll/{id}/process` | POST | Process pay run (creates balanced journal entries) |
-| `/api/payroll/{id}/nacha` | POST | Generate NACHA ACH file for direct deposit |
+| `/api/payroll/{id}/nacha` | POST | Generate NACHA ACH file for direct deposit (needs bank-details access; uses the saved company details) |
+| `/api/payroll/ach-settings` | GET, PUT | Company ACH details — encrypted at rest, masked on read |
+| `/api/payroll/ach-settings/reveal` | POST | Full company ACH details — bank-details access + the caller's password; audited |
 
 ### Payroll & HR
 

@@ -9,14 +9,15 @@
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from typing import Optional
 
 from pydantic import model_validator
 from sqlalchemy.orm import Session, joinedload
 
-from app.services.settings_service import company_identity
+from app.routes.payroll.ach import AchOriginating
+from app.services import ach_settings
 from app.database import get_db
 from app.models.accounts import Account
 from app.models.bank_accounts import BankAccountKind
@@ -62,18 +63,6 @@ class VendorBankCreate(StrictModel):
     account_number: str
     account_kind: str = "checking"
     nickname: Optional[str] = None
-
-
-class NachaOriginating(StrictModel):
-    immediate_destination: str
-    immediate_origin: str
-    destination_name: str = "BANK"
-    origin_name: str = ""
-    company_name: str = ""
-    company_id: str = ""
-    originating_dfi_id: str
-    company_account: str = ""
-    effective_date: Optional[date] = None
 
 
 def _run_response(run: ContractorPayRun) -> dict:
@@ -291,7 +280,10 @@ def void_run(run_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{run_id}/nacha", response_class=PlainTextResponse)
 def export_contractor_nacha(
-    run_id: int, originating: NachaOriginating, db: Session = Depends(get_db)
+    run_id: int,
+    originating: AchOriginating,
+    request: Request,
+    db: Session = Depends(get_db),
 ):
     """NACHA ACH file crediting each contractor's bank account."""
     from app.services.nacha_export import generate_contractor_nacha_file
@@ -303,16 +295,17 @@ def export_contractor_nacha(
         raise HTTPException(
             status_code=400, detail="Run must be processed before ACH export"
         )
-
-    orig = originating.model_dump()
-    if not orig.get("effective_date"):
-        orig["effective_date"] = run.pay_date
-    co = company_identity(db)
-    if not orig.get("company_name"):
-        orig["company_name"] = co["name"]
-    if not orig.get("company_id"):
-        orig["company_id"] = co["ein"]
-    return generate_contractor_nacha_file(db, run_id, orig)
+    orig = ach_settings.originating_for_export(
+        request, db, originating.model_dump(), run.pay_date
+    )
+    nacha = generate_contractor_nacha_file(db, run_id, orig)
+    ach_settings.record_export(db, "contractor_pay_runs", run_id)
+    return PlainTextResponse(
+        content=nacha,
+        headers={
+            "Content-Disposition": f"attachment; filename=contractors_{run_id}.ach"
+        },
+    )
 
 
 # --- vendor bank accounts ---------------------------------------------------

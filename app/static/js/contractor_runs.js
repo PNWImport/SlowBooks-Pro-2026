@@ -52,7 +52,7 @@ const ContractorRunsPage = {
                 actions.push(`<button class="btn" onclick="ContractorRunsPage.processRun(${r.id})">Process</button>`);
             }
             if (r.status === 'processed') {
-                actions.push(`<button class="btn" onclick="ContractorRunsPage.nachaModal(${r.id})">NACHA</button>`);
+                actions.push(`<button class="btn" onclick="AchFile.open('/api/contractor-runs/${r.id}/nacha', 'contractors_${r.id}.ach')">ACH File</button>`);
                 actions.push(`<button class="btn btn-danger" onclick="ContractorRunsPage.voidRun(${r.id})">Void</button>`);
             }
             actions.push(`<button class="btn" onclick="ContractorRunsPage.detailModal(${r.id})">Details</button>`);
@@ -216,50 +216,6 @@ const ContractorRunsPage = {
                 <div class="form-actions">
                     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
                 </div>`);
-        } catch (e) {
-            toast(e.message, 'error');
-        }
-    },
-
-    nachaModal(runId) {
-        openModal('NACHA Export', `
-            <p style="font-size:10px;color:var(--text-muted);">
-                ACH origination details — these come from your bank. The file
-                credits each contractor's bank account on file.
-            </p>
-            <div class="form-group">
-                <label>Immediate Destination (routing)</label>
-                <input type="text" id="nc-dest" maxlength="9" placeholder="021000021">
-            </div>
-            <div class="form-group">
-                <label>Immediate Origin (your routing or EIN)</label>
-                <input type="text" id="nc-origin" placeholder="123456789">
-            </div>
-            <div class="form-group">
-                <label>Originating DFI ID (8 digits)</label>
-                <input type="text" id="nc-dfi" maxlength="8" placeholder="02100002">
-            </div>
-            <div class="form-actions">
-                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="ContractorRunsPage.exportNacha(${runId})">Export</button>
-            </div>`);
-    },
-
-    async exportNacha(runId) {
-        const dest = ($('#nc-dest')?.value || '').trim();
-        const origin = ($('#nc-origin')?.value || '').trim();
-        const dfi = ($('#nc-dfi')?.value || '').trim();
-        if (!dest || !origin || !dfi) {
-            return toast('All three origination fields are required', 'error');
-        }
-        try {
-            const name = await postAndSaveFile(`/api/contractor-runs/${runId}/nacha`, {
-                immediate_destination: dest,
-                immediate_origin: origin,
-                originating_dfi_id: dfi,
-            }, `contractors_${runId}.ach`);
-            closeModal();
-            toast(`Saved ${name}`);
         } catch (e) {
             toast(e.message, 'error');
         }

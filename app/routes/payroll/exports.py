@@ -2,13 +2,14 @@ from datetime import date
 
 from decimal import Decimal
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.responses import Response, PlainTextResponse
-from app.schemas.common import StrictModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.routes.payroll._router import router
+from app.routes.payroll.ach import AchOriginating
+from app.services import ach_settings
 from app.routes.payroll.ytd import employee_ytd
 from app.services.payroll_documents import employer_block
 from app.services.request_utils import content_disposition, file_name
@@ -74,21 +75,12 @@ def download_paystub(run_id: int, stub_id: int, db: Session = Depends(get_db)):
     )
 
 
-class NachaOriginating(StrictModel):
-    immediate_destination: str  # receiving bank routing number
-    immediate_origin: str  # company identifier (10 chars)
-    destination_name: str = "BANK"
-    origin_name: str = ""
-    company_name: str = ""
-    company_id: str = ""  # usually the employer EIN
-    originating_dfi_id: str  # 8-digit routing prefix of the company's bank
-    company_account: str = ""
-    effective_date: date = None
-
-
 @router.post("/{run_id}/nacha", response_class=PlainTextResponse)
 def export_nacha(
-    run_id: int, originating: NachaOriginating, db: Session = Depends(get_db)
+    run_id: int,
+    originating: AchOriginating,
+    request: Request,
+    db: Session = Depends(get_db),
 ):
     """Generate a NACHA ACH file for direct deposit of a processed pay run."""
     from app.services.nacha_export import generate_nacha_file
@@ -100,19 +92,14 @@ def export_nacha(
         raise HTTPException(
             status_code=400, detail="Pay run must be processed before ACH export"
         )
-
-    orig = originating.model_dump()
-    if not orig.get("effective_date"):
-        orig["effective_date"] = run.pay_date
-    if not orig.get("company_name"):
-        orig["company_name"] = config.COMPANY_NAME
-    if not orig.get("company_id"):
-        orig["company_id"] = config.EMPLOYER_EIN
-
+    orig = ach_settings.originating_for_export(
+        request, db, originating.model_dump(), run.pay_date
+    )
     try:
         nacha = generate_nacha_file(db, run_id, orig)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    ach_settings.record_export(db, "pay_runs", run_id)
     return PlainTextResponse(
         content=nacha,
         headers={"Content-Disposition": f"attachment; filename=payroll_{run_id}.ach"},

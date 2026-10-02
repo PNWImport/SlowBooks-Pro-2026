@@ -9,7 +9,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, false
 
 from app.database import Base
 
@@ -34,5 +34,9 @@ class User(Base):
     password_hash = Column(String(512), nullable=False)
     role = Column(String(20), nullable=False, default=ROLE_ADMIN)
     is_active = Column(Boolean, nullable=False, default=True)
+    # Saved company ACH details and ACH files. Admins always have it.
+    can_access_bank_details = Column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     created_at = Column(DateTime, default=_utcnow, nullable=False)
     last_login_at = Column(DateTime, nullable=True)
