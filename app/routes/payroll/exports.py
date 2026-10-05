@@ -1,4 +1,3 @@
-
 from decimal import Decimal
 
 from fastapi import Depends, HTTPException, Request

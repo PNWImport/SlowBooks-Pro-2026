@@ -581,6 +581,8 @@ def test_openai_request_keeps_temperature_for_older_models():
     req = build_request("openai", "sk-fake", "gpt-4o-mini", "sys", "user")
     assert req["json"]["max_completion_tokens"] == 1024
     assert req["json"]["temperature"] == 0.3
+
+
 def test_ai_config_custom_requires_model_id(client):
     r = client.put(
         "/api/analytics/ai-config",

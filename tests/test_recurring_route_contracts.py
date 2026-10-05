@@ -41,7 +41,9 @@ def test_recurring_crud_filters_and_generate(
     assert [
         row["id"] for row in authed_client.get("/api/recurring?active_only=true").json()
     ] == [second.json()["id"]]
-    monkeypatch.setattr(recurring, "generate_due_invoices", lambda db, as_of, skipped=None: [3, 4])
+    monkeypatch.setattr(
+        recurring, "generate_due_invoices", lambda db, as_of, skipped=None: [3, 4]
+    )
     generated = authed_client.post("/api/recurring/generate?as_of=2026-09-08")
     assert generated.json() == {
         "invoices_created": 2,

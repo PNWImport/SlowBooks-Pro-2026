@@ -98,7 +98,6 @@ def _check_parent(db: Session, parent_id: int | None, account_id: int | None = N
         current = parents.get(current)
 
 
-
 def _check_bank_kind(bank_kind, account_type) -> None:
     """A bank is an asset, a card is a liability; anything else is a
     mistake the picker would propagate everywhere."""

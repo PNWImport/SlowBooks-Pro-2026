@@ -2,7 +2,6 @@
 
 import itertools
 
-
 _NUMBERS = itertools.count(1)
 
 

@@ -75,7 +75,7 @@ def test_invalid_item_row_does_not_block_valid_row(db_session):
     assert result == {
         "created": 1,
         "skipped": 0,
-        "errors": ["Row 2: Rate \"not-money\" is not a number."],
+        "errors": ['Row 2: Rate "not-money" is not a number.'],
     }
     assert db_session.query(Item).one().name == "Good"
 
@@ -87,7 +87,7 @@ def test_failed_item_does_not_reserve_its_name(db_session):
     assert result == {
         "created": 1,
         "skipped": 0,
-        "errors": ["Row 2: Rate \"invalid\" is not a number."],
+        "errors": ['Row 2: Rate "invalid" is not a number.'],
     }
     assert db_session.query(Item).one().rate == Decimal("12")
 

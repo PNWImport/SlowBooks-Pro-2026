@@ -79,7 +79,9 @@ def test_caps_evict_oldest_receipt_first(db_session, monkeypatch, cap):
 
 
 def test_filename_is_reduced_and_invalid_ids_are_safe(db_session):
-    intake_id = ocr.save_intake(db_session, b"synthetic", "../scan.unknown", "image/png")
+    intake_id = ocr.save_intake(
+        db_session, b"synthetic", "../scan.unknown", "image/png"
+    )
     meta = ocr.get_intake(db_session, intake_id)
     assert meta["original_filename"] == "scan.unknown"
     assert meta["size"] == len(b"synthetic")

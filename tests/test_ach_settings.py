@@ -166,7 +166,9 @@ def test_bookkeeper_needs_the_flag(client, db_session, seed_accounts):
             "/api/payroll/ach-settings/reveal", json={"password": "keeper-password-1"}
         )
         assert reveal.status_code == 403
-        assert client.post(f"/api/payroll/{run['id']}/nacha", json={}).status_code == 403
+        assert (
+            client.post(f"/api/payroll/{run['id']}/nacha", json={}).status_code == 403
+        )
 
     refused()
     keeper.can_access_bank_details = True
@@ -187,14 +189,18 @@ def test_can_access_flag_semantics(db_session):
     from app.services import ach_settings
 
     keeper = _mk_user(db_session, "keeper", ROLE_BOOKKEEPER)
-    assert ach_settings.can_access(_request_for(keeper, db_session), db_session) is False
+    assert (
+        ach_settings.can_access(_request_for(keeper, db_session), db_session) is False
+    )
     keeper.can_access_bank_details = True
     db_session.commit()
     assert ach_settings.can_access(_request_for(keeper, db_session), db_session) is True
     # Revoking takes effect on the next check, not the next login.
     keeper.can_access_bank_details = False
     db_session.commit()
-    assert ach_settings.can_access(_request_for(keeper, db_session), db_session) is False
+    assert (
+        ach_settings.can_access(_request_for(keeper, db_session), db_session) is False
+    )
 
 
 def test_reveal_checks_the_signed_in_users_own_password(client, db_session):
@@ -210,7 +216,9 @@ def test_readonly_never_gets_access_even_with_the_flag(client, db_session):
 
     _save(client)
     viewer = _mk_user(db_session, "viewer", ROLE_READONLY, bank=True)
-    assert ach_settings.can_access(_request_for(viewer, db_session), db_session) is False
+    assert (
+        ach_settings.can_access(_request_for(viewer, db_session), db_session) is False
+    )
     _login_as(client, "viewer")
     view = client.get("/api/payroll/ach-settings")
     assert view.status_code == 403

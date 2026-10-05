@@ -83,7 +83,13 @@ def _pay_vendor(client, vendor_id, amount, date="2026-03-01"):
             "due_date": date,
             "bill_number": f"EFILE-{_BILL_SEQ['n']}",
             "lines": [
-                {"description": "work", "quantity": 1, "rate": amount, "account_id": expense_id, "line_order": 0}
+                {
+                    "description": "work",
+                    "quantity": 1,
+                    "rate": amount,
+                    "account_id": expense_id,
+                    "line_order": 0,
+                }
             ],
         },
     )

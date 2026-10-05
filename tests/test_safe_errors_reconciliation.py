@@ -61,7 +61,11 @@ def test_integrity_error_shows_only_the_drivers_first_line():
     except Exception as caught:
         message = safe_message(caught, "regression")
     assert message == "Database constraint: NOT NULL constraint failed: t.c"
-    for private in ("synthetic-statement", "synthetic-private-param", "synthetic-extra"):
+    for private in (
+        "synthetic-statement",
+        "synthetic-private-param",
+        "synthetic-extra",
+    ):
         assert private not in message
 
 

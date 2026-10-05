@@ -122,7 +122,9 @@ def test_bill_attachment_and_intake_image_paths(client, db_session, monkeypatch)
     )
     db_session.add(bill)
     db_session.commit()
-    intake_id = ocr_service.save_intake(db_session, b"image", "receipt.png", "image/png")
+    intake_id = ocr_service.save_intake(
+        db_session, b"image", "receipt.png", "image/png"
+    )
     assert client.get(f"/api/ocr/intake/{intake_id}/image").content == b"image"
     attached = client.post(
         f"/api/ocr/intake/{intake_id}/attach",

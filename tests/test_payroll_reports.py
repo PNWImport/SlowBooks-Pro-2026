@@ -93,7 +93,13 @@ def test_contractor_payments_report_shows_both_paths(client, seed_accounts):
             "due_date": "2026-03-01",
             "bill_number": "RPT-1",
             "lines": [
-                {"description": "w", "quantity": 1, "rate": 400, "account_id": seed_accounts["6000"].id, "line_order": 0}
+                {
+                    "description": "w",
+                    "quantity": 1,
+                    "rate": 400,
+                    "account_id": seed_accounts["6000"].id,
+                    "line_order": 0,
+                }
             ],
         },
     ).json()

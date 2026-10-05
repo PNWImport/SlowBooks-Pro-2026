@@ -49,8 +49,7 @@ def test_itemization_does_not_double_count_totals_or_employer_costs():
         )
     )
     assert [
-        {"label": r["label"], "amount": r["amount"]}
-        for r in pdf._deduction_lines(stub)
+        {"label": r["label"], "amount": r["amount"]} for r in pdf._deduction_lines(stub)
     ] == [
         {"label": "Health", "amount": Decimal("20")},
         {"label": "Garnishment Child Support", "amount": Decimal("10")},

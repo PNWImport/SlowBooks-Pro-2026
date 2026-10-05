@@ -6,7 +6,6 @@ Covers the fix for CodeQL py/path-injection alert #19.
 import io
 
 
-
 def test_same_name_uploads_keep_independent_contents(client):
     first = _upload(client, "invoice", 1, "receipt.pdf", b"first receipt")
     second = _upload(client, "invoice", 1, "receipt.pdf", b"second receipt")

@@ -30,6 +30,7 @@ ENTITIES = [
 def remote_import(monkeypatch):
     records = {kind: [] for kind in ENTITIES}
     failures = set()
+
     class Client:
         """import_all also reads the (empty) General Ledger report."""
 
@@ -68,9 +69,7 @@ def remote_import(monkeypatch):
         )
         cls = getattr(import_module(f"quickbooks.objects.{module}"), classname)
 
-        def all_records(
-            qb, start_position=1, max_results=100, kind=kind, **_unused
-        ):
+        def all_records(qb, start_position=1, max_results=100, kind=kind, **_unused):
             assert qb is client
             if kind in failures:
                 raise RuntimeError("synthetic query failure")
@@ -79,9 +78,7 @@ def remote_import(monkeypatch):
         monkeypatch.setattr(cls, "all", all_records)
         if kind == "accounts":
             # inactive accounts are fetched with an explicit query
-            monkeypatch.setattr(
-                cls, "query", classmethod(lambda c, select, *, qb: [])
-            )
+            monkeypatch.setattr(cls, "query", classmethod(lambda c, select, *, qb: []))
     from quickbooks.objects.journalentry import JournalEntry
 
     from app.services import qbo_ledger_import
@@ -247,7 +244,7 @@ def test_full_import_preserves_links_and_source_balances(db_session, remote_impo
     assert qbo_import.import_all(db_session) == dict.fromkeys(ENTITIES, 0) | {
         "journal_entries": 0,
         "ledger": 0,
-        "errors": []
+        "errors": [],
     }
 
 

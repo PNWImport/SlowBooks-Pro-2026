@@ -1,6 +1,5 @@
 """Employee route error handling and document/direct-deposit boundaries."""
 
-
 from app.models.payroll import Employee
 from app.routes import employees
 

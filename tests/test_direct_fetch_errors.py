@@ -87,9 +87,8 @@ _NOT_A_REFUSAL = {"compliance.js"}
 def test_every_page_that_fetches_for_itself_is_in_the_probe():
     probe = PROBE.read_text(encoding="utf-8")
     for js in sorted(JS.glob("*.js")):
-        if (
-            js.name in _NOT_IN_PROBE | _KNOWN_GAP
-            or "fetch(" not in js.read_text(encoding="utf-8")
+        if js.name in _NOT_IN_PROBE | _KNOWN_GAP or "fetch(" not in js.read_text(
+            encoding="utf-8"
         ):
             continue
         assert f"'{js.name} " in probe, f"{js.name} calls fetch() itself"

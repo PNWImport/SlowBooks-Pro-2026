@@ -83,7 +83,10 @@ class Books:
             db.add(QBOMapping(entity_type=kind, qbo_id=qbo_id, slowbooks_id=local_id))
         db.flush()
         self.sources = {
-            QBOInvoice: [_invoice("130", "1037", 50, balance=30), _invoice("133", "1038", 40)],
+            QBOInvoice: [
+                _invoice("130", "1037", 50, balance=30),
+                _invoice("133", "1038", 40),
+            ],
             QBOPayment: [
                 QBOPayment.from_json(
                     {

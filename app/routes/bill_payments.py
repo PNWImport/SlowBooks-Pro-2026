@@ -44,7 +44,12 @@ def list_bill_payments(
                 )
             )
         )
-    payments = q.order_by(BillPayment.date.desc(), BillPayment.id.desc()).offset(skip).limit(limit).all()
+    payments = (
+        q.order_by(BillPayment.date.desc(), BillPayment.id.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
     results = []
     for p in payments:
         resp = BillPaymentResponse.model_validate(p)

@@ -43,9 +43,7 @@ def test_document_backed_postings_link_by_source_id(source, expected):
     ],
 )
 def test_posting_links_use_transaction_id_not_source_id(source, expected):
-    assert (
-        source_link(Transaction(id=91, source_type=source, source_id=23)) == expected
-    )
+    assert source_link(Transaction(id=91, source_type=source, source_id=23)) == expected
 
 
 def test_unknown_source_has_no_broken_link():

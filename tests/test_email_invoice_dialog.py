@@ -140,7 +140,11 @@ def test_the_dialog_calls_preview_and_renders_it_into_the_preview_pane():
     assert "API.post(`/invoices/${id}/email-preview`" in js
     # Production renders the preview into a plain pane (a div), not a sandboxed
     # iframe; the failure branch uses textContent so an error is never markup.
-    assert 'id="email-preview"' in js and "sandbox" not in js[js.index('id="email-preview"') : js.index('id="email-preview"') + 200]
+    assert (
+        'id="email-preview"' in js
+        and "sandbox"
+        not in js[js.index('id="email-preview"') : js.index('id="email-preview"') + 200]
+    )
     assert "target.innerHTML = out.html_body" in js
     assert "target.textContent = `Preview unavailable" in js
 

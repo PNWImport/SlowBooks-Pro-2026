@@ -11,9 +11,6 @@
 import hashlib
 
 
-
-
-
 def _create_employee(client, **overrides):
     body = {
         "first_name": "Pat",
