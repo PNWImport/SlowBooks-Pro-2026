@@ -35,10 +35,12 @@ const CCChargesPage = {
     },
 
     async showForm() {
-        const [accounts, cards] = await Promise.all([
-            API.get('/accounts?account_type=expense'),
+        const [allAccounts, cards] = await Promise.all([
+            API.get('/accounts'),
             API.get('/accounts?bank=1&active_only=true'),
         ]);
+        // Expense and cost-of-goods accounts (W-L18): a card buys materials too.
+        const accounts = PurchaseAccounts.filter(allAccounts);
         const cardOpts = cards.filter(a => a.bank_kind === 'credit_card').map(a =>
             `<option value="${a.id}" ${a.account_number === '2100' ? 'selected' : ''}>${escapeHtml(a.account_number || '')} - ${escapeHtml(a.name)}</option>`
         ).join('');

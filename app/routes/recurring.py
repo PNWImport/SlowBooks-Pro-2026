@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
 from app.routes._helpers import clamp_pagination
-from app.routes.invoices.helpers import resolve_line_taxable
+from app.routes.invoices.helpers import refuse_zero_total, resolve_line_taxable
 from app.models.recurring import RecurringInvoice, RecurringInvoiceLine
 from app.models.contacts import Customer
 from app.schemas.recurring import RecurringCreate, RecurringUpdate, RecurringResponse
@@ -139,11 +139,6 @@ def update_recurring(rec_id: int, data: RecurringUpdate, db: Session = Depends(g
         tax_rate = data.tax_rate if data.tax_rate is not None else rec.tax_rate
         refuse_zero_total(
             compute_line_totals(data.lines, tax_rate)[2], _schedule_noun(db)
-        )
-
-    if data.end_date is not None and data.end_date < rec.start_date:
-        raise HTTPException(
-            status_code=422, detail="end_date cannot be before start_date"
         )
 
     for key, val in data.model_dump(exclude_unset=True, exclude={"lines"}).items():

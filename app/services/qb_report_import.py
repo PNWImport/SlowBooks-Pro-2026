@@ -42,7 +42,16 @@ from app.services.accounting import (
 from app.services.csv_export import strip_formula_guard
 from app.services.iif_import import _find_account
 from app.services.safe_errors import DataProblem, safe_message
-from app.services.control_accounts import MissingControlAccount
+
+
+def _csv_rows(csv_text: str) -> list[list[str]]:
+    """The report's rows, with a spreadsheet's formula guard ("'=Name")
+    taken off each cell (csv_export.strip_formula_guard)."""
+    return [
+        [strip_formula_guard(c) for c in row]
+        for row in csv.reader(io.StringIO(csv_text))
+    ]
+
 
 logger = logging.getLogger(__name__)
 
@@ -215,14 +224,8 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
         return result
 
     receipts = _group_receipts(rows, cols, header_idx, result["errors"])
-    try:
-        ar_id = get_ar_account_id(db)
-    except MissingControlAccount:
-        ar_id = None
-    try:
-        default_income_id = get_default_income_account_id(db)
-    except MissingControlAccount:
-        default_income_id = None
+    ar_id = get_ar_account_id(db)
+    default_income_id = get_default_income_account_id(db)
 
     for rec in receipts:
         sp = db.begin_nested()
@@ -373,10 +376,7 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
             # Payment for the full total, deposited per the header row.
             deposit_acct = _find_account(db, rec["deposit_account"])
             if not deposit_acct:
-                try:
-                    uf_id = get_undeposited_funds_id(db)
-                except MissingControlAccount:
-                    uf_id = None
+                uf_id = get_undeposited_funds_id(db)
                 if uf_id:
                     deposit_acct = db.query(Account).filter(Account.id == uf_id).first()
             payment = Payment(
@@ -418,18 +418,6 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
                     source_id=payment.id,
                 )
                 payment.transaction_id = txn.id
-
-            if rec["total"] != 0:
-                if not invoice.transaction_id and not ar_id:
-                    result["warnings"].append(
-                        f"Receipt {ref}: imported but invoice journal entry could not "
-                        "be created (missing Accounts Receivable control account)"
-                    )
-                if not payment.transaction_id:
-                    result["warnings"].append(
-                        f"Receipt {ref}: imported but payment journal entry could not "
-                        "be created (missing receivable or deposit account)"
-                    )
 
             db.flush()
             db.refresh(invoice)

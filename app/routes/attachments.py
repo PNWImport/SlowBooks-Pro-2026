@@ -11,7 +11,6 @@
 
 import re
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
@@ -32,6 +31,8 @@ _ENTITY_TYPE_DIRS = {
     "expense": "expense",
     "estimate": "estimate",
     "purchase_order": "purchase_order",
+    # The supplier's own credit note is the evidence behind a vendor credit,
+    # the same way their invoice is the evidence behind a bill.
     "vendor_credit": "vendor_credit",
     "vendor": "vendor",
     "customer": "customer",
@@ -89,23 +90,16 @@ def _sanitize_filename(raw: str) -> str:
     return cleaned
 
 
-def _split_stored_path(stored: str) -> list[str]:
-    """Split a stored relative path on either separator.
-
-    Rows written by a pre-fix Windows install carry backslashes; they must
-    keep resolving on every platform.
-    """
-    # Normalizing legacy separators must not turn absolute paths into
-    # apparently relative paths and bypass the existing rejection rule.
-    from pathlib import PureWindowsPath
-
-    if stored.startswith(("/", "\\")) or PureWindowsPath(stored).drive:
-        raise HTTPException(status_code=400, detail="Invalid path")
-    return [part for part in stored.replace("\\", "/").split("/") if part]
-
-
-def _resolve_within(base: Path, *parts: str) -> Path:
-    """Join parts onto base, resolve, and assert the result is inside base.
+def _entity_type(entity_type: str) -> str:
+    """The whitelisted record type, or 400. Employee documents are not one:
+    they are HR's, reached only through /api/employees (admin only)."""
+    type_dir = _ENTITY_TYPE_DIRS.get(entity_type)
+    if type_dir is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid entity type. Allowed: {', '.join(sorted(_ENTITY_TYPE_DIRS))}",
+        )
+    return type_dir
 
 
 def _record_attachment(db: Session, attachment_id: int) -> Attachment | None:
@@ -151,45 +145,34 @@ async def upload_attachment(
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 50MB)")
 
-    # Build and verify paths against the upload base BEFORE any filesystem op.
-    upload_dir = _resolve_within(UPLOAD_BASE, type_dir, str(entity_id))
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    file_path = _resolve_within(upload_dir, f"{uuid4().hex}{extension}")
-    with file_path.open("xb") as uploaded:
-        uploaded.write(content)
-
-    attachment = Attachment(
+    # A row of its own every time: a second "receipt.pdf" on the same record
+    # is a second file, and the first is kept.
+    attachment = file_store.add_attachment(
+        db,
         entity_type=entity_type,
         entity_id=entity_id,
         filename=safe_filename,
-        # POSIX form, always. str() on a WindowsPath yields backslashes, and
-        # a company file written on Windows would then be unable to find its
-        # own attachments when opened on macOS or Linux — joinpath() there
-        # treats "uploads\\attachments\\x.pdf" as one filename.
-        file_path=file_path.relative_to(STATIC_BASE).as_posix(),
-        mime_type=file.content_type,
-        file_size=len(content),
+        content_type=file.content_type,
+        data=content,
     )
     db.commit()
     db.refresh(attachment)
     return attachment
 
 
+# DECLARATION ORDER MATTERS HERE. FastAPI matches in the order routes are
+# declared, and "/{entity_type}/{entity_id}" will happily match
+# "/download/2" — entity_type "download", entity_id 2 — answering `[]`
+# instead of the file. That is what shipped: a user could attach a file and
+# never get it back, and no test caught it because they all called the
+# handler rather than the URL (found by macbase1, reproduced by skytech,
+# 2.10.3 gate). The literal-prefix route must stay ABOVE the catch-all.
 @router.get("/download/{attachment_id}")
 def download_attachment(attachment_id: int, db: Session = Depends(get_db)):
-    attachment = db.query(Attachment).filter(Attachment.id == attachment_id).first()
+    attachment = _record_attachment(db, attachment_id)
     if not attachment:
         raise HTTPException(status_code=404, detail="Attachment not found")
-
-    file_path = _resolve_within(STATIC_BASE, *_split_stored_path(attachment.file_path))
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found on disk")
-
-    return FileResponse(
-        str(file_path),
-        filename=attachment.filename,
-        media_type=attachment.mime_type or "application/octet-stream",
-    )
+    return file_store.attachment_response(db, attachment)
 
 
 @router.get("/{entity_type}/{entity_id}", response_model=list[AttachmentResponse])
@@ -212,13 +195,7 @@ def delete_attachment(attachment_id: int, db: Session = Depends(get_db)):
     attachment = _record_attachment(db, attachment_id)
     if not attachment:
         raise HTTPException(status_code=404, detail="Attachment not found")
-
-    file_path = _resolve_within(STATIC_BASE, *_split_stored_path(attachment.file_path))
-    try:
-        file_path.unlink()
-    except FileNotFoundError:
-        pass  # DB row present but file already gone — delete the row anyway
-
-    db.delete(attachment)
+    # The bytes go with the row: nothing is left behind anywhere.
+    file_store.delete_attachment(db, attachment)
     db.commit()
     return {"status": "deleted"}

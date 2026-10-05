@@ -1,6 +1,5 @@
 import html
 import logging
-from html import escape
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
@@ -81,16 +80,7 @@ def ar_aging_report(db: Session, as_of_date: date) -> dict:
     for inv in invoices:
         cid = inv.customer_id
         if cid not in aging:
-            aging[cid] = {
-                "customer_name": customer_names.get(cid, "Unknown"),
-                "customer_id": cid,
-                "current": Decimal(0),
-                "over_30": Decimal(0),
-                "over_60": Decimal(0),
-                "over_90": Decimal(0),
-                "total": Decimal(0),
-                "unapplied_credits": Decimal(0),
-            }
+            aging[cid] = _aging_row(customer_names, cid)
 
         days = (as_of_date - inv.due_date).days if inv.due_date else 0
         # At the rate it was booked at, as the ledger carries it.
@@ -105,6 +95,12 @@ def ar_aging_report(db: Session, as_of_date: date) -> dict:
             aging[cid]["over_90"] += bal
         aging[cid]["total"] += bal
 
+    # Unapplied credit memos. A credit memo credits A/R the moment it is
+    # issued, so summing only invoice balances reads HIGHER than account
+    # 1100 by every credit not yet applied — the aging and the control
+    # account disagree, and the report overstates what customers owe. Found
+    # while building the payable-side twin (issue #129); fixed on both sides
+    # together so they cannot drift apart again.
     from app.models.credit_memos import CreditMemo, CreditMemoStatus
 
     credits = (
@@ -114,43 +110,31 @@ def ar_aging_report(db: Session, as_of_date: date) -> dict:
         .filter(CreditMemo.balance_remaining > 0)
         .all()
     )
-    for credit in credits:
-        cid = credit.customer_id
+    held = [(cm.customer_id, Decimal(str(cm.balance_remaining))) for cm in credits]
+    # ...and payments, or the part of one, not applied to any invoice: they
+    # credited A/R in full when received, at the payment's rate.
+    held += [
+        (p.customer_id, p.unapplied_home)
+        for p in unapplied_payments(db, end=as_of_date)
+    ]
+    for cid, amt in held:
         if cid not in aging:
-            aging[cid] = {
-                "customer_name": customer_names.get(cid, "Unknown"),
-                "customer_id": cid,
-                "current": Decimal(0),
-                "over_30": Decimal(0),
-                "over_60": Decimal(0),
-                "over_90": Decimal(0),
-                "total": Decimal(0),
-                "unapplied_credits": Decimal(0),
-            }
-        amount = Decimal(str(credit.balance_remaining))
-        aging[cid]["unapplied_credits"] += amount
-        aging[cid]["current"] -= amount
-        aging[cid]["total"] -= amount
+            aging[cid] = _aging_row(customer_names, cid)
+        aging[cid]["unapplied_credits"] += amt
+        # A credit has no due date: it offsets the newest bucket.
+        aging[cid]["current"] -= amt
+        aging[cid]["total"] -= amt
 
-    columns = (
-        "current",
-        "over_30",
-        "over_60",
-        "over_90",
-        "total",
-        "unapplied_credits",
-    )
-    items = list(aging.values())
-    for item in items:
-        item.setdefault("unapplied_credits", Decimal(0))
+    _COLS = ("current", "over_30", "over_60", "over_90", "total", "unapplied_credits")
+    items = sorted(aging.values(), key=lambda i: (i["customer_name"] or "").lower())
     totals = {"customer_name": "TOTAL", "customer_id": 0}
-    for key in columns:
-        totals[key] = sum(item[key] for item in items)
+    for k in _COLS:
+        totals[k] = sum((i[k] for i in items), Decimal(0))
     # Convert Decimals to float for JSON
     for item in items:
-        for k in columns:
+        for k in _COLS:
             item[k] = float(item[k])
-    for k in columns:
+    for k in _COLS:
         totals[k] = float(totals[k])
 
     return {"as_of_date": as_of_date.isoformat(), "items": items, "totals": totals}
@@ -199,22 +183,215 @@ def income_by_customer(
             }
         return by_customer[cid]
 
+    for inv in invoices:
+        r = row(inv.customer_id, inv.customer.name if inv.customer else "Unknown")
+        rate = inv.exchange_rate
+        r["invoice_count"] += 1
+        r["total_sales"] += home_amount(inv.subtotal, rate)
+        r["total_tax"] += home_amount(inv.tax_amount, rate)
+        r["total_paid"] += home_amount(inv.amount_paid, rate)
+        r["total_balance"] += home_amount(inv.balance_due, rate)
+
+    unapplied = unapplied_payments(db, start=start_date, end=end_date)
+    if unapplied:
+        names = {
+            c.id: c.name
+            for c in db.query(Customer.id, Customer.name).filter(
+                Customer.id.in_({p.customer_id for p in unapplied})
+            )
+        }
+        for p in unapplied:
+            r = row(p.customer_id, names.get(p.customer_id, "Unknown"))
+            r["total_paid"] += p.unapplied_home
+            r["total_balance"] -= p.unapplied_home
+
     items = sorted(by_customer.values(), key=lambda x: x["total_sales"], reverse=True)
-    grand_sales = sum((i["total_sales"] for i in items), Decimal("0"))
-    grand_paid = sum((i["total_paid"] for i in items), Decimal("0"))
-    grand_balance = sum((i["total_balance"] for i in items), Decimal("0"))
+    money = ("total_sales", "total_tax", "total_paid", "total_balance")
+    grand = {k: sum((i[k] for i in items), Decimal(0)) for k in money}
     for item in items:
-        item["total_sales"] = float(item["total_sales"])
-        item["total_paid"] = float(item["total_paid"])
-        item["total_balance"] = float(item["total_balance"])
+        for k in money:
+            item[k] = float(item[k])
 
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "items": items,
-        "total_sales": float(grand_sales),
-        "total_paid": float(grand_paid),
-        "total_balance": float(grand_balance),
+        **{k: float(v) for k, v in grand.items()},
+    }
+
+
+def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dict:
+    """A customer statement's lines: invoices, payments and credit memos
+    dated up to `as_of_date`, interleaved in date order with the balance
+    after each one, and the totals.
+
+    The statement used to list every invoice, then every payment, so the
+    running balance followed no order a customer could check against their
+    own records, and its Description column printed the invoice's notes —
+    internal text, or the "Thank you for your business" footer (explore
+    2.17.3, W-L9). A voided payment was also subtracted, and credit memos
+    were left out, so Balance Due could disagree with the customer's
+    balance. Each line now describes the document itself: when an invoice
+    is due and its PO number; how a payment was made and which invoices it
+    paid; what a credit memo was applied to.
+
+    Amounts are in home currency, as A/R Aging and the customer's balance
+    are: a foreign-currency invoice at the rate it was booked at, and a
+    payment at what it took off A/R (each part applied to an invoice at
+    that invoice's rate, the rest at the payment's own). A EUR 850.00
+    invoice was summed as 850 dollars beside the dollar ones (explore
+    2.17.3, A11). A foreign line names its own amount ("EUR 850.00")."""
+    from app.models.credit_memos import CreditMemo, CreditMemoStatus
+    from app.models.payments import PaymentAllocation
+    from app.services.contact_balances import home_amount
+    from app.services.currency import home_currency
+    from app.services.donor_documents import document_label
+    from app.services.terminology import terms_from_db
+
+    words = terms_from_db(db)
+    home = home_currency(db)
+
+    def foreign(doc) -> str:
+        """The document's currency code when it is not the home currency."""
+        code = (doc.currency or "").strip().upper()
+        return code if code and code != home else ""
+
+    invoices = (
+        db.query(Invoice)
+        .filter(Invoice.customer_id == customer.id)
+        .filter(Invoice.status != InvoiceStatus.VOID)
+        .filter(Invoice.date <= as_of_date)
+        .all()
+    )
+    payments = (
+        db.query(Payment)
+        .options(
+            selectinload(Payment.allocations).joinedload(PaymentAllocation.invoice)
+        )
+        .filter(Payment.customer_id == customer.id)
+        .filter(or_(Payment.is_voided.is_(False), Payment.is_voided.is_(None)))
+        .filter(Payment.date <= as_of_date)
+        .all()
+    )
+    memos = (
+        db.query(CreditMemo)
+        .filter(CreditMemo.customer_id == customer.id)
+        .filter(CreditMemo.status != CreditMemoStatus.VOID)
+        .filter(CreditMemo.date <= as_of_date)
+        .all()
+    )
+
+    def numbers(docs):
+        return ", ".join(f"#{d.invoice_number}" for d in docs if d is not None)
+
+    events = []
+    invoiced = Decimal(0)
+    for inv in invoices:
+        code = foreign(inv)
+        parts = [f"{code} {Decimal(str(inv.total or 0)):,.2f}"] if code else []
+        if inv.po_number:
+            parts.append(f"PO {inv.po_number}")
+        if inv.due_date:
+            parts.append(f"Due {inv.due_date.strftime('%b %d, %Y')}")
+        amount = home_amount(inv.total, inv.exchange_rate)
+        invoiced += amount
+        events.append(
+            (
+                inv.date,
+                0,
+                inv.id,
+                {
+                    "date": inv.date,
+                    "type": document_label(inv, words),
+                    "number": inv.invoice_number,
+                    "description": " · ".join(parts),
+                    "amount": amount,
+                    "currency": code or None,
+                },
+            )
+        )
+    received = Decimal(0)
+    for p in payments:
+        code = foreign(p)
+        applied = sum((Decimal(str(a.amount)) for a in p.allocations), Decimal(0))
+        left = Decimal(str(p.amount)) - applied
+        # What the payment took off A/R, in home currency, as its journal
+        # entry and any later apply did.
+        relieved = sum(
+            (
+                home_amount(
+                    a.amount, a.invoice.exchange_rate if a.invoice else p.exchange_rate
+                )
+                for a in p.allocations
+            ),
+            Decimal(0),
+        )
+        if left > 0:
+            relieved += home_amount(left, p.exchange_rate)
+        received += relieved
+        parts = [f"{code} {Decimal(str(p.amount)):,.2f}"] if code else []
+        if p.method:
+            parts.append(p.method)
+        paid = numbers(a.invoice for a in p.allocations)
+        if paid:
+            parts.append(f"applied to {paid}")
+        if left > 0:
+            left_text = f"{code} {left:,.2f}" if code else f"${left:,.2f}"
+            parts.append(
+                words.text(f"{left_text} not applied to an invoice yet")
+                if paid
+                else words.text("not applied to an invoice yet")
+            )
+        events.append(
+            (
+                p.date,
+                1,
+                p.id,
+                {
+                    "date": p.date,
+                    "type": "Payment",
+                    "number": p.check_number or p.reference or "",
+                    "description": " · ".join(parts),
+                    "amount": -relieved,
+                    "currency": code or None,
+                },
+            )
+        )
+    for cm in memos:
+        applied_to = numbers(a.invoice for a in cm.applications)
+        events.append(
+            (
+                cm.date,
+                2,
+                cm.id,
+                {
+                    "date": cm.date,
+                    "type": "Credit Memo",
+                    "number": cm.memo_number,
+                    "description": (
+                        f"applied to {applied_to}" if applied_to else "credit"
+                    ),
+                    "amount": -Decimal(str(cm.total or 0)),
+                    "currency": None,
+                },
+            )
+        )
+
+    events.sort(key=lambda e: e[:3])
+    running = Decimal(0)
+    lines = []
+    for *_, line in events:
+        running += line["amount"]
+        line["balance"] = running
+        lines.append(line)
+    return {
+        "lines": lines,
+        "total_invoiced": invoiced,
+        "total_payments": received,
+        "total_credits": sum((Decimal(str(m.total or 0)) for m in memos), Decimal(0)),
+        "balance_due": running,
+        "home_currency": home,
+        "has_foreign": any(line["currency"] for line in lines),
     }
 
 
@@ -231,24 +408,6 @@ def customer_statement_pdf(
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
-
-    invoices = (
-        db.query(Invoice)
-        .filter(Invoice.customer_id == customer_id)
-        .filter(Invoice.status != InvoiceStatus.VOID)
-        .filter(Invoice.date <= as_of_date)
-        .order_by(Invoice.date)
-        .all()
-    )
-
-    payments = (
-        db.query(Payment)
-        .filter(Payment.customer_id == customer_id)
-        .filter(Payment.is_voided.isnot(True))
-        .filter(Payment.date <= as_of_date)
-        .order_by(Payment.date)
-        .all()
-    )
 
     company = get_settings(db)
     pdf_bytes = generate_statement_pdf(
@@ -312,23 +471,6 @@ def batch_email_statements(db: Session = Depends(get_db)):
 
         ok = False
         try:
-            payments = (
-                db.query(Payment)
-                .filter(Payment.customer_id == cid)
-                .filter(Payment.is_voided.isnot(True))
-                .filter(Payment.date <= as_of_date)
-                .order_by(Payment.date)
-                .all()
-            )
-            all_invoices = (
-                db.query(Invoice)
-                .filter(Invoice.customer_id == cid)
-                .filter(Invoice.status != InvoiceStatus.VOID)
-                .filter(Invoice.date <= as_of_date)
-                .order_by(Invoice.date)
-                .all()
-            )
-
             pdf_bytes = generate_statement_pdf(
                 customer,
                 statement_activity(db, customer, as_of_date),
@@ -339,8 +481,12 @@ def batch_email_statements(db: Session = Depends(get_db)):
             ok = send_email(
                 db=db,
                 to_email=customer.email,
-                subject=f"Account Statement — {settings.get('company_name', 'Our Company')}",
-                html_body=f"<p>Dear {escape(customer.name)},</p><p>Please find your account statement attached.</p><p>{escape(settings.get('company_name') or '')}</p>",
+                subject=f"Account Statement — {company_name or 'Our Company'}",
+                html_body=(
+                    f"<p>Dear {html.escape(customer.name)},</p>"
+                    "<p>Please find your account statement attached.</p>"
+                    f"<p>{html.escape(company_name)}</p>"
+                ),
                 attachment_bytes=pdf_bytes,
                 attachment_name=f"Statement_{customer.name}.pdf",
                 entity_type="statement",
@@ -404,7 +550,7 @@ def collection_letters(data: CollectionLetterRequest, db: Session = Depends(get_
         for inv in invs:
             inv.days_overdue = (today - inv.due_date).days if inv.due_date else 0
 
-        total_due = sum((inv.balance_due for inv in invs), Decimal("0"))
+        total_due = sum(float(inv.balance_due) for inv in invs)
 
         try:
             pdf_bytes = generate_collection_letter_pdf(
@@ -426,7 +572,7 @@ def collection_letters(data: CollectionLetterRequest, db: Session = Depends(get_
                     db=db,
                     to_email=customer.email,
                     subject=f"{type_labels.get(letter_type, 'Collection Notice')} — {settings.get('company_name', '')}",
-                    html_body=f"<p>Dear {escape(customer.name)},</p><p>Please see the attached collection notice regarding your outstanding balance of ${total_due:,.2f}.</p>",
+                    html_body=f"<p>Dear {html.escape(customer.name)},</p><p>Please see the attached collection notice regarding your outstanding balance of ${total_due:,.2f}.</p>",
                     attachment_bytes=pdf_bytes,
                     attachment_name=f"Collection_{letter_type}day_{customer.name}.pdf",
                     entity_type="collection",

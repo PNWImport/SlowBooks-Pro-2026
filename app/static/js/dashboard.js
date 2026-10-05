@@ -185,7 +185,7 @@ const DashboardPage = {
         },
         bank_balances(d) {
             if (!d.accounts.length) return '<div style="color:var(--gray-500);font-size:12px">No bank accounts yet. <a href="#/banking">Add one</a>.</div>';
-            return `<div class="card-grid" style="margin:0">${d.accounts.map(b => `<div class="card" style="cursor:pointer" onclick="App.navigate('#/banking/${b.id}')">
+            return `<div class="card-grid" style="margin:0">${d.accounts.map(b => `<div class="card" style="cursor:pointer" onclick="BankingPage.go('#/banking/${b.id}')">
                 <div class="card-header">${escapeHtml(b.name)}${b.kind === 'credit_card' ? ' <span style="font-size:10px;color:var(--gray-400)">owed</span>' : ''}</div><div class="card-value">${formatCurrency(b.balance)}</div></div>`).join('')}</div>`;
         },
         ar_aging(d) {
@@ -244,20 +244,6 @@ const DashboardPage = {
                 <div style="display:flex;align-items:flex-end;gap:4px;height:70px;margin-top:8px">${bars}</div>
                 <div style="font-size:10px;color:var(--gray-500);margin-top:2px">cumulative net by month · <a href="#/reports">Full ${T('P&L')}</a></div>`;
         },
-        pnl_ytd(d) {
-            const max = Math.max(...d.months.map(m => Math.abs(m.cumulative)), 1);
-            const bars = d.months.map(m => `<div style="flex:1;text-align:center;height:100%;display:flex;flex-direction:column;justify-content:flex-end" title="${m.month} cumulative: ${formatCurrency(m.cumulative)}">
-                <div style="width:80%;margin:0 auto;background:${m.cumulative < 0 ? '#a4242b' : 'var(--qb-blue)'};height:${Math.max(2, Math.abs(m.cumulative) / max * 100)}%;border-radius:2px 2px 0 0"></div>
-                <div style="font-size:9px;color:var(--gray-500);margin-top:2px">${m.month}</div></div>`).join('');
-            return `<div class="card-value" style="color:${d.net < 0 ? '#a4242b' : '#1f7a36'}">${formatCurrency(d.net)}</div>
-                <div style="font-size:11px;color:var(--gray-500);margin-bottom:6px">net · ${d.year} year to date</div>
-                <table class="data-table" style="font-size:12px"><tbody>
-                    <tr><td>${T('Income')}</td><td class="amount">${formatCurrency(d.income)}</td></tr>
-                    <tr><td>Expenses</td><td class="amount">${formatCurrency(d.expenses)}</td></tr>
-                </tbody></table>
-                <div style="display:flex;align-items:flex-end;gap:4px;height:70px;margin-top:8px">${bars}</div>
-                <div style="font-size:10px;color:var(--gray-500);margin-top:2px">cumulative net by month · <a href="#/reports">Full ${T('P&L')}</a></div>`;
-        },
         cash_position(d) {
             return `<div class="card-value">${formatCurrency(d.cash)}</div>
                 <div style="font-size:11px;color:var(--gray-500)">in the bank today</div>
@@ -296,8 +282,8 @@ const DashboardPage = {
             const chip = c => `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${c};vertical-align:middle"></span>`;
             return `<div style="display:flex;gap:16px;font-size:11px;margin-bottom:4px;flex-wrap:wrap">
                     <span>${chip('var(--qb-blue)')} Assets ${formatCurrency(last.assets)}</span>
-                    <span>${chip('#ff6b6b')} Liabilities ${formatCurrency(last.liabilities)}</span>
-                    <span>${chip('#00c48f')} ${T('Equity')} ${formatCurrency(last.equity)}</span>
+                    <span>${chip('var(--chart-red)')} Liabilities ${formatCurrency(last.liabilities)}</span>
+                    <span>${chip('var(--chart-green)')} ${T('Equity')} ${formatCurrency(last.equity)}</span>
                 </div>
                 <div style="position:relative;height:150px"><canvas id="chart-bs-trend"></canvas></div>
                 <div style="font-size:10px;color:var(--gray-500);margin-top:2px">Month-end balances, last 12 months (this month to date) · <a href="#/reports">Full ${T('Balance Sheet')}</a></div>`;
@@ -328,8 +314,8 @@ const DashboardPage = {
                 labels,
                 datasets: [
                     { label: 'Assets', data: d.months.map(m => m.assets), borderColor: blue, backgroundColor: 'transparent', tension: 0.3, pointRadius: 2, borderWidth: 2 },
-                    { label: 'Liabilities', data: d.months.map(m => m.liabilities), borderColor: '#ff6b6b', backgroundColor: 'transparent', tension: 0.3, pointRadius: 2, borderWidth: 2 },
-                    { label: T('Equity'), data: d.months.map(m => m.equity), borderColor: '#00c48f', backgroundColor: 'transparent', tension: 0.3, pointRadius: 2, borderWidth: 2 },
+                    { label: 'Liabilities', data: d.months.map(m => m.liabilities), borderColor: chartColor('red'), backgroundColor: 'transparent', tension: 0.3, pointRadius: 2, borderWidth: 2 },
+                    { label: T('Equity'), data: d.months.map(m => m.equity), borderColor: chartColor('green'), backgroundColor: 'transparent', tension: 0.3, pointRadius: 2, borderWidth: 2 },
                 ],
             },
             options: {

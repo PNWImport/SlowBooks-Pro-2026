@@ -14,14 +14,21 @@ const App = {
         '/vendors':       { page: 'vendors',         label: 'Vendor Center',      render: () => VendorsPage.render() },
         '/items':         { page: 'items',           label: 'Item List',          render: () => ItemsPage.render() },
         '/invoices':      { page: 'invoices',        label: 'Create Invoices',    render: () => InvoicesPage.render() },
-        '/invoices/:id':  { page: 'invoices',        label: 'Invoice',            render: (id) => App.renderDocument(InvoicesPage, id) },
+        // A posting's own address (#/invoices/12, #/deposits/31): the bank
+        // register and the report drill-downs link each line to the document
+        // behind it (app/services/bank_register.py source_link), and every
+        // link but a vendor credit's said "Page not found" (explore 2.17.3).
+        // The document opens over its list (App.withDocument); a card charge
+        // or a transfer opens as its journal entry.
+        '/invoices/:id':      { page: 'invoices',   label: 'Invoice',       render: (id) => App.withDocument(() => InvoicesPage.render(), () => InvoicesPage.view(id)) },
         '/sales-receipts': { page: 'sales-receipts', label: 'Enter Sales Receipts', render: () => SalesReceiptsPage.render() },
         '/in-kind-gifts': { page: 'in-kind-gifts',   label: 'In-Kind Gifts',      nonprofit: true, render: () => InKindPage.render() },
         '/estimates':     { page: 'estimates',       label: 'Create Estimates',   render: () => EstimatesPage.render() },
         '/payments':      { page: 'payments',        label: 'Receive Payments',   render: () => PaymentsPage.render() },
-        '/payments/:id':  { page: 'payments',        label: 'Payment',            render: (id) => App.renderDocument(PaymentsPage, id) },
+        '/payments/:id':      { page: 'payments',   label: 'Payment',       render: (id) => App.withDocument(() => PaymentsPage.render(), () => PaymentsPage.view(id)) },
         '/banking':       { page: 'banking',         label: 'Banking',            render: () => BankingPage.render() },
         '/banking/:id':   { page: 'banking',         label: 'Register',           render: (id) => BankingPage.renderRegister(id) },
+        '/banking/transfers/:id': { page: 'banking', label: 'Transfer',     render: (id) => App.withDocument(() => BankingPage.render(), () => JournalPage.view(id)) },
         '/accounts':      { page: 'accounts',        label: 'Chart of Accounts',  render: () => App.renderAccounts() },
         '/reports':       { page: 'reports',         label: 'Report Center',      render: () => ReportsPage.render() },
         '/settings':      { page: 'settings',        label: 'Company Settings',   render: () => SettingsPage.render() },
@@ -32,10 +39,11 @@ const App = {
         // Phase 2: Accounts Payable
         '/purchase-orders': { page: 'purchase-orders', label: 'Purchase Orders',  render: () => PurchaseOrdersPage.render() },
         '/bills':         { page: 'bills',           label: 'Bills',              render: () => BillsPage.render() },
-        '/bills/:id':     { page: 'bills',           label: 'Bill',               render: (id) => App.renderDocument(BillsPage, id) },
+        '/bills/:id':         { page: 'bills',      label: 'Bill',          render: (id) => App.withDocument(() => BillsPage.render(), () => BillsPage.view(id)) },
+        '/bill-payments/:id': { page: 'bills',      label: 'Bill Payment',  render: (id) => App.withDocument(() => BillsPage.render(), () => BillsPage.viewPayment(id)) },
         '/credit-memos':  { page: 'credit-memos',    label: 'Credit Memos',       render: () => CreditMemosPage.render() },
-        '/vendor-credits': { page: 'vendor-credits', label: 'Vendor Credits', render: () => VendorCreditsPage.render() },
-        '/vendor-credits/:id': { page: 'vendor-credits', label: 'Vendor Credit', render: (id) => VendorCreditsPage.view(id) },
+        '/vendor-credits':{ page: 'vendor-credits',  label: 'Vendor Credits',     render: () => VendorCreditsPage.render() },
+        '/vendor-credits/:id': { page: 'vendor-credits', label: 'Vendor Credit',  render: (id) => VendorCreditsPage.view(id) },
         // Phase 3: Productivity
         '/recurring':     { page: 'recurring',       label: 'Recurring Invoices', render: () => RecurringPage.render() },
         '/batch-payments': { page: 'batch-payments', label: 'Batch Payments',     render: () => BatchPaymentsPage.render() },
@@ -61,10 +69,12 @@ const App = {
         '/analytics':     { page: 'analytics',       label: 'Analytics & AI',     render: () => AnalyticsPage.render() },
         // Phase 9: Forum Bug Fixes & Missing Features
         '/journal':       { page: 'journal',         label: 'Journal Entries',    render: () => JournalPage.render() },
-        '/journal/:id':   { page: 'journal',         label: 'Journal Entry',      render: (id) => App.renderDocument(JournalPage, id) },
+        '/journal/:id':       { page: 'journal',    label: 'Journal Entry', render: (id) => App.withDocument(() => JournalPage.render(), () => JournalPage.view(id)) },
         '/deposits':      { page: 'deposits',        label: 'Make Deposits',      render: () => DepositsPage.render() },
+        '/deposits/:id':      { page: 'deposits',   label: 'Deposit',       render: (id) => App.withDocument(() => DepositsPage.render(), () => DepositsPage.view(id)) },
         // The Check Register page is the Banking register now (2.10); old bookmarks land there.
-        '/check-register': { page: 'banking',         label: 'Banking',            render: () => BankingPage.render() },
+        // (replaceState: Back from Banking must not land on the alias, which would send it forward again)
+        '/check-register': { page: 'banking',         label: 'Banking',            render: () => { history.replaceState(null, '', '#/banking'); App.navigate('#/banking'); return ''; } },
         '/cc-charges':    { page: 'cc-charges',      label: 'CC Charges',         render: () => CCChargesPage.render() },
         '/cc-charges/:id':    { page: 'cc-charges', label: 'CC Charge',     render: (id) => App.withDocument(() => CCChargesPage.render(), () => JournalPage.view(id)) },
         '/expenses':      { page: 'expenses',        label: 'Enter Expenses',     render: () => ExpensesPage.render() },
@@ -72,27 +82,6 @@ const App = {
         // Phase 10: Quick Wins + Medium Effort Features
         '/budgets':       { page: 'budgets',         label: 'Budget vs Actual',   render: () => BudgetsPage.render() },
         '/bank-rules':    { page: 'bank-rules',      label: 'Bank Rules',         render: () => BankRulesPage.render() },
-        // Compliance: the document hash chain, its checkpoints, and off-box
-        // artifact verification (docs/hipaa-compliance.md § 164.312(c)(1)).
-        '/compliance':    { page: 'compliance',      label: 'Compliance',         render: () => CompliancePage.render() },
-        // Benefits: plans, enrollment, dependents, COBRA, ACA 1095/1094.
-        '/hr/benefit-coverage':   { page: 'hr-benefit-coverage', label: 'Benefit Coverage', render: () => BenefitCoveragePage.render() },
-        // Contractor pay runs: batch contractor payments, JE, NACHA export.
-        '/payroll/contractors': { page: 'payroll-contractors', label: 'Contractor Runs', render: () => ContractorRunsPage.render() },
-        // Garnishment remittance register: withheld money owed to agencies.
-        '/payroll/remittances': { page: 'payroll-remittances', label: 'Garnishment Remittances', render: () => GarnishmentRemittancesPage.render() },
-        // Pay schedules: frequency + anchor + preview upcoming dates.
-        '/payroll/schedules': { page: 'payroll-schedules', label: 'Pay Schedules', render: () => PaySchedulesPage.render() },
-        // Work locations: multi-site jurisdiction management.
-        '/payroll/locations': { page: 'payroll-locations', label: 'Work Locations', render: () => LocationsPage.render() },
-        // HR team views: org chart, PTO calendar, performance reviews.
-        '/hr/team': { page: 'hr-team', label: 'HR Team', render: () => HRViewsPage.render() },
-        // Tax deposit calendar: depositor classification + due dates.
-        '/payroll/deposit-calendar': { page: 'payroll-deposit-calendar', label: 'Deposit Calendar', render: () => DepositCalendarPage.render() },
-        // Workers' comp: class rates + premium-audit report.
-        '/payroll/workers-comp': { page: 'payroll-workers-comp', label: 'Workers Comp', render: () => WorkersCompPage.render() },
-        // Payroll report library: journal, deduction register, contractor payments.
-        '/payroll/reports': { page: 'payroll-reports', label: 'Payroll Reports', render: () => PayrollReportsPage.render() },
         '/fixed-assets':  { page: 'fixed-assets',    label: 'Fixed Assets',       render: () => FixedAssetsPage.render() },
         '/migrate':       { page: 'migrate',         label: 'Migrate Data',       render: () => MigrationPage.render() },
         '/xero-import':   { page: 'migrate',         label: 'Migrate Data',       render: () => MigrationPage.render('xero') },
@@ -100,10 +89,15 @@ const App = {
         '/opening-balances': { page: 'opening-balances', label: 'Opening Balances', render: () => OpeningBalancesPage.render() },
     },
 
-    async renderDocument(page, id) {
-        if (!/^[1-9]\d*$/.test(String(id))) throw new Error('Invalid document ID');
-        const html = await page.render();
-        await page.view(id);
+    // A document over its list: the list is the page, and the document opens
+    // in the dialog once the page is in place. One that cannot be opened
+    // (gone since the link was made) says so over the list.
+    async withDocument(list, open) {
+        const html = await list();
+        setTimeout(() => {
+            Promise.resolve().then(open)
+                .catch(err => toast(err.message || 'Could not open this document', 'error'));
+        }, 0);
         return html;
     },
 
@@ -507,7 +501,7 @@ const App = {
                 <h2>Chart of Accounts</h2>
                 <div>
                     ${inactiveCount ? `<button class="btn btn-sm btn-secondary" onclick="App.toggleInactiveAccounts()">${App._showInactiveAccounts ? 'Hide' : 'Show'} ${inactiveCount} inactive</button> ` : ''}
-                    <button class="btn btn-secondary" onclick="App.showChartImport()">Import…</button>
+                    <button class="btn btn-secondary" data-write onclick="App.showChartImport()">Import…</button>
                     <button class="btn btn-primary" onclick="App.showAccountForm()">New Account</button>
                 </div>
             </div>
@@ -521,7 +515,7 @@ const App = {
             html += `<tr style="background:linear-gradient(180deg, #e8ecf2 0%, #dde2ea 100%);"><td colspan="5" style="font-weight:700; color:var(--qb-navy); font-size:11px; padding:4px 10px;">${typeNames[type]}</td></tr>`;
             for (const a of accts) {
                 const inactive = a.is_active === false;
-                html += `<tr${inactive ? ' style="opacity:.55;"' : ''}>
+                html += `<tr${inactive ? ' class="row--dim"' : ''}>
                     <td style="font-family:var(--font-mono);">${escapeHtml(a.account_number || '')}</td>
                     <td><strong>${escapeHtml(a.name)}</strong>${a.is_control ? ` <span class="badge-control" title="${escapeHtml(a.control_purpose || 'the software finds this account by its number')}">control</span>` : ''}${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}</td>
                     <td>${a.account_type}</td>
@@ -529,9 +523,9 @@ const App = {
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="App.showAccountForm(${a.id})">Edit</button>
                         ${inactive
-                            ? `<button class="btn btn-sm btn-secondary" onclick="App.setAccountActive(${a.id}, true)">Reactivate</button>`
-                            : `<button class="btn btn-sm btn-secondary" onclick="App.setAccountActive(${a.id}, false)">Deactivate</button>`}
-                        ${a.is_control ? '' : `<button class="btn btn-sm btn-secondary" onclick="App.deleteAccount(${a.id})">Delete</button>`}
+                            ? `<button class="btn btn-sm btn-secondary" data-write onclick="App.setAccountActive(${a.id}, true)">Reactivate</button>`
+                            : `<button class="btn btn-sm btn-secondary" data-write onclick="App.setAccountActive(${a.id}, false)">Deactivate</button>`}
+                        ${a.is_control ? '' : `<button class="btn btn-sm btn-secondary" data-write onclick="App.deleteAccount(${a.id})">Delete</button>`}
                     </td>
                 </tr>`;
             }
@@ -549,6 +543,10 @@ const App = {
         // number and the type are fixed and the API refuses to change them (400).
         // Renaming is allowed and is the point — say so instead of hiding the form.
         const locked = !!acct.is_control;
+        // A number is required (digits; 6150.1 or 6150-01 for a sub-account),
+        // except on an account an importer brought in without one, which can
+        // still be renamed.
+        const numberRequired = !locked && (!id || !!acct.account_number);
         const lockNote = locked
             ? `<div class="form-group full-width"><div class="hint hint--locked">
                    <strong>${escapeHtml(acct.account_number || '')} ${escapeHtml(acct.name)} is a control account.</strong>
@@ -561,8 +559,10 @@ const App = {
             <form onsubmit="App.saveAccount(event, ${id})">
                 <div class="form-grid">
                     ${lockNote}
-                    <div class="form-group"><label>Account Number</label>
-                        <input name="account_number" value="${escapeHtml(acct.account_number || '')}"${locked ? ' readonly disabled' : ''}></div>
+                    <div class="form-group"><label>Account Number${numberRequired ? ' *' : ''}</label>
+                        <input name="account_number" value="${escapeHtml(acct.account_number || '')}"${locked ? ' readonly disabled' : ''}
+                            ${numberRequired ? 'required' : ''} pattern="\\d+([.\\-]\\d+)*" maxlength="20" placeholder="e.g. 6150"
+                            title="Digits, like 6150. A sub-account can use 6150.1 or 6150-01."></div>
                     <div class="form-group"><label>Name *</label>
                         <input name="name" required value="${escapeHtml(acct.name)}"></div>
                     <div class="form-group"><label>Type *</label>
@@ -596,12 +596,10 @@ const App = {
                     with the columns and a few example rows.
                 </p>
                 <div class="form-group"><label>File</label>
-                    <input type="file" name="file" accept=".csv,.txt,.journal" required
-                        onchange="App.invalidateChartImportPreview()"></div>
+                    <input type="file" name="file" accept=".csv,.txt,.journal" required></div>
                 <div class="form-group">
                     <label style="display:flex; gap:8px; align-items:flex-start; font-weight:normal;">
-                        <input type="checkbox" name="replace" style="margin-top:2px;"
-                            onchange="App.invalidateChartImportPreview()">
+                        <input type="checkbox" name="replace" style="margin-top:2px;">
                         <span>Replace the seeded chart: deactivate every account the file does not name
                         that has never been used. Control accounts and accounts with history stay.</span>
                     </label>
@@ -616,40 +614,24 @@ const App = {
             </form>`);
     },
 
-    invalidateChartImportPreview() {
-        App._chartImportPreview = null;
-        const apply = $('#chart-import-apply');
-        if (apply) apply.hidden = true;
-    },
-
-    async _postChartImport(form, dryRun, planHash = null) {
+    async _postChartImport(form, dryRun) {
         const fd = new FormData();
         fd.append('file', form.file.files[0]);
         const replace = form.replace.checked ? 1 : 0;
-        const hashQuery = planHash ? `&plan_hash=${encodeURIComponent(planHash)}` : '';
-        const resp = await fetch(`/api/csv/import/accounts?dry_run=${dryRun ? 1 : 0}&replace=${replace}${hashQuery}`,
+        const resp = await fetch(`/api/csv/import/accounts?dry_run=${dryRun ? 1 : 0}&replace=${replace}`,
             { method: 'POST', body: fd, headers: { 'X-Slowbooks-Desktop': '1' } });
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(data.detail || 'Import failed');
-        return data;
+        if (!resp.ok) throw new Error(await API.responseError(resp, 'Import failed'));
+        return resp.json();
     },
 
     async previewChartImport(e) {
         e.preventDefault();
         const form = e.target;
         App._chartImportForm = form;
-        const file = form.file.files[0];
-        const replace = form.replace.checked;
-        const requestId = (App._chartImportRequestId || 0) + 1;
-        App._chartImportRequestId = requestId;
-        App.invalidateChartImportPreview();
         const box = $('#chart-import-preview');
         box.innerHTML = '<p class="hint">Reading the file…</p>';
         try {
             const plan = await App._postChartImport(form, true);
-            if (requestId !== App._chartImportRequestId ||
-                form.file.files[0] !== file || form.replace.checked !== replace) return;
-            App._chartImportPreview = { form, file, replace, planHash: plan.plan_hash };
             const label = { create: 'Create', update: 'Update', skip: 'Skip', deactivate: 'Deactivate', keep: 'Keep', error: 'Error' };
             const rows = plan.rows.map(r => `<tr>
                 <td>${label[r.action] || r.action}</td>
@@ -669,7 +651,7 @@ const App = {
                     <thead><tr><th scope="col">Action</th><th scope="col">Number</th><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Detail</th></tr></thead>
                     <tbody>${rows}</tbody></table></div>`;
             const apply = $('#chart-import-apply');
-            apply.hidden = writes === 0 || plan.errors.length > 0 || plan.row_errors > 0;
+            apply.hidden = writes === 0;
             apply.textContent = `Import ${writes} change${writes === 1 ? '' : 's'}`;
         } catch (err) {
             box.innerHTML = `<p style="color:var(--danger);">${escapeHtml(err.message)}</p>`;
@@ -678,17 +660,10 @@ const App = {
     },
 
     async applyChartImport() {
-        const preview = App._chartImportPreview;
         const form = App._chartImportForm;
-        if (!preview || !form || preview.form !== form ||
-            form.file.files[0] !== preview.file || form.replace.checked !== preview.replace) {
-            App.invalidateChartImportPreview();
-            toast('The file or options changed — preview the import again', 'error');
-            return;
-        }
+        if (!form) return;
         try {
-            const done = await App._postChartImport(form, false, preview.planHash);
-            if (done.dry_run) throw new Error('The import plan has errors — preview and correct the file');
+            const done = await App._postChartImport(form, false);
             closeModal();
             toast(`Chart imported: ${done.created} created, ${done.updated} updated${done.replace ? `, ${done.deactivated} deactivated` : ''}`);
             App.navigate('#/accounts');
@@ -849,10 +824,10 @@ const App = {
             // The chart import is a dry run by default; this page applies directly.
             const query = entity === 'accounts' ? '?dry_run=0' : '';
             const resp = await fetch(`/api/csv/import/${entity}${query}`, { method: 'POST', body: formData });
+            if (!resp.ok) throw new Error(await API.responseError(resp, 'Import failed'));
             const data = await resp.json();
-            if (!resp.ok) throw new Error(data.detail || 'Import failed');
             const n = data.created ?? data.imported ?? 0;
-            let html = `<div style="color:var(--success); font-size:11px;">Imported ${n} ${entity === 'accounts' ? 'accounts' : entity}${data.updated ? `, updated ${data.updated}` : ''}${data.skipped ? `, ${data.skipped} already there` : ''}.</div>`;
+            let html = `<div style="color:var(--text-success); font-size:11px;">Imported ${n} ${entity === 'accounts' ? 'accounts' : entity}${data.updated ? `, updated ${data.updated}` : ''}${data.skipped ? `, ${data.skipped} already there` : ''}.</div>`;
             if (data.errors && data.errors.length > 0) {
                 html += `<div style="color:var(--danger); font-size:11px; margin-top:6px;">Errors:<br>${data.errors.map(e => escapeHtml(e)).join('<br>')}</div>`;
             }
@@ -1043,13 +1018,11 @@ const App = {
     // served raw, so the sidebar and toolbar arrive as business-worded
     // HTML; this runs once at boot, before the first page renders.
     // Sidebar entries the server serves to admins only (app.main RBAC).
-    ADMIN_ONLY_PAGES: [
-        'employees', 'payroll', 'hr-onboarding', 'hr-benefits', 'hr-deductions',
-        'hr-tax-forms', 'users', 'hr-benefit-coverage', 'payroll-contractors',
-        'payroll-remittances', 'payroll-schedules', 'payroll-locations', 'hr-team',
-        'payroll-deposit-calendar', 'payroll-workers-comp', 'payroll-reports',
-        'compliance', 'audit',
-    ],
+    // Migrate Data too: its dry run and its import are refused to every
+    // other role, so a bookkeeper had a page on which nothing worked.
+    ADMIN_ONLY_PAGES: ['employees', 'payroll', 'hr-onboarding', 'hr-benefits', 'hr-deductions', 'hr-tax-forms', 'users', 'migrate'],
+    // Pages the server refuses a read-only sign-in, reads included.
+    NOT_FOR_READONLY_PAGES: ['audit'],
 
     applyTerminology() {
         for (const r of Object.values(App.routes)) r.label = T(r.label);
@@ -1116,7 +1089,7 @@ const App = {
             }
         });
 
-        // Start clock — refresh once a minute
+        // Start clock — ticks once a second
         App.updateClock();
         setInterval(App.updateClock, 60000);
 

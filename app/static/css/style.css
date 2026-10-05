@@ -44,8 +44,38 @@
        Measured: 12.6:1 here, 7.2:1 in dark. (macbase1, 2.10.3 gate) */
     --text-link:      #003366;
     --text-success:   #166534;   /* 7.13:1 on white */
-    --qb-teal:        #669999;
-    --qb-green:       #339966;
+    /* Chart colours: a chart's lines, bars and keys are graphics, 3:1 on the
+       card (WCAG 1.4.11); every one here clears it on white. */
+    --chart-green: #0a9a6c;
+    --chart-red: #e5484d;
+    --chart-orange: #d9730d;
+    --chart-amber: #cc6a0a;
+    --chart-crimson: #d63240;
+    --chart-blue: #4c6ef5;
+    --chart-purple: #8b5cf6;
+    --chart-pink: #c026d3;
+    --chart-sky: #0b8bc4;
+    --chart-yellow: #b08900;
+    /* The A/R aging bands, for the bar and the key beside each label, so
+       the two stay matched. A key is a graphic: 3:1 on the card (WCAG
+       1.4.11). Gold #cc9933 was 2.57 and orange #f97316 2.80 (macbase1
+       NEW-11); these are 3.13 and 3.11. */
+    --aging-current:  var(--success);   /* 3.57 */
+    --aging-30:       #b88a2e;
+    --aging-60:       #f36706;
+    --aging-90:       var(--danger);    /* 5.14 */
+    /* Red and amber for words, as --text-success is green for them: the
+       pages wrote #a4242b, #c0392b, #a8761f and #b45309 in by hand, which
+       the dark theme could not change (2.22:1 and 4.09 there) */
+    --text-danger:    #a4242b;   /* 7.33:1 on white, 6.41 on a pale red note */
+    --text-warning:   #92400e;   /* 7.09:1 on white */
+    /* Only the sidebar's section headings use it, on the navy: #669999 was
+       3.95:1 there, this is 4.57 (macOS gate's contrast sweep, 2.18.0) */
+    --qb-teal:        #76a4a4;
+    /* Green and orange are text (report amounts, import results) and the
+       success toast's ground: #339966 was 3.57:1 on white and #cc6633 3.81;
+       these are 4.86 and 4.82, and 4.6 on a table's striped row */
+    --qb-green:       #2b8055;
     --qb-green-dark:  #2d7d56;
     --qb-gold:        #cc9933;
     --qb-red:         #cc3333;
@@ -320,9 +350,10 @@ body {
     padding: 8px 14px;
     border-top: 1px solid rgba(255,255,255,0.08);
     font-size: 9px;
-    /* 0.25 alpha measured 2.53:1 against the sidebar. 0.50 is 5.24:1 —
-       still clearly secondary, now legible. */
-    color: rgba(255,255,255,0.50);
+    /* 0.25 alpha measured 2.53:1 against the sidebar, and 0.50 is 4.28 at
+       the top of the sidebar's navy (5.06 where the footer sits): 0.60 is
+       5.47 at the top. Still clearly secondary. */
+    color: rgba(255,255,255,0.60);
     text-align: center;
     user-select: none;
 }
@@ -331,7 +362,8 @@ body {
     display: block;
     margin-bottom: 4px;
     font-size: 10px;
-    color: inherit;
+    /* 0.35 was 3.13:1 (skytech R3-1); 0.55 is 4.84 at the navy's top */
+    color: rgba(255,255,255,0.55);
     text-decoration: none;
 }
 
@@ -758,6 +790,10 @@ td.amount, th.amount {
 .badge-paid    { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
 .badge-recorded { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
 .badge-void    { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+/* issued / applied: the credit-document vocabulary. These existed in the
+   status enum from the day credit memos shipped and had no rule, so every
+   credit memo has been rendering an unstyled badge. Vendor credits use the
+   same words, so both are styled here. */
 .badge-issued  { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }
 .badge-applied { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
 .badge-pending { background: #fef3c7; color: #92400e; border: 1px solid #fbbf24; }
@@ -843,9 +879,30 @@ a:hover { text-decoration: underline; }
 .table-container--scroll {
     overflow-x: auto;
 }
-.table-container--scroll .line-items-table {
+/* Only the job cost entry's grid is wider than the dialog (its Bill? and
+   remove columns); the estimate's fits, and a floor on every scrolling grid
+   pushed its Amount column past the dialog's edge at 1280 wide (2.18.0 gate,
+   macbase1 NEW-12). */
+.table-container--scroll .line-items-table--wide {
     min-width: 1180px;
 }
+
+/* The pay-run view: when the table is wider than the window, the Employee
+   column stays put while the rest scrolls, so each row still says whose
+   pay it is. The dialog used to open scrolled to the first Stub PDF, with
+   the names out of sight (2.18.0 gate, macbase1 NEW-3). The cell needs a
+   ground of its own, or the scrolled columns show through it. */
+.pay-run-table th:first-child,
+.pay-run-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    white-space: nowrap;
+    box-shadow: inset -1px 0 0 var(--panel-border);
+}
+.pay-run-table td:first-child { background: var(--panel-bg); }
+.pay-run-table tbody tr:nth-child(even) td:first-child { background: #f7f9fb; }
+.pay-run-table tbody tr:hover td:first-child { background: #e8f0f8; }
 
 .modal-header {
     display: flex;
@@ -2305,9 +2362,144 @@ tr.clickable { cursor: pointer; }
 
 .hint--locked em { color: #92400e; font-style: normal; font-weight: 600; }
 
+/* Notes drawn as a tinted box: all clear, needs attention, a caution, a
+   plain step. They were inline backgrounds, which stayed pale in the dark
+   theme under its light text (1.14:1); dark.css gives each a dark tint. */
+.card.note--ok,
+.note--ok      { background: #eaf5ec; border-left: 4px solid #1f7a36; }
+.card.note--alert,
+.note--alert   { background: #fdecea; border-left: 4px solid #a4242b; }
+.card.note--caution,
+.note--caution { background: #fffbe6; border-left: 4px solid #f5a623; }
+.note--plain   { background: #f4f6f9; }
+
+/* A void or inactive row reads as set aside: its text takes the muted
+   colour. It used to fade the whole row (opacity .55-.6), which took the
+   text below AA: muted text at 2.4:1 in dark. Badges keep their own. */
+tbody tr.row--dim > td,
+tbody tr.row--dim > td strong,
+tbody tr.row--dim > td.amount { color: var(--text-muted); }
+
 .form-group input[disabled],
 .form-group select[disabled] {
     background: #f1f3f6;
     color: var(--text-muted, #6b7090);
     cursor: not-allowed;
+}
+
+/* ========================================================================
+ * TYPE-AHEAD PICKERS (combobox.js)
+ * A picker is a box you type into; its <select> stays, out of sight, as
+ * the answer. The list hangs from the window, over dialogs and tables.
+ * ======================================================================== */
+
+.cbx {
+    position: relative;
+    display: inline-block;
+    vertical-align: middle;
+    max-width: 100%;
+}
+.cbx.cbx--fill { display: block; width: 100%; }
+.cbx[hidden] { display: none !important; }
+
+/* The select is still there for the page's code (and a test's), but not
+   for the eye, the mouse or Tab. */
+.cbx > select.cbx-select {
+    position: absolute !important;
+    left: 0;
+    bottom: 0;
+    width: 1px !important;
+    height: 1px !important;
+    min-width: 0 !important;
+    max-width: 1px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    clip-path: inset(50%);
+}
+
+/* The box: like the app's other fields where no form styles it, and
+   everywhere a picker's arrow, so it still reads as a list. */
+.cbx-input {
+    padding: 3px 6px;
+    border: 1px solid var(--input-border);
+    border-radius: 0;
+    font-size: 11px;
+    font-family: var(--font);
+    color: var(--text-primary);
+    background-color: #ffffff;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0h8L4 5z' fill='%235b616d'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: right 6px center !important;
+    background-size: 8px 5px !important;
+    padding-right: 20px !important;
+}
+.cbx > .cbx-input {
+    width: 100%;
+    box-sizing: border-box;
+    text-overflow: ellipsis;
+}
+
+.cbx-popup {
+    position: fixed;
+    z-index: 450;   /* over a dialog (200) and a toast (300), under the splash */
+    display: flex;
+    flex-direction: column;
+    background: #ffffff;
+    color: var(--text-primary);
+    border: 1px solid var(--input-border);
+    box-shadow: 0 4px 14px rgba(0, 20, 50, 0.22);
+    font-family: var(--font);
+    font-size: 11px;
+}
+.cbx-popup[hidden] { display: none; }
+.cbx-popup > ul {
+    list-style: none;
+    margin: 0;
+    padding: 2px 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    min-height: 0;
+}
+.cbx-popup ul ul { list-style: none; margin: 0; padding: 0; }
+.cbx-opt {
+    padding: 3px 8px;
+    cursor: default;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.cbx-opt.cbx-current { font-weight: 700; }
+.cbx-opt mark { background: none; color: inherit; font-weight: 700; }
+.cbx-action { color: var(--text-link); }
+.cbx-in { color: var(--text-muted); font-size: 10px; }
+.cbx-opt[aria-selected="true"] { background: var(--qb-navy); color: #ffffff; }
+.cbx-opt[aria-selected="true"] .cbx-in { color: var(--text-on-navy); }
+.cbx-group {
+    display: block;
+    padding: 4px 6px 2px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+.cbx-note {
+    padding: 3px 8px 4px;
+    color: var(--text-muted);
+    font-style: italic;
+    border-top: 1px solid var(--panel-border);
+}
+.cbx-note[hidden] { display: none; }
+.cbx-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+@media (forced-colors: active) {
+    .cbx-opt[aria-selected="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
 }

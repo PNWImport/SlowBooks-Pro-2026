@@ -173,8 +173,6 @@ def _phone(number):
 
 
 # ============================================================================
-from app.services.safe_errors import safe_message
-
 # Export functions
 # ============================================================================
 
@@ -400,7 +398,7 @@ def export_items(db: Session) -> dict:
                 _item_fields(db, item),
             )
         except Exception as e:
-            errors.append(
+            result["errors"].append(
                 {
                     "entity": "item",
                     "id": item.id,
@@ -632,7 +630,7 @@ def export_invoices(db: Session) -> dict:
                 continue
             _send(db, client, counts, kind, inv.id, label, qbo_class, fields, notes)
         except Exception as e:
-            errors.append(
+            result["errors"].append(
                 {
                     "entity": "invoice",
                     "id": inv.id,
@@ -717,7 +715,7 @@ def export_payments(db: Session) -> dict:
                 continue
             _send(db, client, result, "payment", pmt.id, label, QBOPayment, fields)
         except Exception as e:
-            errors.append(
+            result["errors"].append(
                 {
                     "entity": "payment",
                     "id": pmt.id,

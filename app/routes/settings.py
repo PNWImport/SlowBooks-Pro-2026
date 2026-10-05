@@ -16,9 +16,12 @@ from app.models.settings import DEFAULT_SETTINGS
 from app.services.settings_service import (
     ENCRYPTED_SETTINGS_KEYS,
     SECRET_PLACEHOLDER,
+    SettingValueError,
+    clean_setting_value,
     get_all_settings,
     redact_secrets,
     set_setting,
+    unreadable_secret_keys,
 )
 
 # Aliases used by upstream Phase 9/10 routes that import from this module
@@ -235,9 +238,10 @@ def test_email(db: Session = Depends(get_db)):
     except HTTPException:
         # Don't let the catch-all below rewrite our own 502 into a 500.
         raise
-    except Exception as e:
-        from app.services.safe_errors import safe_message
-
+    except Exception:
+        # SMTP errors carry hostnames and server banners: log them, say only
+        # that it failed (the email log has the reason, as the 502 says).
+        logger.exception("Test email failed")
         raise HTTPException(
-            status_code=500, detail=f"Email failed: {safe_message(e, 'test email')}"
+            status_code=500, detail="Email failed — see the email log for the reason"
         )

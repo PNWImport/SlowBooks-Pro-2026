@@ -18,7 +18,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from intuitlib.exceptions import AuthClientError
 from requests.exceptions import RequestException
@@ -38,8 +38,6 @@ from app.services import qbo_import
 from app.services import qbo_ledger_import
 from app.services import qbo_export
 from app.services import qbo_import_runs
-
-logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +222,12 @@ def import_all(request: Request, db: Session = Depends(get_db)):
     if not qbo_service.is_connected(db):
         raise HTTPException(400, "Not connected to QuickBooks Online")
     try:
-        result = qbo_import.import_all(db)
+        with qbo_import_runs.synchronous_run(
+            db, qbo_import_runs.ENTITY_ORDER, db.info.get("acting_username", "operator")
+        ):
+            result = qbo_import.import_all(db)
+    except HTTPException:
+        raise
     except Exception:
         db.rollback()
         logger.exception("QBO import failed")
@@ -247,8 +250,13 @@ def import_entity(entity: str, request: Request, db: Session = Depends(get_db)):
         )
 
     try:
-        result = _IMPORT_ENTITY_MAP[entity](db)
-        db.commit()
+        with qbo_import_runs.synchronous_run(
+            db, [entity], db.info.get("acting_username", "operator")
+        ):
+            result = _IMPORT_ENTITY_MAP[entity](db)
+            db.commit()
+    except HTTPException:
+        raise
     except Exception:
         db.rollback()
         logger.exception("QBO import of %s failed", entity)

@@ -26,6 +26,8 @@ from app.routes.invoices.helpers import (
     _due_date_from_terms,
     _compute_totals,
     _post_invoice_journal,
+    kept_tax,
+    refuse_negative_lines,
     _reverse_and_delete_journal,
 )
 from app.services.donor_documents import document_label
@@ -199,7 +201,6 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
             detail="Could not assign a unique invoice number after several "
             "retries; please retry the request.",
         ) from last_err
-    face = document_label(invoice, words)
 
     for i, line_data in enumerate(data.lines):
         line = InvoiceLine(
@@ -260,7 +261,15 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
         raise HTTPException(status_code=400, detail="Cannot edit voided invoice")
     check_closing_date(db, invoice.date)
 
-    update_data = data.model_dump(exclude_unset=True, exclude={"lines"})
+    update_data = data.model_dump(
+        exclude_unset=True, exclude={"lines", "allow_zero_total"}
+    )
+    # Checked against the dates the invoice will have after this edit; a
+    # cleared due date is derived from the terms below, so it cannot be early.
+    refuse_due_before_date(
+        update_data.get("date") or invoice.date,
+        update_data.get("due_date", invoice.due_date),
+    )
     status_requested = "status" in update_data
     requested_status = update_data.pop("status", None)
     if status_requested and requested_status == InvoiceStatus.VOID:
@@ -292,7 +301,14 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
             db, currency, rate
         )
 
-    repost_fields = {"tax_rate", "currency", "exchange_rate", "class_id", "job_id"}
+    repost_fields = {
+        "tax_rate",
+        "currency",
+        "exchange_rate",
+        "class_id",
+        "job_id",
+        "customer_id",
+    }
     needs_recompute = data.lines is not None or any(
         key in update_data and update_data[key] != getattr(invoice, key)
         for key in repost_fields
@@ -300,6 +316,7 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
     if needs_recompute:
         # Validate the proposed total before changing headers, lines or journals.
         if data.lines is not None:
+            refuse_negative_lines(db, data.lines, invoice)
             customer = db.get(
                 Customer, update_data.get("customer_id", invoice.customer_id)
             )
@@ -307,13 +324,39 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
             effective_lines = data.lines
         else:
             effective_lines = list(invoice.lines)
+            new_customer_id = update_data.get("customer_id")
+            if new_customer_id not in (None, invoice.customer_id):
+                # A new customer without resending the lines: a non-taxable
+                # customer's exemption covers the stored lines too, as it
+                # does on create (found integrating the 2.17.3 fixes).
+                resolve_line_taxable(
+                    db, effective_lines, db.get(Customer, new_customer_id)
+                )
         tax_rate = data.tax_rate if data.tax_rate is not None else invoice.tax_rate
         subtotal, tax_amount, total = _compute_totals(effective_lines, tax_rate)
+        kept = kept_tax(invoice, tax_rate, effective_lines)
+        if kept is not None:
+            tax_amount, total = kept, _q(subtotal + kept)
+        confirm_zero_total(
+            total,
+            data.allow_zero_total,
+            document_label(invoice, terms_from_db(db)).lower(),
+        )
         if total < invoice.amount_paid:
             raise HTTPException(
                 status_code=400,
                 detail="Invoice total cannot be less than the amount already paid",
             )
+
+    # An invoice or sales receipt the QuickBooks Online import created
+    # becomes ours when its amounts or date change: the import's posting for
+    # it is reversed here, and it gets a posting of its own below, so A/R is
+    # never counted twice. An edit of its words alone leaves it as it is.
+    from app.services import qbo_documents
+
+    adopting = (needs_recompute or date_changed) and qbo_documents.adopt_invoice(
+        db, invoice
+    )
 
     if needs_recompute or date_changed:
         from sqlalchemy import and_, or_
@@ -428,6 +471,16 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
                 old_line_snapshot,
                 txn_date=invoice.date,
             )
+
+    if adopting:
+        txn = _post_invoice_journal(
+            db,
+            invoice,
+            list(invoice.lines),
+            invoice.customer.name if invoice.customer else "",
+            balance_on_income=True,
+        )
+        invoice.transaction_id = txn.id
 
     # One payment-derived decision for total edits and status-only requests.
     # Unpaid invoices retain the explicitly supported draft/sent lifecycle.

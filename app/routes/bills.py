@@ -181,9 +181,14 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
             detail=f"Bill number {bill_number!r} already exists for this vendor (bill #{dup.id})",
         )
 
-    due_date = data.due_date
-    if not due_date and data.terms:
-        due_date = _due_date_from_terms(data.date, data.terms)
+    # Terms the caller didn't send are the vendor's (Blue Heron is Net 15;
+    # Enter Bill used to make it Net 30 — macbase1 F11). The due date follows
+    # the terms by the same rule invoices use, so "Due on Receipt" is due the
+    # day of the bill rather than 30 days later.
+    terms = data.terms
+    if "terms" not in data.model_fields_set or not (terms or "").strip():
+        terms = vendor.terms or "Net 30"
+    due_date = data.due_date or _due_date_from_terms(data.date, terms)
 
     subtotal, tax_amount, total = compute_line_totals(data.lines, data.tax_rate)
     if total <= 0:

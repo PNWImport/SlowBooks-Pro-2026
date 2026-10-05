@@ -82,8 +82,12 @@
     const closeBtn = document.getElementById('modal-close-btn');
     if (closeBtn) closeBtn.addEventListener('click', () => typeof closeModal === 'function' && closeModal());
 
-    // Sign out returns the desktop shell to its company picker; browser
-    // installs return to this company's sign-in screen.
+    // Sign out — POSTs to /api/auth/logout, then goes back to where you
+    // choose: in the native desktop window, the company picker (the
+    // launcher stops this company's server and reloads the picker page);
+    // in a browser, the sign-in screen, which lists the users on a
+    // multi-user install. It used to reload the same company's password
+    // prompt, and the only way anywhere else was to quit the app.
     const logout = document.getElementById('logout-btn');
     if (logout) logout.addEventListener('click', async () => {
         if (!confirm('Sign out of Slowbooks?')) return;

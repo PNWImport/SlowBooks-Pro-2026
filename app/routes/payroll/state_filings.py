@@ -56,6 +56,7 @@ def generate_sui_report(
     return JSONResponse(content=_plain(data), status_code=200)
 
 
+@router.get("/forms/sui/{year}/{quarter}/pdf", response_class=Response)
 @router.post("/forms/sui/{year}/{quarter}/pdf", response_class=Response)
 def generate_sui_report_pdf(
     year: int,

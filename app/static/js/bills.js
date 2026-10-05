@@ -496,7 +496,7 @@ const BillsPage = {
     async showPayForm() {
         const [vendors, bills, accounts] = await Promise.all([
             API.get('/vendors?active_only=true'),
-            API.get('/bills?status=unpaid'),
+            fetchAllPages('/bills?open_only=true'),
             API.get('/accounts?bank=1&active_only=true'),
         ]);
         // every unpaid or part-paid bill, not just the newest page (#191)
@@ -575,6 +575,10 @@ const BillsPage = {
             toast('One check number cannot pay several vendors. Pay one vendor at a time, or leave Check # blank.', 'error');
             return;
         }
+        // Blank Pay From pays from 1000 Checking (the server's default).
+        const fromId = form.pay_from_account_id.value ? parseInt(form.pay_from_account_id.value) : null;
+        const outgoing = [...byVendor.values()].reduce((sum, v) => sum + v.total, 0);
+        if (!(await Overdraft.confirm(fromId, outgoing, '1000'))) return;
 
         const paid = [];
         try {
@@ -585,7 +589,7 @@ const BillsPage = {
                     amount: Math.round(v.total * 100) / 100,
                     method: form.method.value,
                     check_number: checkNumber,
-                    pay_from_account_id: form.pay_from_account_id.value ? parseInt(form.pay_from_account_id.value) : null,
+                    pay_from_account_id: fromId,
                     allocations: v.allocations,
                 });
                 paid.push(v.name);

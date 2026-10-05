@@ -11,12 +11,97 @@ from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.orm import Session
 
+from app.models.accounts import Account
+from app.models.invoices import InvoiceStatus
 from app.models.items import Item
 from app.services.accounting import (
     compute_line_totals,
     _q,
 )
 from app.services.terminology import document_reference
+
+ZERO_TOTAL_CODE = "zero_total"
+logger = logging.getLogger(__name__)
+
+
+def _zero_total_sentence(noun: str, action: str) -> str:
+    return (
+        f"This {noun} adds up to $0.00. Enter a rate on at least one line "
+        f"before {action}."
+    )
+
+
+def refuse_zero_total(total, noun: str = "invoice", action: str = "saving it") -> None:
+    """A sales document for nothing is refused before anything is written.
+
+    The credit memo and recurring forms filled no price when an item was
+    picked, so a $0.00 credit memo and a schedule that generated two $0.00
+    invoices (which then sat on the dashboard as overdue) were saved without
+    a word; an invoice with one blank line saved at $0.00 too (2.17.3
+    exploratory, both QA agents). `noun` is the document as the user calls
+    it ("invoice", "credit memo", "recurring pledge").
+
+    This strict form has no way past it: a recurring schedule for nothing
+    would bill $0.00 every period. A single document can be meant to be
+    free — see confirm_zero_total."""
+    if Decimal(str(total or 0)) <= 0:
+        raise HTTPException(status_code=400, detail=_zero_total_sentence(noun, action))
+
+
+def confirm_zero_total(
+    total,
+    allowed: bool,
+    noun: str = "invoice",
+    action: str = "saving it",
+    question: str | None = None,
+) -> None:
+    """An invoice or credit memo for nothing is saved only when the person
+    says it is meant to be: warranty work billed at no charge is a real
+    invoice, a form that filled in no price was the accident (both QA
+    reports: "refuse a zero-total document unless the user explicitly
+    allows it"). Unless the request carries ``allow_zero_total: true`` it
+    is refused with 409 and ``detail = {"code": "zero_total", "message",
+    "question"}``: the page asks the question ("This invoice adds up to
+    $0.00. Save it anyway?") and sends the same request again with the
+    flag. Nothing is written by the refused request."""
+    if allowed or Decimal(str(total or 0)) > 0:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": ZERO_TOTAL_CODE,
+            "message": _zero_total_sentence(noun, action),
+            "question": question or f"This {noun} adds up to $0.00. Save it anyway?",
+        },
+    )
+
+
+def opening_status(total) -> InvoiceStatus:
+    """What a new invoice starts as: a draft, unless it is for nothing —
+    then nothing is owed and it starts paid, as QuickBooks marks a $0.00
+    invoice. A $0.00 draft or sent invoice would otherwise count as overdue
+    on the dashboard once its due date passed, the harm the zero-total
+    refusal was added for."""
+    if Decimal(str(total or 0)) == 0:
+        return InvoiceStatus.PAID
+    return InvoiceStatus.DRAFT
+
+
+def _day(d: date) -> str:
+    return f"{d:%b} {d.day}, {d.year}"
+
+
+def refuse_due_before_date(doc_date: date | None, due_date: date | None) -> None:
+    """A due date before the invoice's own date was accepted and saved
+    (2.17.3 exploratory W-L4). An invoice cannot fall due before it exists."""
+    if doc_date and due_date and due_date < doc_date:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The due date ({_day(due_date)}) is before the invoice date "
+                f"({_day(doc_date)}). Pick a due date on or after the invoice date."
+            ),
+        )
 
 
 def _due_date_from_terms(base_date: date, terms: str | None) -> date:
@@ -184,9 +269,23 @@ def _build_invoice_journal_lines(
 
 
 def _post_invoice_journal(
-    db: Session, invoice, lines, customer_name, *, existing_transaction=None
+    db: Session,
+    invoice,
+    lines,
+    customer_name,
+    *,
+    existing_transaction=None,
+    balance_on_income=False,
 ):
-    """One construction/conversion/posting path for invoice create and edit."""
+    """One construction/conversion/posting path for invoice create and edit.
+
+    `balance_on_income` is for an invoice the QuickBooks Online import
+    created. Its discount and bundles come across as lines
+    (qbo_import._document_lines), so its lines add up to its total; a line
+    of a kind the import doesn't bring across still leaves a difference,
+    which the import log named. That difference posts to the income
+    account, said plainly on the entry and in the server log, so the entry
+    carries the total the invoice shows."""
     from app.services.accounting import (
         create_journal_entry,
         get_ar_account_id,
@@ -209,6 +308,29 @@ def _post_invoice_journal(
         invoice.invoice_number,
         face=face,
     )
+    if balance_on_income:
+        short = sum(line["debit"] for line in journal_lines) - sum(
+            line["credit"] for line in journal_lines
+        )
+        if short:
+            journal_lines.append(
+                {
+                    "account_id": get_default_income_account_id(db),
+                    "debit": -short if short < 0 else Decimal("0"),
+                    "credit": short if short > 0 else Decimal("0"),
+                    "description": "Part of the QuickBooks Online total on no "
+                    "line here",
+                }
+            )
+            logger.warning(
+                "%s %s from QuickBooks Online: its lines and tax come to %s and "
+                "its total to %s; the %s on no line was posted to income",
+                face,
+                invoice.invoice_number,
+                invoice.total - short,
+                invoice.total,
+                short,
+            )
     return create_journal_entry(
         db,
         invoice.date,

@@ -54,8 +54,8 @@ const TaxFormsPage = {
             </div>
 
             <div class="card" style="margin-bottom:16px;padding:16px">
-                <h3 id="taxforms-h-w-2-w-3">W-2 / W-3</h3>
-                <div class="form-grid" role="group" aria-labelledby="taxforms-h-w-2-w-3">
+                <h3>W-2 / W-3</h3>
+                <div class="form-grid">
                     <div class="form-group">
                         <label>Year</label>
                         <input id="w2-year" type="number" value="${currentYear}" min="2000" max="2099" style="width:100px">
@@ -73,8 +73,8 @@ const TaxFormsPage = {
             </div>
 
             <div class="card" style="margin-bottom:16px;padding:16px">
-                <h3 id="taxforms-h-form-940-futa">Form 940 (FUTA)</h3>
-                <div class="form-grid" role="group" aria-labelledby="taxforms-h-form-940-futa">
+                <h3>Form 940 (FUTA)</h3>
+                <div class="form-grid">
                     <div class="form-group">
                         <label>Year</label>
                         <input id="f940-year" type="number" value="${currentYear}" min="2000" max="2099" style="width:100px">
@@ -86,8 +86,8 @@ const TaxFormsPage = {
             </div>
 
             <div class="card" style="margin-bottom:16px;padding:16px">
-                <h3 id="taxforms-h-form-941-payroll-tax">Form 941 (Payroll Tax)</h3>
-                <div class="form-grid" role="group" aria-labelledby="taxforms-h-form-941-payroll-tax">
+                <h3>Form 941 (Payroll Tax)</h3>
+                <div class="form-grid">
                     <div class="form-group">
                         <label>Year</label>
                         <input id="f941-year" type="number" value="${currentYear}" min="2000" max="2099" style="width:100px">
@@ -134,6 +134,25 @@ const TaxFormsPage = {
             </div>
 
             <div class="card" style="margin-bottom:16px;padding:16px">
+                <h3 id="taxforms-h-1099-nec-1096-contractors">1099-NEC / 1096 (Contractors)</h3>
+                <p style="font-size:12px;color:var(--gray-500);margin:0 0 8px;">Vendors marked "1099 Vendor: Yes" with type NEC on the Vendors page. A 1099-NEC is required for anyone paid $600 or more in the year; the 1096 sends them to the IRS.</p>
+                <div class="form-grid" role="group" aria-labelledby="taxforms-h-1099-nec-1096-contractors">
+                    <div class="form-group">
+                        <label>Year</label>
+                        <input id="f1099-year" type="number" value="${currentYear}" min="2000" max="2099" style="width:100px" onchange="TaxFormsPage.load1099Vendors()">
+                    </div>
+                    <div class="form-group">
+                        <label>Vendor (for 1099-NEC)</label>
+                        <select id="f1099-vendor">${await TaxFormsPage._vendorOptions(currentYear)}</select>
+                    </div>
+                </div>
+                <div class="form-actions" style="margin-top:8px">
+                    <button class="btn btn-primary" onclick="TaxFormsPage.generate1099()">Generate 1099-NEC</button>
+                    <button class="btn btn-secondary" onclick="TaxFormsPage.generate1096()">Generate 1096 (Transmittal)</button>
+                </div>
+            </div>
+
+            <div class="card" style="margin-bottom:16px;padding:16px">
                 <h3>1099-NEC E-File (IRS FIRE/IRIS)</h3>
                 <div class="form-grid">
                     <div class="form-group">
@@ -146,7 +165,7 @@ const TaxFormsPage = {
                 </div>
             </div>
 
-            <div class="card" style="padding:16px;background:#fffbe6;border-left:4px solid #f5a623">
+            <div class="card note--caution" style="padding:16px">
                 <p style="margin:0"><strong>Note:</strong> Tax forms are for reference. Verify calculations with a licensed tax professional before filing.</p>
             </div>`;
     },
@@ -240,7 +259,7 @@ const TaxFormsPage = {
         if (!year) { toast('Please enter a year', 'error'); return; }
         if (!quarter) { toast('Please select a quarter', 'error'); return; }
         const qs = state ? `?state=${encodeURIComponent(state)}` : '';
-        await _openPDF(`/api/payroll/forms/sui/${year}/${quarter}/pdf${qs}`, 'POST');
+        _openForm(`/api/payroll/forms/sui/${year}/${quarter}/pdf${qs}`);
     },
 
     async generate941() {

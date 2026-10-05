@@ -60,11 +60,25 @@ const QBOPage = {
                         ${statusText}
                     </div>
                     ${status.connected
-                        ? `<button class="btn btn-secondary" onclick="QBOPage.disconnect()">Disconnect from QuickBooks</button>`
-                        : `<button class="btn btn-primary" onclick="QBOPage.connect()">Connect to QuickBooks</button>
-                           <div style="font-size:10px; color:var(--text-muted); margin-top:8px;">
-                               Configure Client ID and Secret in <a href="#/settings" style="color:var(--text-link);">Settings</a> first.
-                           </div>`
+                        ? `<div class="hidden" data-admin-note style="font-size:11px; color:var(--text-muted);">Connecting to and disconnecting from QuickBooks Online are done by an administrator.</div>
+                           <button class="btn btn-secondary" data-admin onclick="QBOPage.disconnect()">Disconnect from QuickBooks</button>`
+                        : `<div class="hidden" data-admin-note style="font-size:11px; color:var(--text-muted);">Connecting to QuickBooks Online is done by an administrator.</div>
+                           <button class="btn btn-primary" data-admin onclick="QBOPage.connect()">Start connection with Intuit</button>
+                           <form id="qbo-manual-connect" data-write data-admin autocomplete="off" onsubmit="QBOPage.connectManual(event)" style="margin-top:12px;">
+                               <div class="form-grid">
+                                   <div class="form-group">
+                                       <label for="qbo-authorization-code">Authorization Code</label>
+                                       <input id="qbo-authorization-code" type="password" autocomplete="off" required
+                                           placeholder="Paste code or full callback URL" oninput="QBOPage.extractCallbackUrl()">
+                                   </div>
+                                   <div class="form-group">
+                                       <label for="qbo-realm-id">Realm ID</label>
+                                       <input id="qbo-realm-id" type="text" autocomplete="off" required
+                                           placeholder="Paste realmId from redirect URL">
+                                   </div>
+                               </div>
+                               <button class="btn btn-secondary" type="submit">Finish QBO connection</button>
+                           </form>`
                     }
                 </div>
 

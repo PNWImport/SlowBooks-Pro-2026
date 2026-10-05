@@ -135,32 +135,25 @@ def list_deposits(skip: int = 0, limit: int = 25, db: Session = Depends(get_db))
         .group_by(TransactionLine.deposit_transaction_id)
         .all()
     )
-    total_credits = sum(cl.credit for cl in credit_lines)
-    total_debits = sum(tl.debit for tl, _ in lines)
-
-    # If all deposited, nothing pending
-    if total_credits >= total_debits:
-        return []
-
-    results = []
-    running_credit = total_credits
-    for tl, txn in lines:
-        pending_amount = tl.debit
-        if running_credit > 0:
-            applied = min(running_credit, pending_amount)
-            running_credit -= applied
-            pending_amount -= applied
-        if pending_amount <= 0:
-            continue
-        results.append(
-            PendingDepositResponse(
-                transaction_line_id=tl.id,
-                transaction_id=txn.id,
-                date=txn.date,
-                description=txn.description or "",
-                reference=txn.reference or "",
-                source_type=txn.source_type or "",
-                amount=float(pending_amount),
+    dead = dead_transaction_ids(db, txns)
+    bank_ids = {ln.account_id for t in txns for ln in t.lines if ln.debit > 0}
+    names = {
+        a.id: a.name for a in db.query(Account).filter(Account.id.in_(bank_ids)).all()
+    }
+    out = []
+    for t in txns:
+        bank = next((ln for ln in t.lines if ln.debit > 0), None)
+        out.append(
+            DepositResponse(
+                id=t.id,
+                date=t.date,
+                reference=t.reference or "",
+                account_id=bank.account_id if bank else None,
+                account_name=names.get(bank.account_id, "") if bank else "",
+                amount=Decimal(str(bank.debit)) if bank else Decimal("0"),
+                items=counts.get(t.id),
+                voided=t.id in dead,
+                reconciled=reconciled(t),
             )
         )
     return out
@@ -218,28 +211,54 @@ def create_deposit(data: DepositCreate, db: Session = Depends(get_db)):
             status_code=400, detail="Undeposited Funds account not found"
         )
 
-    # Serialize the availability check across deposits. Without this, two
-    # workers can both observe the same pending cash and credit account 1200
-    # twice. The account-row lock is portable to PostgreSQL; SQLite's write
-    # serialization still protects its single-file runtime.
-    db.query(Account).filter(Account.id == uf_id).with_for_update().one()
+    chosen: list[TransactionLine] = []
+    if data.line_ids:
+        # The deposit is the payments ticked, each still waiting — not a
+        # number the page added up, which a second tab or a payment voided
+        # since the page loaded can make wrong.
+        waiting = {ln.id: ln for ln, _ in waiting_items(db, uf_id)}
+        for line_id in dict.fromkeys(data.line_ids):
+            line = waiting.get(line_id)
+            if line is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "One of the payments you ticked has already been "
+                        "deposited or voided. Reload Make Deposits and tick "
+                        "them again."
+                    ),
+                )
+            chosen.append(line)
+        # Row-lock the chosen lines so two deposits at once can't both take
+        # the same payment (no-op on SQLite).
+        locked = (
+            db.query(TransactionLine)
+            .filter(TransactionLine.id.in_([ln.id for ln in chosen]))
+            .with_for_update()
+            .all()
+        )
+        if any(ln.deposit_transaction_id for ln in locked):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "One of the payments you ticked was deposited a moment ago. "
+                    "Reload Make Deposits and tick them again."
+                ),
+            )
+        total = _q(sum((Decimal(str(ln.debit)) for ln in chosen), Decimal("0")))
+        if data.total is not None and _q(data.total) != total:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"The payments ticked add up to ${total:,.2f}, not "
+                    f"${_q(data.total):,.2f}. Reload Make Deposits and try again."
+                ),
+            )
+    else:
+        total = _q(data.total or 0)
 
-    total = Decimal(str(data.total))
     if total <= 0:
         raise HTTPException(status_code=400, detail="Deposit amount must be positive")
-    uf_lines = db.query(TransactionLine).filter(TransactionLine.account_id == uf_id)
-    available = sum(
-        (
-            Decimal(str(line.debit or 0)) - Decimal(str(line.credit or 0))
-            for line in uf_lines
-        ),
-        Decimal("0"),
-    )
-    if total > available:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Deposit exceeds pending Undeposited Funds balance of ${available:.2f}",
-        )
 
     journal_lines = [
         {

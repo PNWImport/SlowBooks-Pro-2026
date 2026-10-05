@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from pydantic import Field
 from app.schemas.common import Money, StrictModel
 from sqlalchemy.orm import Session
 

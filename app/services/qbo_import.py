@@ -46,12 +46,22 @@ from app.services.qbo_common import (
     rebase_account_balances,
 )
 from app.services.qbo_service import get_qbo_client
-from app.services.safe_errors import safe_message
+from app.services.safe_errors import DataProblem
+from app.services import qbo_progress
+
+
+def _field(obj, attr, default=None):
+    """A QBO object's field. The SDK types most of what it reads, but not
+    everything: a SalesReceipt's lines keep their SalesItemLineDetail (and
+    its ItemRef) as plain dicts, so an attribute read found nothing there."""
+    if isinstance(obj, dict):
+        return obj.get(attr, default)
+    return getattr(obj, attr, default)
 
 
 def _safe(obj, attr, default=None):
     """Safe attribute access for QBO objects."""
-    value = getattr(obj, attr, default)
+    value = _field(obj, attr, default)
     # False is meaningful for Active/Taxable; it is not a missing field.
     return default if value is None or value == "" else value
 
@@ -253,6 +263,652 @@ def _sync_bank_identity(db: Session, account: Account, qbo_type: str) -> None:
 
 
 # ============================================================================
+# Documents changed in QuickBooks Online after they were imported
+# ============================================================================
+
+
+_LABEL = {"invoice": "Invoice", "sales_receipt": "Sales receipt", "payment": "Payment"}
+
+
+def _tax_code(detail) -> bool | None:
+    """A QBO sales line's taxable flag, from its TaxCodeRef: "TAX" taxable,
+    "NON" not (a US company's two codes); None when it has no code."""
+    ref = _safe(detail, "TaxCodeRef")
+    code = str(_safe(ref, "value", "") or "").strip().upper() if ref else ""
+    return True if code == "TAX" else False if code == "NON" else None
+
+
+# A document's tax rate is a fraction kept to six places (8.875% is 0.08875).
+# a document rate is stored to six places (app.schemas.common)
+_RATE_PLACES = TAX_RATE_PLACES
+
+
+def _qbo_rate(source, lines, tax) -> Decimal:
+    """QBO's sales tax as a document's rate (a fraction): its tax lines'
+    percentages together, when they are all percentages of one taxable
+    amount and that rate, as stored (_RATE_PLACES), applied to the lines
+    marked taxable, gives QBO's tax to the cent, so an edit re-totals to
+    QBO's total. 0 otherwise: the document keeps QBO's tax amount, and an
+    edit keeps it as it is rather than working it out as 0.00."""
+    from app.services.accounting import _q
+
+    if not tax:
+        return Decimal("0")
+    detail = _safe(source, "TxnTaxDetail")
+    percents, bases = [], set()
+    for tax_line in (_safe(detail, "TaxLine") or []) if detail else []:
+        line_detail = _safe(tax_line, "TaxLineDetail")
+        percent = _field(line_detail, "TaxPercent") if line_detail else None
+        if (
+            not line_detail
+            or not _field(line_detail, "PercentBased")
+            or percent is None
+        ):
+            return Decimal("0")
+        percents.append(Decimal(str(percent)))
+        base = _field(line_detail, "NetAmountTaxable")
+        if base is not None:
+            bases.add(Decimal(str(base)))
+    if not percents or len(bases) > 1:
+        return Decimal("0")
+    rate = (sum(percents) / 100).quantize(_RATE_PLACES)
+    taxable = _q(
+        sum(
+            (
+                _q(line["quantity"] * line["rate"])
+                for line in lines
+                if line["is_taxable"]
+            ),
+            Decimal("0"),
+        )
+    )
+    return rate if _q(taxable * rate) == _q(tax) else Decimal("0")
+
+
+def _tax_base(source) -> Decimal | None:
+    """The taxable amount QBO worked its tax out on: the NetAmountTaxable
+    its tax lines share. None when they name different amounts, or none."""
+    detail = _safe(source, "TxnTaxDetail")
+    bases = set()
+    for tax_line in (_safe(detail, "TaxLine") or []) if detail else []:
+        base = _field(_safe(tax_line, "TaxLineDetail"), "NetAmountTaxable")
+        if base is not None:
+            bases.add(Decimal(str(base)))
+    return bases.pop() if len(bases) == 1 else None
+
+
+def _sales_line(db, qbo_line, detail) -> dict:
+    """A QBO sales line (SalesItemLineDetail), as the import stores it."""
+    item_id = None
+    item_ref = _safe(detail, "ItemRef")
+    if item_ref:
+        item_map = get_mapping_by_qbo_id(db, "item", _safe(item_ref, "value", ""))
+        if item_map:
+            item_id = item_map.slowbooks_id
+    taxable = _tax_code(detail)
+    return {
+        "item_id": item_id,
+        "description": _safe(qbo_line, "Description") or None,
+        "quantity": _safe_decimal(detail, "Qty") or Decimal("1"),
+        "rate": _safe_decimal(detail, "UnitPrice"),
+        "amount": _safe_decimal(qbo_line, "Amount"),
+        "is_taxable": True if taxable is None else taxable,
+    }
+
+
+def _discount_item(db, detail) -> int:
+    """The item a QBO discount comes in on: one for each discount account,
+    a service item whose income account is QBO's discount account, so a
+    document of ours books its discount where QBO did. A negative line may
+    stand on it (qbo_common.is_discount_item)."""
+    from app.services.qbo_common import DISCOUNT_ITEM
+
+    ref = _field(detail, "DiscountAccountRef")
+    qbo_account = str(_safe(ref, "value", "") or "") if ref else ""
+    found = (
+        db.query(QBOMapping)
+        .filter_by(entity_type=DISCOUNT_ITEM, qbo_id=qbo_account)
+        .first()
+    )
+    if found is not None and db.get(Item, found.slowbooks_id) is not None:
+        return found.slowbooks_id
+    account = None
+    if qbo_account:
+        account_map = get_mapping_by_qbo_id(db, "account", qbo_account)
+        account = db.get(Account, account_map.slowbooks_id) if account_map else None
+        if account is None:
+            named = _safe(ref, "name", "")
+            raise DataProblem(
+                f"its discount account, QBO #{qbo_account}"
+                + (f" ({named})" if named else "")
+                + ", has not been imported; import Accounts, then this again"
+            )
+    names = {name for (name,) in db.query(Item.name)}
+    name = "Discount"
+    if name in names and account is not None:
+        name = f"Discount ({account.name})"
+    base, n = name, 2
+    while name in names:
+        name, n = f"{base} {n}", n + 1
+    item = Item(
+        name=name,
+        item_type=ItemType.SERVICE,
+        description="Discounts on QuickBooks Online invoices and sales receipts",
+        rate=Decimal("0"),
+        income_account_id=account.id if account is not None else None,
+        is_active=True,
+    )
+    db.add(item)
+    db.flush()
+    if found is not None:
+        found.slowbooks_id = item.id
+    else:
+        create_mapping(db, DISCOUNT_ITEM, item.id, qbo_account)
+    return item.id
+
+
+def _discount_words(qbo_line, detail) -> str:
+    """ "Discount 10%" (a percentage) or "Discount", unless QBO says."""
+    said = _safe(qbo_line, "Description")
+    if said:
+        return said
+    percent = _field(detail, "DiscountPercent")
+    if _field(detail, "PercentBased") and percent:
+        return f"Discount {Decimal(str(percent)).normalize():f}%"
+    return "Discount"
+
+
+def _discount_on_taxed(amount, after, taxed, sold, base) -> Decimal:
+    """How much of a discount comes off the taxable amount. None of it when
+    QBO works the tax out first (ApplyTaxAfterDiscount false). Otherwise
+    what QBO took off it (its taxed lines less the amount it taxed, `base`),
+    or all of it when every line is taxed, or the taxed lines' share."""
+    from app.services.accounting import _q
+
+    if not after or taxed <= 0:
+        return Decimal("0")
+    if base is not None and 0 <= taxed - base <= amount:
+        return taxed - base
+    if taxed >= sold:
+        return amount
+    return _q(amount * taxed / sold)
+
+
+def _bundle_lines(db, qbo_line) -> list[dict]:
+    """A QBO bundle (GroupLineDetail) as the lines of its items: each sales
+    line in it as the import stores one (item, quantity, price, amount and
+    taxable flag), so the stock and income of its items are where QBO has
+    them. When the bundle's own amount differs from its items' (a price set
+    on the bundle), the difference is a line named for the bundle, taxable
+    when every item in it is. A bundle line reading 0.00 leaves its total
+    to its items: the SDK reads an amount QBO leaves out as 0."""
+    from app.services.accounting import _q
+
+    group = _safe(qbo_line, "GroupLineDetail")
+    lines = []
+    for inner in (_safe(group, "Line") or []) if group else []:
+        detail = _safe(inner, "SalesItemLineDetail")
+        if _safe(inner, "DetailType", "") == "SalesItemLineDetail" and detail:
+            lines.append(_sales_line(db, inner, detail))
+    total = _safe_decimal(qbo_line, "Amount")
+    difference = (
+        _q(total - sum((ln["amount"] for ln in lines), Decimal("0")))
+        if total
+        else Decimal("0")
+    )
+    if difference:
+        ref = _safe(group, "GroupItemRef") if group else None
+        lines.append(
+            {
+                "item_id": None,
+                "description": _safe(qbo_line, "Description")
+                or (_safe(ref, "name", "") if ref else "")
+                or "Bundle",
+                "quantity": Decimal("1"),
+                "rate": difference,
+                "amount": difference,
+                "is_taxable": bool(lines) and all(ln["is_taxable"] for ln in lines),
+            }
+        )
+    return lines
+
+
+def _document_lines(db, source) -> list[dict]:
+    """The lines the import makes of a QBO invoice or sales receipt, in
+    QBO's order: one for each sales line (SalesItemLineDetail), the lines of
+    each bundle's items (GroupLineDetail, _bundle_lines), and its discount
+    (DiscountLineDetail) as a negative line on the discount item for QBO's
+    discount account (_discount_item). The lines add up to QBO's subtotal,
+    an edit here re-totals to QBO's total, and a document of ours books the
+    discount where QBO did. With the tax worked out after the discount
+    (ApplyTaxAfterDiscount), the part of the discount QBO took off the
+    taxable amount is a taxable line, the rest (the untaxed lines' share)
+    an untaxed one, so the taxable amount is QBO's. Subtotal lines are
+    QBO's arithmetic."""
+    from app.services.accounting import _q
+
+    ordered = []
+    for qbo_line in _safe(source, "Line") or []:
+        kind = _safe(qbo_line, "DetailType", "")
+        if kind == "SalesItemLineDetail":
+            detail = _safe(qbo_line, "SalesItemLineDetail")
+            if detail:
+                ordered.append(_sales_line(db, qbo_line, detail))
+        elif kind == "GroupLineDetail":
+            ordered.extend(_bundle_lines(db, qbo_line))
+        elif kind == "DiscountLineDetail":
+            ordered.append(qbo_line)
+    sales = [line for line in ordered if isinstance(line, dict)]
+    discounts = len(ordered) - len(sales)
+    if not discounts:
+        return sales
+    taxed = sum((ln["amount"] for ln in sales if ln["is_taxable"]), Decimal("0"))
+    sold = sum((ln["amount"] for ln in sales), Decimal("0"))
+    after = bool(_field(source, "ApplyTaxAfterDiscount"))
+    txn_tax = _safe(source, "TxnTaxDetail")
+    tax = _safe_decimal(txn_tax, "TotalTax") if txn_tax else Decimal("0")
+    base = _tax_base(source) if tax and discounts == 1 else None
+    lines = []
+    for entry in ordered:
+        if isinstance(entry, dict):
+            lines.append(entry)
+            continue
+        amount = _q(abs(_safe_decimal(entry, "Amount")))
+        detail = _safe(entry, "DiscountLineDetail")
+        if not amount or not detail:
+            continue
+        item_id = _discount_item(db, detail)
+        words = _discount_words(entry, detail)
+        on_taxed = _discount_on_taxed(amount, after, taxed, sold, base)
+        parts = [(on_taxed, True), (amount - on_taxed, False)]
+        parts = [(part, taxable) for part, taxable in parts if part]
+        for part, taxable in parts:
+            lines.append(
+                {
+                    "item_id": item_id,
+                    "description": (
+                        words
+                        if len(parts) == 1
+                        else f"{words} on {'taxable' if taxable else 'non-taxable'} lines"
+                    ),
+                    "quantity": Decimal("1"),
+                    "rate": -part,
+                    "amount": -part,
+                    "is_taxable": taxable,
+                }
+            )
+    return lines
+
+
+def _lines_short(lines, subtotal) -> Decimal:
+    """How far a document's lines fall short of QBO's subtotal: 0 when they
+    add up to it, as they do when every line came across."""
+    from app.services.accounting import _q
+
+    return _q(
+        subtotal
+        - sum(
+            (_q(ln["quantity"] * ln["rate"]) for ln in lines),
+            Decimal("0"),
+        )
+    )
+
+
+def _note_lines_short(lines, subtotal) -> None:
+    """Say so in the import log when a document's lines don't add up to its
+    total before tax: a line of a kind the import doesn't bring across
+    makes the difference, which an edit here posts to income."""
+    short = _lines_short(lines, subtotal)
+    if short:
+        qbo_progress.emit(
+            "note",
+            f"Its lines here come to {subtotal - short:.2f} and its total before "
+            f"tax in QuickBooks Online to {subtotal:.2f}: a line of a kind the "
+            f"import doesn't bring across makes up the {abs(short):.2f}. If it "
+            "is edited here, that part of its total posts to your income "
+            "account.",
+            level="warning",
+            code="IMPORT_LINES_SHORT",
+        )
+
+
+def _document_values(db, source, kind) -> dict:
+    """What the document import makes of a QBO invoice or sales receipt: the
+    same reading as when it first came in, for bringing one it made up to
+    date when QBO changes it."""
+    customer_id, job_id = _resolve_customer(db, _safe(source, "CustomerRef"))
+    total = _safe_decimal(source, "TotalAmt")
+    tax = Decimal("0")
+    txn_tax = _safe(source, "TxnTaxDetail")
+    if txn_tax:
+        tax = _safe_decimal(txn_tax, "TotalTax")
+    day = _parse_qbo_date(_safe(source, "TxnDate"))
+    lines = _document_lines(db, source)
+    due = day if kind == "sales_receipt" else _parse_qbo_date(_safe(source, "DueDate"))
+    return {
+        "customer_id": customer_id,
+        "job_id": job_id,
+        "date": day,
+        "due_date": due,
+        "subtotal": total - tax,
+        "tax_amount": tax,
+        "tax_rate": _qbo_rate(source, lines, tax),
+        "total": total,
+        "lines": lines,
+    }
+
+
+def _same_document(invoice, values) -> bool:
+    header = ("customer_id", "job_id", "date", "due_date", "subtotal", "tax_amount")
+    if any(getattr(invoice, key) != values[key] for key in header + ("total",)):
+        return False
+    if Decimal(str(invoice.tax_rate or 0)) != values["tax_rate"]:
+        return False
+    ours = [
+        (ln.item_id, ln.description, ln.quantity, ln.rate, ln.amount, ln.is_taxable)
+        for ln in sorted(invoice.lines, key=lambda ln: ln.line_order)
+    ]
+    theirs = [
+        (
+            ln["item_id"],
+            ln["description"],
+            ln["quantity"],
+            ln["rate"],
+            ln["amount"],
+            ln["is_taxable"],
+        )
+        for ln in values["lines"]
+    ]
+    return ours == theirs
+
+
+def _changed_in_qbo(mapping, source) -> str | None:
+    """QBO's new SyncToken when QBO changed a document the import still owns;
+    None when it did not (or the document changed here)."""
+    token = str(_safe(source, "SyncToken", "") or "")
+    if not token or mapping.qbo_sync_token in NOT_OWNED:
+        return None
+    return token if token != str(mapping.qbo_sync_token or "") else None
+
+
+def _not_applied(errors, entity, source, noun, why) -> None:
+    qbo_progress.append_error(
+        errors,
+        {
+            "entity": entity,
+            "qbo_id": str(_safe(source, "Id", "")),
+            "document_number": _safe(source, "DocNumber")
+            or _safe(source, "PaymentRefNum"),
+            "code": "IMPORT_QBO_CHANGE_NOT_APPLIED",
+            "message": (
+                f"{_source_context(_LABEL[entity], source)} was changed in QuickBooks Online "
+                f"after it was imported, and that was not applied here: {why}. The "
+                f"{noun} here keeps what was imported."
+            ),
+        },
+    )
+
+
+_BROUGHT = {"DiscountLineDetail": "its discount", "GroupLineDetail": "its bundles"}
+
+
+def _bring_lines_across(db, mapping, invoice, source, kind) -> bool:
+    """A document imported before discounts and bundles came across
+    (2.18.0), and not changed in QBO since: its lines fall short of its
+    subtotal by what QBO's discount or bundle lines now bring. Its lines are
+    brought up to date; its amounts are QBO's already and stay as they are.
+    False, and nothing changed, when there is nothing to bring, when it is
+    no longer the import's (voided or edited here), or when its period is
+    closed."""
+    from app.models.invoices import InvoiceStatus
+    from app.services.inventory_hooks import (
+        reconcile_invoice_inventory_delta,
+        snapshot_invoice_lines,
+    )
+    from app.services.qbo_documents import closed_on, local_cost_live
+
+    brought = [
+        words
+        for kind_name, words in _BROUGHT.items()
+        if any(
+            _safe(line, "DetailType", "") == kind_name
+            for line in _safe(source, "Line") or []
+        )
+    ]
+    if (
+        invoice is None
+        or mapping.qbo_sync_token in NOT_OWNED
+        or invoice.transaction_id is not None
+        or invoice.status == InvoiceStatus.VOID
+        or not brought
+    ):
+        return False
+    ours = [{"quantity": ln.quantity, "rate": ln.rate} for ln in invoice.lines]
+    if not _lines_short(ours, invoice.subtotal):
+        return False
+    values = _document_values(db, source, kind)
+    header = ("customer_id", "job_id", "date", "due_date", "subtotal", "tax_amount")
+    if (
+        any(getattr(invoice, key) != values[key] for key in header + ("total",))
+        or _lines_short(values["lines"], values["subtotal"])
+        or closed_on(db, invoice.date)
+    ):
+        return False
+    old_lines = snapshot_invoice_lines(invoice)
+    invoice.tax_rate = values["tax_rate"]
+    db.query(InvoiceLine).filter(InvoiceLine.invoice_id == invoice.id).delete()
+    db.flush()
+    for order, line in enumerate(values["lines"]):
+        db.add(InvoiceLine(invoice_id=invoice.id, line_order=order, **line))
+    db.flush()
+    db.refresh(invoice)
+    reconcile_invoice_inventory_delta(
+        db,
+        invoice,
+        old_lines,
+        txn_date=invoice.date,
+        post_journal=local_cost_live(db, invoice),
+    )
+    noun = "sales receipt" if kind == "sales_receipt" else "invoice"
+    qbo_progress.emit(
+        "update",
+        f"{_source_context(_LABEL[kind], source)}: {' and '.join(brought)} came "
+        f"across; {noun} {invoice.invoice_number} has those lines now, and its "
+        f"total ({invoice.total:,.2f}) is as it was",
+        code="IMPORT_QBO_LINES_ADDED",
+    )
+    return True
+
+
+def _refresh_invoice(db, mapping, source, kind, errors) -> None:
+    """Bring an invoice or sales receipt the import made up to date with QBO,
+    while it is still the import's own: not voided or edited here. Its
+    posting follows in the ledger import, under the same conditions."""
+    from app.models.invoices import InvoiceStatus
+    from app.services.inventory_hooks import (
+        reconcile_invoice_inventory_delta,
+        snapshot_invoice_lines,
+    )
+    from app.services.qbo_documents import (
+        closed_on,
+        import_posting,
+        local_cost_live,
+        paid_past_new_total,
+        why_not_changed,
+    )
+
+    invoice = db.get(Invoice, mapping.slowbooks_id)
+    token = _changed_in_qbo(mapping, source)
+    if token is None and _bring_lines_across(db, mapping, invoice, source, kind):
+        return
+    if (
+        token is None
+        or invoice is None
+        or invoice.transaction_id is not None
+        or invoice.status == InvoiceStatus.VOID
+    ):
+        qbo_progress.skipped()
+        return
+    values = _document_values(db, source, kind)
+    noun = "sales receipt" if kind == "sales_receipt" else "invoice"
+    if _same_document(invoice, values):
+        mapping.qbo_sync_token = token  # a change that is not the document's
+        qbo_progress.skipped("Verified: its amounts and lines match QBO")
+        return
+    if values["total"] == 0 and invoice.total != 0:
+        # How QBO shows a void; Posted Ledger Activity brings a void in.
+        qbo_progress.skipped("Reads 0.00 in QuickBooks Online; kept as imported")
+        return
+    found = import_posting(db, mapping)
+    why = (
+        closed_on(db, invoice.date)
+        or closed_on(db, values["date"])
+        or (found and why_not_changed(db, found[1], values["date"]))
+    )
+    if why:
+        _not_applied(errors, kind, source, noun, why)
+        return
+    # Paid here past QBO's new total: the ledger import leaves its posting
+    # too, and says so in the same line (qbo_documents.paid_past_new_total).
+    held = kind == "invoice" and paid_past_new_total(
+        invoice, _safe(source, "Id", ""), values["total"]
+    )
+    if held:
+        qbo_progress.append_error(errors, held)
+        return
+    old_lines = snapshot_invoice_lines(invoice)
+    was = invoice.total
+    for key in ("customer_id", "job_id", "date", "due_date", "subtotal"):
+        setattr(invoice, key, values[key])
+    invoice.tax_amount, invoice.total = values["tax_amount"], values["total"]
+    invoice.tax_rate = values["tax_rate"]
+    db.query(InvoiceLine).filter(InvoiceLine.invoice_id == invoice.id).delete()
+    db.flush()
+    for order, line in enumerate(values["lines"]):
+        db.add(InvoiceLine(invoice_id=invoice.id, line_order=order, **line))
+    db.flush()
+    db.refresh(invoice)
+    _note_lines_short(values["lines"], values["subtotal"])
+    if kind == "sales_receipt":
+        for alloc in invoice.payment_allocations:
+            payment = alloc.payment
+            if payment and payment.transaction_id is None and not payment.is_voided:
+                payment.amount, payment.date = values["total"], values["date"]
+                alloc.amount = values["total"]
+        invoice.amount_paid = values["total"]
+    invoice.balance_due = invoice.total - (invoice.amount_paid or 0)
+    invoice.status = (
+        InvoiceStatus.PAID
+        if invoice.balance_due <= 0 and invoice.total > 0
+        else (
+            InvoiceStatus.PARTIAL
+            if (invoice.amount_paid or 0) > 0
+            else InvoiceStatus.SENT
+        )
+    )
+    reconcile_invoice_inventory_delta(
+        db,
+        invoice,
+        old_lines,
+        txn_date=invoice.date,
+        post_journal=local_cost_live(db, invoice),
+    )
+    mapping.qbo_sync_token = token
+    qbo_progress.emit(
+        "update",
+        f"{_source_context(_LABEL[kind], source)} changed in QuickBooks Online: {noun} "
+        f"{invoice.invoice_number} brought up to date here (total {was:,.2f} "
+        f"-> {invoice.total:,.2f})",
+        code="IMPORT_QBO_CHANGE_APPLIED",
+    )
+
+
+def _refresh_payment(db, mapping, source, errors) -> None:
+    """Bring a payment the import made up to date with QBO (amount, date,
+    the invoices it pays), while it is still the import's own."""
+    from app.models.invoices import InvoiceStatus
+    from app.services.qbo_documents import (
+        closed_on,
+        import_posting,
+        pay_invoice,
+        unpay_invoice,
+        why_not_changed,
+    )
+
+    payment = db.get(Payment, mapping.slowbooks_id)
+    token = _changed_in_qbo(mapping, source)
+    if (
+        token is None
+        or payment is None
+        or payment.is_voided
+        or payment.transaction_id is not None
+    ):
+        qbo_progress.skipped()
+        return
+    amount = _safe_decimal(source, "TotalAmt")
+    day = _parse_qbo_date(_safe(source, "TxnDate"))
+    applied = []
+    for pmt_line in _safe(source, "Line") or []:
+        line_amount = _safe_decimal(pmt_line, "Amount")
+        for linked in _safe(pmt_line, "LinkedTxn") or []:
+            if _safe(linked, "TxnType", "") != "Invoice":
+                continue
+            inv_map = get_mapping_by_qbo_id(db, "invoice", _safe(linked, "TxnId", ""))
+            invoice = db.get(Invoice, inv_map.slowbooks_id) if inv_map else None
+            if invoice is not None:
+                applied.append((invoice, line_amount or amount))
+    ours = sorted((a.invoice_id, a.amount) for a in payment.allocations)
+    if (payment.amount, payment.date) == (amount, day) and ours == sorted(
+        (invoice.id, value) for invoice, value in applied
+    ):
+        mapping.qbo_sync_token = token
+        qbo_progress.skipped("Verified: its amount and invoices match QBO")
+        return
+    if amount == 0 and payment.amount != 0:
+        qbo_progress.skipped("Reads 0.00 in QuickBooks Online; kept as imported")
+        return
+    found = import_posting(db, mapping)
+    why = closed_on(db, payment.date) or closed_on(db, day)
+    why = why or (found and why_not_changed(db, found[1], day))
+    for invoice, value in applied:
+        already = sum(
+            (a.amount for a in payment.allocations if a.invoice_id == invoice.id),
+            Decimal("0"),
+        )
+        if invoice.status == InvoiceStatus.VOID:
+            why = why or f"invoice {invoice.invoice_number} is void here"
+        elif (invoice.amount_paid or 0) - already + value > invoice.total:
+            why = (
+                why
+                or f"it would pay invoice {invoice.invoice_number} more than it owes"
+            )
+    if why:
+        _not_applied(errors, "payment", source, "payment", why)
+        return
+    was = payment.amount
+    for alloc in list(payment.allocations):
+        unpay_invoice(alloc.invoice, alloc.amount)
+        db.delete(alloc)
+    db.flush()
+    payment.amount, payment.date = amount, day
+    for invoice, value in applied:
+        db.add(
+            PaymentAllocation(
+                payment_id=payment.id, invoice_id=invoice.id, amount=value
+            )
+        )
+        pay_invoice(invoice, value)
+    mapping.qbo_sync_token = token
+    qbo_progress.emit(
+        "update",
+        f"{_source_context('Payment', source)} changed in QuickBooks Online: "
+        f"payment #{payment.id} brought up to date here (amount {was:,.2f} -> "
+        f"{amount:,.2f})",
+        code="IMPORT_QBO_CHANGE_APPLIED",
+    )
+
+
+# ============================================================================
 
 # Import functions
 # ============================================================================
@@ -283,11 +939,12 @@ def import_accounts(db: Session) -> dict:
             key=lambda a: (_safe(a, "FullyQualifiedName", "") or "").count(":")
         )
     except Exception as e:
-        errors.append(
+        qbo_progress.append_error(
+            errors,
             {
                 "entity": "accounts",
-                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
-            }
+                "message": f"Failed to query QBO: {qbo_progress.error_message(e, "QBO import")}",
+            },
         )
         return {"imported": 0, "errors": errors}
 
@@ -366,12 +1023,13 @@ def import_accounts(db: Session) -> dict:
             qbo_progress.created()
 
         except Exception as e:
-            errors.append(
+            qbo_progress.append_error(
+                errors,
                 {
                     "entity": "account",
                     "qbo_id": str(qbo_id),
-                    "message": safe_message(e, "QBO import"),
-                }
+                    "message": qbo_progress.error_message(e, "QBO import"),
+                },
             )
 
     return {"imported": imported, "errors": errors}
@@ -389,11 +1047,12 @@ def import_customers(db: Session) -> dict:
     try:
         qbo_customers = _all_qbo_objects(QBOCustomer, client)
     except Exception as e:
-        errors.append(
+        qbo_progress.append_error(
+            errors,
             {
                 "entity": "customers",
-                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
-            }
+                "message": f"Failed to query QBO: {qbo_progress.error_message(e, "QBO import")}",
+            },
         )
         return {"imported": 0, "errors": errors}
 
@@ -540,12 +1199,13 @@ def import_customers(db: Session) -> dict:
             qbo_progress.created()
 
         except Exception as e:
-            errors.append(
+            qbo_progress.append_error(
+                errors,
                 {
                     "entity": "customer",
                     "qbo_id": str(qbo_id),
-                    "message": safe_message(e, "QBO import"),
-                }
+                    "message": qbo_progress.error_message(e, "QBO import"),
+                },
             )
 
     return {"imported": imported, "errors": errors}
@@ -563,11 +1223,12 @@ def import_vendors(db: Session) -> dict:
     try:
         qbo_vendors = _all_qbo_objects(QBOVendor, client)
     except Exception as e:
-        errors.append(
+        qbo_progress.append_error(
+            errors,
             {
                 "entity": "vendors",
-                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
-            }
+                "message": f"Failed to query QBO: {qbo_progress.error_message(e, "QBO import")}",
+            },
         )
         return {"imported": 0, "errors": errors}
 
@@ -647,12 +1308,13 @@ def import_vendors(db: Session) -> dict:
             qbo_progress.created()
 
         except Exception as e:
-            errors.append(
+            qbo_progress.append_error(
+                errors,
                 {
                     "entity": "vendor",
                     "qbo_id": str(qbo_id),
-                    "message": safe_message(e, "QBO import"),
-                }
+                    "message": qbo_progress.error_message(e, "QBO import"),
+                },
             )
 
     return {"imported": imported, "errors": errors}
@@ -670,11 +1332,12 @@ def import_items(db: Session) -> dict:
     try:
         qbo_items = _all_qbo_objects(QBOItem, client)
     except Exception as e:
-        errors.append(
+        qbo_progress.append_error(
+            errors,
             {
                 "entity": "items",
-                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
-            }
+                "message": f"Failed to query QBO: {qbo_progress.error_message(e, "QBO import")}",
+            },
         )
         return {"imported": 0, "errors": errors}
 
@@ -746,12 +1409,13 @@ def import_items(db: Session) -> dict:
             qbo_progress.created()
 
         except Exception as e:
-            errors.append(
+            qbo_progress.append_error(
+                errors,
                 {
                     "entity": "item",
                     "qbo_id": str(qbo_id),
-                    "message": safe_message(e, "QBO import"),
-                }
+                    "message": qbo_progress.error_message(e, "QBO import"),
+                },
             )
 
     return {"imported": imported, "errors": errors}
@@ -769,11 +1433,12 @@ def import_invoices(db: Session) -> dict:
     try:
         qbo_invoices = _all_qbo_objects(QBOInvoice, client)
     except Exception as e:
-        errors.append(
+        qbo_progress.append_error(
+            errors,
             {
                 "entity": "invoices",
-                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
-            }
+                "message": f"Failed to query QBO: {qbo_progress.error_message(e, "QBO import")}",
+            },
         )
         return {"imported": 0, "errors": errors}
 
@@ -900,12 +1565,23 @@ def import_invoices(db: Session) -> dict:
             qbo_progress.created()
 
         except Exception as e:
-            errors.append(
+            qbo_progress.append_error(
+                errors,
                 {
                     "entity": "invoice",
                     "qbo_id": str(qbo_id),
-                    "message": safe_message(e, "QBO import"),
-                }
+                    "code": getattr(e, "error_code", None)
+                    or (
+                        "IMPORT_VALIDATION"
+                        if isinstance(e, DataProblem)
+                        else "IMPORT_OPERATION_FAILED"
+                    ),
+                    "document_number": _safe(qbo_inv, "DocNumber")
+                    or _safe(qbo_inv, "PaymentRefNum"),
+                    "message": _source_context("invoice", qbo_inv)
+                    + ": "
+                    + qbo_progress.error_message(e, "QBO import"),
+                },
             )
 
     return {"imported": imported, "errors": errors}
@@ -923,11 +1599,12 @@ def import_payments(db: Session) -> dict:
     try:
         qbo_payments = _all_qbo_objects(QBOPayment, client)
     except Exception as e:
-        errors.append(
+        qbo_progress.append_error(
+            errors,
             {
                 "entity": "payments",
-                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
-            }
+                "message": f"Failed to query QBO: {qbo_progress.error_message(e, "QBO import")}",
+            },
         )
         return {"imported": 0, "errors": errors}
 
@@ -1019,12 +1696,23 @@ def import_payments(db: Session) -> dict:
             qbo_progress.created()
 
         except Exception as e:
-            errors.append(
+            qbo_progress.append_error(
+                errors,
                 {
                     "entity": "payment",
                     "qbo_id": str(qbo_id),
-                    "message": safe_message(e, "QBO import"),
-                }
+                    "code": getattr(e, "error_code", None)
+                    or (
+                        "IMPORT_VALIDATION"
+                        if isinstance(e, DataProblem)
+                        else "IMPORT_OPERATION_FAILED"
+                    ),
+                    "document_number": _safe(qbo_pmt, "DocNumber")
+                    or _safe(qbo_pmt, "PaymentRefNum"),
+                    "message": _source_context("payment", qbo_pmt)
+                    + ": "
+                    + qbo_progress.error_message(e, "QBO import"),
+                },
             )
 
     return {"imported": imported, "errors": errors}
@@ -1048,11 +1736,12 @@ def import_sales_receipts(db: Session) -> dict:
     try:
         qbo_receipts = _all_qbo_objects(QBOSalesReceipt, client)
     except Exception as e:
-        errors.append(
+        qbo_progress.append_error(
+            errors,
             {
                 "entity": "sales_receipts",
-                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
-            }
+                "message": f"Failed to query QBO: {qbo_progress.error_message(e, "QBO import")}",
+            },
         )
         return {"imported": 0, "errors": errors}
 
@@ -1193,12 +1882,23 @@ def import_sales_receipts(db: Session) -> dict:
             qbo_progress.created()
 
         except Exception as e:
-            errors.append(
+            qbo_progress.append_error(
+                errors,
                 {
                     "entity": "sales_receipt",
                     "qbo_id": str(qbo_id),
-                    "message": safe_message(e, "QBO import"),
-                }
+                    "code": getattr(e, "error_code", None)
+                    or (
+                        "IMPORT_VALIDATION"
+                        if isinstance(e, DataProblem)
+                        else "IMPORT_OPERATION_FAILED"
+                    ),
+                    "document_number": _safe(qbo_sr, "DocNumber")
+                    or _safe(qbo_sr, "PaymentRefNum"),
+                    "message": _source_context("sales_receipt", qbo_sr)
+                    + ": "
+                    + qbo_progress.error_message(e, "QBO import"),
+                },
             )
 
     return {"imported": imported, "errors": errors}

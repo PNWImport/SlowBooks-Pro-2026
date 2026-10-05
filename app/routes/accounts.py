@@ -35,6 +35,34 @@ def _reject_duplicate_number(db: Session, number, exclude_id=None):
         )
 
 
+# Digits, optionally in dotted or dashed groups for a sub-account (6150.1,
+# 6150-01) — the pattern the seeded chart and the chart importer use. "ABC"
+# and a blank number were accepted, and a blank one then listed as
+# " - Name" in every picker (2.17.3 exploratory test, W-L4). Charts brought
+# in by an importer keep whatever numbers they carry; this is the rule for
+# numbers typed on the form or sent to the API.
+_ACCOUNT_NUMBER_RE = re.compile(r"^\d+(?:[.-]\d+)*$")
+
+
+def _check_account_number(number) -> None:
+    if not number:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Give the account a number, like 6150. A sub-account can use "
+                "6150.1 or 6150-01."
+            ),
+        )
+    if len(number) > 20 or not _ACCOUNT_NUMBER_RE.match(number):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f'"{number[:40]}" is not an account number. Use digits, like '
+                "6150; a sub-account can use 6150.1 or 6150-01."
+            ),
+        )
+
+
 _BANK_KIND_FOR_TYPE = {"bank": "asset", "credit_card": "liability"}
 
 
@@ -68,6 +96,7 @@ def _check_parent(db: Session, parent_id: int | None, account_id: int | None = N
             )
         seen.add(current)
         current = parents.get(current)
+
 
 
 def _check_bank_kind(bank_kind, account_type) -> None:

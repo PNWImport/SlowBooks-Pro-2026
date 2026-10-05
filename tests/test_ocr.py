@@ -330,18 +330,14 @@ def test_scan_pdf_multi_page(client, monkeypatch, tmp_path):
     assert r.json()["multi_page"] is True
 
 
-def test_scan_pdf_without_poppler_400(client, monkeypatch, tmp_path):
+def test_scan_pdf_without_any_renderer_400(client, monkeypatch, tmp_path):
+    """No native renderer and no poppler: a 400 that names the fix for this
+    platform (Linux wording here; see test_pdf_raster for the others)."""
     from app.services import pdf_raster
 
-    monkeypatch.setattr(pdf_raster, "windows_available", lambda: False)
-    monkeypatch.setattr(pdf_raster, "macos_available", lambda: False)
-    monkeypatch.setattr(ocr_service, "INTAKE_DIR", tmp_path)
+    from app.services import ocr_engines
+
     monkeypatch.setattr(ocr_service, "tesseract_available", lambda: True)
-    # The engine reports unavailable on missing language data too, and the
-    # route answers that with a 200 + ocr_available=False before a PDF ever
-    # reaches the rasterizer. Both have to be stubbed to actually exercise
-    # the poppler branch this test is about.
-    monkeypatch.setattr(ocr_service, "ocr_language", lambda: "eng")
     monkeypatch.setattr(ocr_service, "poppler_available", lambda: False)
     monkeypatch.setattr(pdf_raster, "windows_available", lambda: False)
     monkeypatch.setattr(pdf_raster, "macos_available", lambda: False)
@@ -364,7 +360,8 @@ def test_scan_pdf_without_poppler_400(client, monkeypatch, tmp_path):
         files={"file": ("receipt.pdf", b"%PDF-1.4 fake", "application/pdf")},
     )
     assert r.status_code == 400
-    assert "PDF scanning" in r.json()["detail"]
+    assert "poppler-utils" in r.json()["detail"]
+    assert "images still work" in r.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

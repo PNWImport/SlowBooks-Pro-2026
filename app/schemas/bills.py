@@ -7,8 +7,10 @@ from app.schemas.common import (
     Money,
     StrictModel,
     TaxRateFloat,
+    TaxRateOut,
     validate_non_negative_line,
 )
+from app.schemas.invoices import RateOut
 
 
 class BillLineCreate(StrictModel):

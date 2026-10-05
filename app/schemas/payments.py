@@ -2,7 +2,7 @@ from datetime import date as dt_date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.schemas.common import Money, StrictModel
 
 

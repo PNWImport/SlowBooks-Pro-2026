@@ -6,11 +6,13 @@
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.models.transactions import Transaction
 from app.models.accounts import Account
+from app.models.qbo_mapping import QBOMapping
 from app.routes._helpers import clamp_pagination
 from app.schemas.journal import JournalEntryCreate, JournalEntryResponse
 from app.services.accounting import create_journal_entry, reversing_lines
@@ -51,7 +53,24 @@ def list_journal_entries(
     if source_type:
         q = q.filter(Transaction.source_type == source_type)
     else:
-        q = q.filter(Transaction.source_type == "manual")
+        # Older report imports stored journals as qbo_ledger. Show those
+        # immediately, even before the direct JournalEntry import is rerun.
+        report_journals = db.query(QBOMapping.slowbooks_id).filter(
+            QBOMapping.entity_type == "ledger",
+            or_(
+                QBOMapping.qbo_id.like("Journal Entry:%"),
+                QBOMapping.qbo_id.like("General Journal:%"),
+                QBOMapping.qbo_id.like("JournalEntry:%"),
+                QBOMapping.qbo_id.like("Journal:%"),
+            ),
+        )
+        q = q.filter(
+            or_(
+                Transaction.source_type.in_(["manual", "qbo_journal"]),
+                (Transaction.source_type == "qbo_ledger")
+                & Transaction.id.in_(report_journals),
+            )
+        )
     entries = q.order_by(Transaction.date.desc()).offset(skip).limit(limit).all()
     accounts = {a.id: a for a in db.query(Account).all()}
     from app.services.qbo_documents import REVERSALS
@@ -171,21 +190,47 @@ def void_journal_entry(entry_id: int, db: Session = Depends(get_db)):
     )
     if not txn:
         raise HTTPException(status_code=404, detail="Journal entry not found")
-    if txn.source_type != "manual":
+    if txn.source_type and txn.source_type.endswith("_void"):
+        raise HTTPException(status_code=400, detail="Cannot void a reversal entry")
+    from app.models.qbo_mapping import QBOMapping
+    from app.services import qbo_documents
+
+    if qbo_documents.reversed_already(db, txn):
         raise HTTPException(
-            status_code=400,
-            detail="Only manual journal entries can be voided here",
+            status_code=400, detail="This journal entry has already been voided."
         )
-    already_voided = (
-        db.query(Transaction.id)
-        .filter(
-            Transaction.source_type == "manual_void",
-            Transaction.source_id == txn.id,
-        )
-        .first()
-    )
-    if already_voided:
-        raise HTTPException(status_code=400, detail="Journal entry already voided")
+    from_qbo = txn.source_type in {"qbo_ledger", "qbo_journal"}
+    if from_qbo:
+        # The QuickBooks Online import's posting of an invoice, sales receipt
+        # or payment: voiding it voids the document, as voiding the document
+        # would (its posting is reversed with it), so the two stay together.
+        found = qbo_documents.document_of_posting(db, txn)
+        if found is not None:
+            from app.models.invoices import InvoiceStatus
+            from app.routes.invoices.lifecycle import void_invoice
+            from app.routes.payments import void_payment
+
+            kind, document = found
+            if kind == "payment":
+                void_payment(document.id, db)
+            else:
+                if kind == "sales_receipt":
+                    # Its payment's void voids the receipt too.
+                    for alloc in list(document.payment_allocations):
+                        if alloc.payment is not None and not alloc.payment.is_voided:
+                            void_payment(alloc.payment_id, db)
+                    db.refresh(document)
+                if document.status != InvoiceStatus.VOID:
+                    void_invoice(document.id, db)
+            reversal = (
+                db.query(Transaction)
+                .filter(
+                    Transaction.source_type == f"{txn.source_type}_void",
+                    Transaction.source_id == txn.id,
+                )
+                .first()
+            )
+            return get_journal_entry(reversal.id if reversal else txn.id, db)
 
     assert_not_reconciled(db, txn)
     check_closing_date(db, txn.date)
@@ -206,6 +251,14 @@ def void_journal_entry(entry_id: int, db: Session = Depends(get_db)):
             job_id=txn.job_id,
         )
         release_statement_links(db, txn)
+        if from_qbo:
+            qbo_documents.mark_changed_here(
+                db,
+                *db.query(QBOMapping).filter(
+                    QBOMapping.entity_type.in_(("ledger", "journal_entry")),
+                    QBOMapping.slowbooks_id == txn.id,
+                ),
+            )
         db.commit()
         db.refresh(void_txn)
         return get_journal_entry(void_txn.id, db)

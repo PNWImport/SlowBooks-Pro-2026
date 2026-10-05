@@ -775,15 +775,49 @@ def _row(
     )
 
 
+def _tax_posted_to_sales_tax_payable(db: Session, bill, tax_account_id) -> bool:
+    """Whether this bill's journal debited Sales Tax Payable with its tax —
+    how bills were posted before purchase tax became part of line cost."""
+    if not tax_account_id or not bill.transaction_id:
+        return False
+    from app.models.transactions import TransactionLine
+
+    return (
+        db.query(TransactionLine.id)
+        .filter(
+            TransactionLine.transaction_id == bill.transaction_id,
+            TransactionLine.account_id == tax_account_id,
+            TransactionLine.debit > 0,
+        )
+        .first()
+        is not None
+    )
+
+
 def export_bills(db: Session, date_from: date = None, date_to: date = None) -> str:
-    """Bills as BILL blocks. QB convention: TRNS is the A/P credit (negative),
-    each SPL the expense debit (positive); the importer reads abs() so
-    either sign re-imports."""
+    """Bills as BILL blocks, at the amounts the ledger booked. QB
+    convention: TRNS is the A/P credit (negative), each SPL the expense
+    debit (positive); the importer reads abs() so either sign re-imports.
+
+    Sales tax a supplier charges is part of what the purchase cost: the
+    posting spreads it over the lines in proportion to their amounts and
+    debits each line's account with its amount plus its share
+    (services/purchase_posting.py), and nothing goes to Sales Tax Payable.
+    This export still wrote the tax as its own split to Sales Tax Payable,
+    so QuickBooks took the tax paid to a supplier off the sales tax owed —
+    the posting the ledger stopped making for explore 2.17.3 (macbase1 F9;
+    the export was found still making it while integrating the fixes).
+    Each split now carries its line's share. A bill posted before that
+    change still has its Sales Tax Payable debit in the ledger, and goes
+    out as it was booked."""
     from app.models.bills import Bill, BillStatus
     from app.services.control_accounts import find
+    from app.services.purchase_posting import spread
 
-    # Display name only: an export must not fail because a chart is odd.
+    # Display names only: an export must not fail because a chart is odd.
     ap_name = _resolve_account_name(db, find(db, "2000")) or "Accounts Payable"
+    tax_account_id = find(db, "2200")
+    tax_name = _resolve_account_name(db, tax_account_id) or "Sales Tax Payable"
     q = (
         db.query(Bill)
         .options(joinedload(Bill.vendor), joinedload(Bill.lines))

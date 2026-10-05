@@ -1,3 +1,4 @@
+from datetime import date
 from datetime import date as dt_date
 from decimal import Decimal
 from typing import Optional
@@ -17,6 +18,9 @@ from app.routes.invoices.helpers import _due_date_from_terms
 
 
 class SalesTaxPaymentRequest(StrictModel):
+    # `dt_date`, not `date`: inside the class body the field named `date`
+    # shadows the type, so `Optional[date]` became `Optional[None]` and every
+    # real date was refused with "date: Input should be None" (2.17.3).
     date: Optional[dt_date] = None
     amount: Money
     pay_from_account_id: int
@@ -26,8 +30,8 @@ class SalesTaxPaymentRequest(StrictModel):
 
 @router.get("/sales-tax")
 def sales_tax_report(
-    start_date: dt_date = Query(default=None),
-    end_date: dt_date = Query(default=None),
+    start_date: date = Query(default=None),
+    end_date: date = Query(default=None),
     db: Session = Depends(get_db),
 ):
     """Sales Tax report: the tax charged on sales less the tax given back on
@@ -39,9 +43,9 @@ def sales_tax_report(
     taxable carries no rate: an all-labour invoice is not "8.25%, $0.00".
     """
     if not start_date:
-        start_date = dt_date(dt_date.today().year, 1, 1)
+        start_date = date(date.today().year, 1, 1)
     if not end_date:
-        end_date = dt_date.today()
+        end_date = date.today()
 
     # Eager loads avoid an N+1 on .customer / .lines in the loops below.
     from sqlalchemy.orm import joinedload, selectinload
@@ -177,7 +181,7 @@ def pay_sales_tax(data: SalesTaxPaymentRequest, db: Session = Depends(get_db)):
     from app.services.accounting import create_journal_entry, get_sales_tax_account_id
     from app.services.closing_date import check_closing_date
 
-    pay_date = data.date or dt_date.today()
+    pay_date = data.date or date.today()
     check_closing_date(db, pay_date)
 
     amount = _q(data.amount)
@@ -342,113 +346,9 @@ def ap_aging_report(db: Session, as_of_date: date) -> dict:
 
 
 @router.get("/ap-aging")
-def ap_aging(as_of_date: dt_date = Query(default=None), db: Session = Depends(get_db)):
+def ap_aging(as_of_date: date = Query(default=None), db: Session = Depends(get_db)):
     """AP Aging report — mirrors AR aging but for bills."""
-    if not as_of_date:
-        as_of_date = dt_date.today()
-
-    try:
-        from app.models.bills import Bill, BillStatus
-        from app.models.contacts import Vendor
-        from app.models.vendor_credits import VendorCredit, VendorCreditStatus
-
-        bills = (
-            db.query(Bill)
-            .filter(Bill.status.in_([BillStatus.UNPAID, BillStatus.PARTIAL]))
-            .filter(Bill.balance_due > 0)
-            .all()
-        )
-
-        vendor_names = {v.id: v.name for v in db.query(Vendor.id, Vendor.name).all()}
-
-        aging = {}
-        for bill in bills:
-            vid = bill.vendor_id
-            if vid not in aging:
-                aging[vid] = {
-                    "vendor_name": vendor_names.get(vid, "Unknown"),
-                    "vendor_id": vid,
-                    "current": Decimal(0),
-                    "over_30": Decimal(0),
-                    "over_60": Decimal(0),
-                    "over_90": Decimal(0),
-                    "total": Decimal(0),
-                    "unapplied_credits": Decimal(0),
-                }
-
-            days = (as_of_date - bill.due_date).days if bill.due_date else 0
-            bal = bill.balance_due
-            if days <= 0:
-                aging[vid]["current"] += bal
-            elif days <= 30:
-                aging[vid]["over_30"] += bal
-            elif days <= 60:
-                aging[vid]["over_60"] += bal
-            else:
-                aging[vid]["over_90"] += bal
-            aging[vid]["total"] += bal
-
-        credits = (
-            db.query(VendorCredit)
-            .filter(VendorCredit.status != VendorCreditStatus.VOID)
-            .filter(VendorCredit.date <= as_of_date)
-            .filter(VendorCredit.balance_remaining > 0)
-            .all()
-        )
-        for credit in credits:
-            vid = credit.vendor_id
-            if vid not in aging:
-                aging[vid] = {
-                    "vendor_name": vendor_names.get(vid, "Unknown"),
-                    "vendor_id": vid,
-                    "current": Decimal(0),
-                    "over_30": Decimal(0),
-                    "over_60": Decimal(0),
-                    "over_90": Decimal(0),
-                    "total": Decimal(0),
-                    "unapplied_credits": Decimal(0),
-                }
-            amount = Decimal(str(credit.balance_remaining))
-            aging[vid]["unapplied_credits"] += amount
-            aging[vid]["current"] -= amount
-            aging[vid]["total"] -= amount
-
-        columns = (
-            "current",
-            "over_30",
-            "over_60",
-            "over_90",
-            "total",
-            "unapplied_credits",
-        )
-        items = list(aging.values())
-        for item in items:
-            item.setdefault("unapplied_credits", Decimal(0))
-        totals = {"vendor_name": "TOTAL", "vendor_id": 0}
-        for key in columns:
-            totals[key] = sum(item[key] for item in items)
-        for item in items:
-            for k in columns:
-                item[k] = float(item[k])
-        for k in columns:
-            totals[k] = float(totals[k])
-
-        return {"as_of_date": as_of_date.isoformat(), "items": items, "totals": totals}
-    except ImportError:
-        return {
-            "as_of_date": as_of_date.isoformat(),
-            "items": [],
-            "totals": {
-                "vendor_name": "TOTAL",
-                "vendor_id": 0,
-                "current": 0,
-                "over_30": 0,
-                "over_60": 0,
-                "over_90": 0,
-                "total": 0,
-                "unapplied_credits": 0,
-            },
-        }
+    return ap_aging_report(db, as_of_date or date.today())
 
 
 @router.get("/1099-summary")
@@ -458,7 +358,7 @@ def report_1099_summary(
 ):
     """1099 Summary: total payments to 1099 vendors for a year."""
     if not year:
-        year = dt_date.today().year
+        year = date.today().year
 
     from app.models.bills import BillPayment, BillPaymentAllocation
 

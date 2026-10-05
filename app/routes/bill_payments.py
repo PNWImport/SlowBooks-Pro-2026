@@ -6,7 +6,7 @@
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
 from app.routes._helpers import clamp_pagination
@@ -23,15 +23,28 @@ router = APIRouter(prefix="/api/bill-payments", tags=["bill_payments"])
 @router.get("", response_model=list[BillPaymentResponse])
 def list_bill_payments(
     vendor_id: int = None,
+    bill_id: int = None,
     skip: int = 0,
     limit: int = 500,
     db: Session = Depends(get_db),
 ):
+    """`?bill_id=` lists the payments applied to one bill (its view offers
+    Void on each — a paid bill's payment could not be voided on screen)."""
     skip, limit = clamp_pagination(skip, limit)
-    q = db.query(BillPayment).options(joinedload(BillPayment.vendor))
+    q = db.query(BillPayment).options(
+        joinedload(BillPayment.vendor), selectinload(BillPayment.allocations)
+    )
     if vendor_id:
         q = q.filter(BillPayment.vendor_id == vendor_id)
-    payments = q.order_by(BillPayment.date.desc()).offset(skip).limit(limit).all()
+    if bill_id:
+        q = q.filter(
+            BillPayment.id.in_(
+                db.query(BillPaymentAllocation.bill_payment_id).filter(
+                    BillPaymentAllocation.bill_id == bill_id
+                )
+            )
+        )
+    payments = q.order_by(BillPayment.date.desc(), BillPayment.id.desc()).offset(skip).limit(limit).all()
     results = []
     for p in payments:
         resp = BillPaymentResponse.model_validate(p)
@@ -125,7 +138,7 @@ def create_bill_payment(data: BillPaymentCreate, db: Session = Depends(get_db)):
                 status_code=400,
                 detail=f"Bill {bill.bill_number} belongs to a different vendor.",
             )
-        if alloc_data.amount > bill.balance_due:
+        if alloc_data.amount > float(bill.balance_due):
             raise HTTPException(
                 status_code=400, detail="Allocation exceeds bill balance"
             )

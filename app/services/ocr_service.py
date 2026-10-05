@@ -3,10 +3,13 @@
 # See docs/design/receipt-intake.md + docs/design/receipt-intake-spec.md.
 #
 # Deterministic regex/anchor extraction over Tesseract output — no AI in v1.
-# OCR uses the OS engine on supported desktop builds or user-installed
-# Tesseract. PDF page 1 uses Windows.Data.Pdf or Quartz when available,
-# with poppler-utils as the fallback/Linux renderer (pdf_raster.py).
-# Missing engines/renderers degrade gracefully without blocking the app.
+# ZERO Python dependencies by design: we shell out to the user-installed
+# `tesseract` binary (never bundled; the desktop builds use the OS engine
+# instead, see ocr_engines.py). PDFs are rasterized natively on Windows
+# (Windows.Data.Pdf) and macOS (Quartz), by poppler-utils elsewhere — see
+# pdf_raster.py. Everything is detected at runtime and degrades gracefully:
+# the route layer turns "not available" into a friendly message and the app
+# runs exactly as before.
 # ============================================================================
 
 import logging
@@ -69,6 +72,7 @@ def tesseract_info() -> dict:
     info["poppler"] = _poppler_available()
     from app.services import pdf_raster
 
+    # "windows" | "macos" | "poppler" | None — the PDF renderer this box uses
     info["pdf"] = pdf_raster.pdf_renderer(poppler_ok=info["poppler"])
     _cache.update(at=now, info=info)
     return info
@@ -328,12 +332,17 @@ def preprocess_page(data: bytes):
 
 
 # ---------------------------------------------------------------------------
-# PDF handling — native renderer with poppler fallback, page 1 only (spec §3)
+# PDF handling — page 1 only (spec §3); renderers live in pdf_raster.py
 # ---------------------------------------------------------------------------
 
 
 def rasterize_pdf(data: bytes, dpi: int = PDF_DPI):
-    """Rasterize page 1 using the native renderer, then poppler fallback."""
+    """Rasterize PDF page 1 to PNG bytes. Returns (png_bytes, page_count).
+
+    Natively on Windows (Windows.Data.Pdf) and macOS (Quartz) — nothing to
+    install — with poppler-utils as the fallback and the Linux path
+    (app/services/pdf_raster.py, issue #116). Raises ValueError with a
+    per-platform message when nothing can render here."""
     from app.services import pdf_raster
 
     return pdf_raster.rasterize(data, dpi, poppler_ok=poppler_available())
@@ -731,6 +740,8 @@ def parse_reference(text: str) -> Optional[str]:
             continue
         if re.match(r"^\d{1,2}/\d{1,2}(?:/\d{2,4})?$", token):
             continue  # a date after "Receipt" — not a number
+        if token.lower() in ("no", "num", "number", "id"):
+            continue
         return token[:40]
     return None
 
@@ -820,32 +831,9 @@ def save_intake(db, data: bytes, original_filename: str, mime_type: str) -> str:
     return intake_id
 
 
-def _intake_created_at(meta, intake_id: str) -> datetime:
-    """Validate sidecar dates and normalize aware timestamps to local time.
-
-    Existing sidecars store naive local timestamps; preserve their meaning
-    while allowing ISO timestamps with an explicit UTC offset.
-    """
-    if not isinstance(meta, dict) or not isinstance(meta.get("created_at"), str):
-        raise ValueError("invalid intake timestamp")
-    if not _INTAKE_ID_RE.fullmatch(intake_id) or meta.get("intake_id") != intake_id:
-        raise ValueError("invalid intake identity")
-    stored = meta.get("stored_name") or f"{intake_id}.png"
-    if (
-        not isinstance(stored, str)
-        or Path(stored).name != stored
-        or Path(stored).stem != intake_id
-        or Path(stored).suffix not in _INTAKE_EXTS
-    ):
-        raise ValueError("invalid intake filename")
-    created = datetime.fromisoformat(meta["created_at"])
-    if created.tzinfo is not None:
-        created = created.astimezone().replace(tzinfo=None)
-    return created
-
-
-def get_intake(intake_id: str) -> Optional[dict]:
-    """Load an unexpired intake with its file bytes, or None."""
+def intake_file(db, intake_id: str) -> Optional[StoredFile]:
+    """The unexpired pending scan with this id (bytes not loaded), or None.
+    An expired one is deleted on the way (and committed)."""
     if not _INTAKE_ID_RE.fullmatch(intake_id or ""):
         return None
     row = _pending(db).filter(StoredFile.token == intake_id).first()
@@ -855,29 +843,7 @@ def get_intake(intake_id: str) -> Optional[dict]:
         db.delete(row)
         db.commit()
         return None
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    try:
-        created = _intake_created_at(meta, intake_id)
-    except (KeyError, ValueError):
-        delete_intake(intake_id)
-        return None
-    if created < datetime.now() - timedelta(hours=INTAKE_TTL_HOURS):
-        delete_intake(intake_id)
-        return None
-    stored = Path(meta.get("stored_name") or f"{intake_id}.png").name
-    file_path = (base / stored).resolve()
-    if not file_path.is_relative_to(INTAKE_DIR.resolve()):
-        return None
-    if not file_path.is_file():
-        return None
-    try:
-        data = file_path.read_bytes()
-    except OSError:
-        return None
-    return {**meta, "data": data}
+    return row
 
 
 def get_intake(db, intake_id: str) -> Optional[dict]:
@@ -912,15 +878,9 @@ def list_intake(db) -> list[dict]:
     created_at, age_hours}. The dashboard's "Receipts to Review" card."""
     now = datetime.now(timezone.utc)
     out = []
-    for meta_path in sorted(
-        base.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
-    ):
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            created = _intake_created_at(meta, meta_path.stem)
-        except (OSError, ValueError, KeyError, json.JSONDecodeError):
-            continue
-        age_h = (now - created).total_seconds() / 3600
+    rows = _pending(db).order_by(StoredFile.created_at.desc(), StoredFile.id.desc())
+    for row in rows.all():
+        age_h = _age_hours(row, now)
         if age_h > INTAKE_TTL_HOURS:
             continue
         out.append(
@@ -940,17 +900,10 @@ def sweep_intake(db) -> int:
     commits (save_intake does)."""
     now = datetime.now(timezone.utc)
     removed = 0
-
-    entries: list[tuple[datetime, dict]] = []
-    for meta_path in INTAKE_DIR.glob("*.json"):
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            created = _intake_created_at(meta, meta_path.stem)
-        except (OSError, KeyError, ValueError, json.JSONDecodeError):
-            try:
-                meta_path.unlink()
-            except OSError:
-                pass
+    kept = []
+    for row in _pending(db).order_by(StoredFile.created_at, StoredFile.id).all():
+        if _age_hours(row, now) > INTAKE_TTL_HOURS:
+            db.delete(row)
             removed += 1
         else:
             kept.append(row)

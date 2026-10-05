@@ -3,7 +3,8 @@ from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel
-from app.schemas.common import Money, StrictModel
+from app.schemas.common import Money, NonBlankName, StrictModel
+from app.schemas.invoices import RateOut
 
 from app.models.items import ItemType, MovementType
 

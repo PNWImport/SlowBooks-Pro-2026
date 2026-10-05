@@ -26,7 +26,12 @@ from app.services.closing_date import check_closing_date
 from app.services.control_accounts import MissingControlAccount
 
 from app.routes.invoices._router import router
-from app.routes.invoices.helpers import _due_date_from_terms
+from app.routes.invoices.helpers import (
+    _due_date_from_terms,
+    _post_invoice_journal,
+    confirm_zero_total,
+    opening_status,
+)
 from app.services.donor_documents import document_label
 from app.services.terminology import document_reference, terms_from_db
 
@@ -116,9 +121,28 @@ def void_invoice(invoice_id: int, db: Session = Depends(get_db)):
                 reference=invoice.invoice_number,
             )
 
-    from app.services.inventory_hooks import reverse_sale_for_invoice
+    # ---- Phase 11: reverse inventory movements ----
+    # Pass the ORIGINAL (invoice, id) so reverse_sale looks up the sale's
+    # historical unit_cost — this keeps the reversal balanced even if
+    # avg_cost moved between the sale and the void.
+    from app.services.inventory_service import reverse_sale
 
-    reverse_sale_for_invoice(db, invoice, txn_date=invoice.date)
+    for line in invoice.lines:
+        if not line.item_id:
+            continue
+        item = db.query(Item).filter(Item.id == line.item_id).first()
+        if item and item.track_inventory:
+            reverse_sale(
+                db,
+                item,
+                quantity=Decimal(str(line.quantity)),
+                source_type="invoice_void",
+                source_id=invoice.id,
+                original_source_type="invoice",
+                original_source_id=invoice.id,
+                txn_date=invoice.date,
+                post_journal=not cost_in_import,
+            )
 
     invoice.status = InvoiceStatus.VOID
     invoice.balance_due = Decimal("0")
@@ -390,22 +414,41 @@ def write_off_invoice(
 
 
 @router.post("/{invoice_id}/duplicate", response_model=InvoiceResponse, status_code=201)
-def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
-    """Duplicate — copy the invoice under a new number."""
+def duplicate_invoice(
+    invoice_id: int,
+    data: Optional[ZeroTotalConfirmation] = None,
+    db: Session = Depends(get_db),
+):
+    """Duplicate — the same sale under a new number, dated today and not
+    sent yet. The copy carries what the original says about the sale: its
+    currency and the rate it was booked at, the job, class and PO number,
+    and each line's item, job, class and cost code. Each line's tax is the
+    customer's as they stand today. It posts the way a new invoice does.
+
+    The copy used to drop the currency and rate, so a EUR 850.00 invoice's
+    duplicate was a $850.00 invoice (and posted $850 where the original
+    booked $935), and it dropped the job and every line's job, class and
+    cost code, so the copy was missing from job costing (found integrating
+    the 2.17.3 exploratory fixes)."""
+    from app.services.accounting import compute_line_totals, taxed_copy_lines
+    from app.services.inventory_hooks import post_sale_for_invoice
+
     words = terms_from_db(db)
     original = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not original:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     today = date.today()
-
-    due_date = _due_date_from_terms(today, original.terms)
-    # A fresh sale copies document lines, not separately assessed late fees.
-    # Line amounts are kept; tax follows the customer as they stand today.
-    from app.services.accounting import compute_line_totals, taxed_copy_lines
-
     copied = taxed_copy_lines(original.lines, original.customer)
     subtotal, tax_amount, total = compute_line_totals(copied, original.tax_rate)
+    noun = document_label(original, words).lower()
+    confirm_zero_total(
+        total,
+        bool(data and data.allow_zero_total),
+        noun,
+        "duplicating it",
+        question=f"This {noun} adds up to $0.00. Duplicate it anyway?",
+    )
 
     new_invoice = Invoice(
         invoice_number=next_invoice_number(db),
@@ -430,6 +473,8 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
         tax_amount=tax_amount,
         total=total,
         balance_due=total,
+        currency=original.currency,
+        exchange_rate=original.exchange_rate,
         is_pledge=original.is_pledge,
         fair_value_amount=original.fair_value_amount,
         fair_value_description=original.fair_value_description,
@@ -437,12 +482,12 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
         class_id=original.class_id,
         job_id=original.job_id,
     )
-    face = document_label(new_invoice, words)
     db.add(new_invoice)
     db.flush()
 
+    new_lines = []
     for oline, cline in zip(original.lines, copied):
-        new_line = InvoiceLine(
+        line = InvoiceLine(
             invoice_id=new_invoice.id,
             item_id=oline.item_id,
             description=oline.description,
@@ -450,8 +495,8 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
             rate=oline.rate,
             amount=_q(Decimal(str(oline.quantity)) * Decimal(str(oline.rate))),
             class_name=oline.class_name,
-            class_id=oline.class_id,
             job_id=oline.job_id,
+            class_id=oline.class_id,
             cost_code_id=oline.cost_code_id,
             is_taxable=cline.is_taxable,
             line_order=oline.line_order,
@@ -459,67 +504,14 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
         db.add(line)
         new_lines.append(line)
 
-    # Journal Entry — mirror what create_invoice does (DR A/R, CR Income per line)
-    ar_id = get_ar_account_id(db)
-    default_income_id = get_default_income_account_id(db)
-    tax_account_id = get_sales_tax_account_id(db)
-
-    if ar_id and default_income_id:
-        journal_lines = []
-        # Debit A/R for total
-        journal_lines.append(
-            {
-                "account_id": ar_id,
-                "debit": Decimal(str(new_invoice.total)),
-                "credit": Decimal("0"),
-                "description": document_reference(face, new_number),
-            }
-        )
-        # Credit income for each line
-        for oline in original.lines:
-            line_amount = Decimal(str(oline.amount))
-            if line_amount == 0:
-                continue
-            income_id = default_income_id
-            if oline.item_id:
-                item = db.query(Item).filter(Item.id == oline.item_id).first()
-                if item and item.income_account_id:
-                    income_id = item.income_account_id
-            journal_lines.append(
-                {
-                    "account_id": income_id,
-                    "debit": Decimal("0"),
-                    "credit": line_amount,
-                    "description": oline.description or "",
-                    "class_id": oline.class_id,
-                    "job_id": oline.job_id,
-                    "cost_code_id": oline.cost_code_id,
-                }
-            )
-        # Credit sales tax if any
-        if new_invoice.tax_amount and new_invoice.tax_amount > 0 and tax_account_id:
-            journal_lines.append(
-                {
-                    "account_id": tax_account_id,
-                    "debit": Decimal("0"),
-                    "credit": Decimal(str(new_invoice.tax_amount)),
-                    "description": "Sales tax",
-                }
-            )
-
-        customer = original.customer
-        txn = create_journal_entry(
-            db,
-            today,
-            document_reference(face, new_number, customer.name if customer else ""),
-            journal_lines,
-            source_type="invoice",
-            source_id=new_invoice.id,
-            class_id=new_invoice.class_id,
-            job_id=new_invoice.job_id,
-            reference=new_number,
-        )
-        new_invoice.transaction_id = txn.id
+    # The posting a new invoice gets: DR A/R, CR income per line with its
+    # job / class / cost code, CR sales tax — converted to home currency at
+    # the copy's rate.
+    customer = original.customer
+    txn = _post_invoice_journal(
+        db, new_invoice, new_lines, customer.name if customer else ""
+    )
+    new_invoice.transaction_id = txn.id
 
     # Phase 11 (audit fix): a duplicated invoice is a FRESH sale, so it
     # must hit the inventory ledger just like create_invoice does.

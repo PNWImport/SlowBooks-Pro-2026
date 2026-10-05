@@ -5,7 +5,14 @@ from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator
 
 from app.models.estimates import EstimateStatus
-from app.schemas.common import Money, StrictModel, TaxRate, validate_non_negative_line
+from app.schemas.common import (
+    Money,
+    StrictModel,
+    TaxRate,
+    TaxRateOut,
+    validate_non_negative_line,
+)
+from app.schemas.invoices import RateOut
 
 
 class EstimateLineCreate(StrictModel):

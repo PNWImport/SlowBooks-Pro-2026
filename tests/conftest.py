@@ -51,13 +51,6 @@ os.environ["SESSION_IDLE_TIMEOUT_SECONDS"] = "0"  # Disable idle expiry in tests
 os.environ.setdefault("SLOWBOOKS_OCR_ENGINE", "tesseract")
 # Point the app at an in-memory DB by default; fixtures override per-test.
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
-# Uploads, attachments and backups go to a throwaway directory, never the
-# checkout's app/static/uploads or backups/ (a developer's real files on a
-# working install). Tests of the override itself set or clear it per-test.
-if "SLOWBOOKS_DATA_DIR" not in os.environ:
-    import tempfile as _tempfile
-
-    os.environ["SLOWBOOKS_DATA_DIR"] = _tempfile.mkdtemp(prefix="slowbooks-test-data-")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -190,21 +183,21 @@ from app.main import app  # noqa: E402
 _SUITE_SESSION_FACTORY = sessionmaker(autocommit=False, autoflush=False)
 
 
-_SUITE_SESSION_FACTORY = sessionmaker(autocommit=False, autoflush=False)
-
-
-def _shared_factory(engine):
-    """Reuse listener registration while retaining a fresh engine per test."""
+def _shared_factory(bind):
     from app.services.audit import register_audit_hooks
 
-    _SUITE_SESSION_FACTORY.configure(bind=engine)
-    register_audit_hooks(_SUITE_SESSION_FACTORY)
+    # create_savepoint: every Session on this connection — the test's, the
+    # client's, one the app opens itself — runs in its own SAVEPOINT, so
+    # session.commit() releases the savepoint and never touches the outer
+    # transaction that the db_engine fixture rolls back.
+    _SUITE_SESSION_FACTORY.configure(
+        bind=bind, join_transaction_mode="create_savepoint"
+    )
+    register_audit_hooks(_SUITE_SESSION_FACTORY)  # idempotent via its sentinel
     return _SUITE_SESSION_FACTORY
 
 
-@pytest.fixture
-def db_engine():
-    """Per-test in-memory SQLite engine with full schema."""
+def _test_engine(url="sqlite:///:memory:"):
     engine = create_engine(
         url,
         connect_args={"check_same_thread": False},
@@ -234,10 +227,34 @@ def db_engine():
         conn.exec_driver_sql("BEGIN")
 
     Base.metadata.create_all(bind=engine)
-    # Route and direct-service sessions share this isolated DB and the same
-    # long-lived audit-hook target; no per-test listener targets accumulate.
-    db_module.engine = engine
-    db_module.SessionLocal = _shared_factory(engine)
+    return engine
+
+
+# ---------------------------------------------------------------------------
+# Issue #128: one engine and one schema for the whole run.
+#
+# Every test used to build its own engine and create_all() into it. Live
+# objects grew all run long (795k -> 1.36M, mostly DDL event dispatch and
+# column types that never freed), and the cost was linear in the size of the
+# suite. Now the schema exists once; a test gets a connection with an open
+# transaction, everything it does nests inside that as savepoints, and the
+# transaction is rolled back at the end. Isolation is by rollback, not by
+# rebuilding the world — and rowids restart with it, so `id == 1` still holds.
+#
+# The proof that no test sees another's data is a shuffled-order run, not
+# this comment: see the 2.13.0 gate record.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def _suite_engine(tmp_path_factory):
+    # A file rather than :memory:, for one reason: restoring a backup calls
+    # db_module.engine.dispose() so the app re-reads the overwritten file.
+    # On a :memory: database, closing the connection IS deleting the
+    # database — one restore test and every test after it would find an
+    # empty schema. On a file, dispose just reconnects.
+    path = tmp_path_factory.mktemp("suite") / "suite.db"
+    engine = _test_engine("sqlite:///" + path.as_posix())
     yield engine
     engine.dispose()
 
@@ -335,24 +352,9 @@ def _release_closed_event_loops():
 
 @pytest.fixture
 def TestSession(db_engine):
-    """Shared factory, bound to this test's isolated database."""
-    return _shared_factory(db_engine)
-
-
-@pytest.fixture(autouse=True)
-def _release_closed_event_loops():
-    """Remove closed loops retained by anyio's private per-run registry.
-
-    Anyio versions without this implementation detail simply skip cleanup.
-    """
-    yield
-    try:
-        from anyio.lowlevel import _run_vars
-    except Exception:
-        return
-    for loop in list(_run_vars):
-        if getattr(loop, "is_closed", lambda: False)():
-            _run_vars.pop(loop, None)
+    """The suite's session factory, bound to this test's transaction. The
+    `client` fixture wires get_db to this."""
+    return _SUITE_SESSION_FACTORY
 
 
 @pytest.fixture

@@ -3,6 +3,7 @@
 # then marks the estimate CONVERTED. PDFs are rendered with WeasyPrint.
 # ============================================================================
 
+from datetime import date
 from decimal import Decimal
 from typing import Optional
 
@@ -12,7 +13,12 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
-from app.routes.invoices.helpers import _due_date_from_terms, resolve_line_taxable
+from app.routes.invoices.helpers import (
+    _due_date_from_terms,
+    confirm_zero_total,
+    opening_status,
+    resolve_line_taxable,
+)
 from app.routes._helpers import clamp_pagination
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.invoices import Invoice, InvoiceLine
@@ -229,10 +235,14 @@ def update_estimate(
         estimate.subtotal = subtotal
         estimate.tax_amount = tax_amount
         estimate.total = total
-    elif data.tax_rate is not None:
-        subtotal, tax_amount, total = compute_line_totals(
-            estimate.lines, estimate.tax_rate
-        )
+    elif "tax_rate" in changes or "customer_id" in changes:
+        # A new rate or a new customer without resending the lines: the
+        # stored lines are re-totalled (a rate-only edit left the old tax and
+        # total in place), and a non-taxable customer's exemption covers them.
+        stored = list(estimate.lines)
+        if "customer_id" in changes:
+            resolve_line_taxable(db, stored, db.get(Customer, estimate.customer_id))
+        subtotal, tax_amount, total = compute_line_totals(stored, estimate.tax_rate)
         estimate.subtotal = subtotal
         estimate.tax_amount = tax_amount
         estimate.total = total
@@ -326,15 +336,23 @@ def convert_to_invoice(
     # Terms and due date as a new invoice for this customer gets them: the
     # customer's terms, else the company's (the form does the same).
     settings = get_settings(db)
-    terms = settings.get("default_terms", "Net 30")
-    due_date = _due_date_from_terms(estimate.date, terms)
+    customer = estimate.customer
+    terms = (customer.terms if customer else None) or settings.get(
+        "default_terms", "Net 30"
+    )
+    due_date = _due_date_from_terms(today, terms)
 
-    # A new invoice gets the customer's CURRENT tax treatment, computed —
-    # not the estimate's stored tax (see taxed_copy_lines).
-    from app.services.accounting import compute_line_totals, taxed_copy_lines
-
-    copied = taxed_copy_lines(estimate.lines, estimate.customer)
-    subtotal, tax_amount, total = compute_line_totals(copied, estimate.tax_rate)
+    # The bill-to is the estimate's, else the customer's, and the ship-to
+    # the customer's; the notes are the estimate's, else the company's
+    # default invoice notes. The converted invoice printed with no address
+    # and without the default notes (2.17.3 exploratory F21).
+    address = {f"bill_{k}": getattr(estimate, f"bill_{k}") for k in _ADDRESS_PARTS}
+    if customer and not any(address.values()):
+        address = _customer_bill_to(customer)
+    if customer:
+        address.update(
+            {f"ship_{k}": getattr(customer, f"ship_{k}") for k in _ADDRESS_PARTS}
+        )
 
     invoice = Invoice(
         invoice_number=invoice_number,
@@ -343,11 +361,6 @@ def convert_to_invoice(
         date=today,
         due_date=due_date,
         terms=terms,
-        bill_address1=estimate.bill_address1,
-        bill_address2=estimate.bill_address2,
-        bill_city=estimate.bill_city,
-        bill_state=estimate.bill_state,
-        bill_zip=estimate.bill_zip,
         subtotal=subtotal,
         tax_rate=estimate.tax_rate,
         tax_amount=tax_amount,
@@ -432,7 +445,7 @@ def convert_to_invoice(
 
         txn = create_journal_entry(
             db,
-            estimate.date,
+            today,
             document_reference(face, invoice_number, customer.name if customer else ""),
             journal_lines,
             source_type="invoice",

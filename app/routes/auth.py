@@ -29,6 +29,9 @@ from app.services.auth import (
     remember_this_start,
     set_password,
     session_credential,
+    remember_this_company,
+    signed_in_before_this_start,
+    signed_in_to_another_company,
 )
 from app.services.rate_limit import limiter
 from app.services.request_utils import client_ip as _client_ip
@@ -173,23 +176,30 @@ def auth_status(request: Request, db: Session = Depends(get_db)):
         "multi_user": is_multi_user(db),
     }
     if out["multi_user"] and not authenticated:
+        # The names, so the sign-in screen can offer a list instead of a
+        # blank field — the way a desktop bookkeeping package does. Names
+        # only, never roles; and only on a multi-user install, where the
+        # people on the LAN already know each other. Server Edition is
+        # documented for trusted networks; this is part of that trade.
         from app.models.users import User
 
         out["usernames"] = [
-            user.username
-            for user in db.query(User)
+            u.username
+            for u in db.query(User)
             .filter(User.is_active.is_(True))
             .order_by(User.username)
             .all()
         ]
+    # Whose books these are. The sign-in screen names them (with several
+    # companies on one machine, "Unlock Slowbooks" did not say whose
+    # password it wanted — explore 2.17.3, macbase1 F2), and first-run setup
+    # prefills the name, so setup neither re-asks for the name typed in the
+    # New Company dialog (F3) nor silently renames a file that already holds
+    # a company's books (2.9.0 gate).
+    out["company_name"] = _company_name(db)
+    out["desktop"] = _desktop_window(request)
     if setup_needed:
-        # First-run setup can be reached on a file that already holds a
-        # company's books (a file copied in, or seeded through the API
-        # before anyone set a password). The form prefills the name the
-        # books already carry and warns, so setup does not silently rename
-        # another company's ledger (2.9.0 gate).
         from app.models.transactions import Transaction
-        from app.services.settings_service import get_setting_raw
 
         out["has_data"] = db.query(Transaction.id).first() is not None
     if authenticated and request.session.get("username"):

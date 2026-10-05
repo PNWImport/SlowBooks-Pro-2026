@@ -367,7 +367,7 @@ const SettingsPage = {
                 <div class="settings-section" id="settings-ai" role="group" aria-labelledby="settings-h-ai-insights">
                     <h3 id="settings-h-ai-insights">AI Insights</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
-                        Bring your own key for xAI Grok, Groq, Cloudflare Workers AI (direct or self-hosted gateway), Anthropic Claude, OpenAI, Google Gemini, or a custom OpenAI-compatible endpoint.
+                        Bring-your-own-key access to Anthropic Claude, xAI Grok, Groq, Cloudflare Workers AI, OpenAI, or Google Gemini.
                         Used by the Analytics dashboard to generate observations, risks, and recommendations.
                         API keys are encrypted at rest with Fernet (AES-128-CBC + HMAC-SHA256).
                     </div>
@@ -1016,7 +1016,7 @@ const SettingsPage = {
                 const pdfNames = { windows: 'built into Windows', macos: 'built into macOS', poppler: 'via poppler-utils' };
                 const pdfNote = s.pdf
                     ? ` &middot; PDFs: ${escapeHtml(pdfNames[s.pdf] || s.pdf)}`
-                    : '<div style="font-size:11px; color:#b45309; margin-top:4px;">PDF scanning is not available on this machine (images still scan). '
+                    : '<div style="font-size:11px; color:var(--text-warning); margin-top:4px;">PDF scanning is not available on this machine (images still scan). '
                       + 'Linux: <code>sudo apt-get install poppler-utils</code>; other platforms: <code>brew install poppler</code> / poppler for Windows on PATH.</div>';
                 el.innerHTML = `<strong style="color:var(--text-success);">${escapeHtml(engineLabel)} is ready</strong>`
                     + (s.version ? ` <span style="color:var(--text-muted);">(${escapeHtml(s.version)})</span>` : '')
@@ -1273,7 +1273,7 @@ const SettingsPage = {
                 <div style="font-size:10px; color:var(--text-muted); margin:8px 0;">
                     Variables: {{ invoice.invoice_number }}, {{ invoice.total }}, {{ invoice.due_date }}, {{ customer_name }},
                     {{ company.company_name }}, {{ doc_label }}, {{ pay_url }}. Filters: | currency, | fdate
-                    <br><span style="opacity:.8;">{{ doc_label }} reads &ldquo;Invoice&rdquo; or &ldquo;Sales Receipt&rdquo; to match the document.
+                    <br><span>{{ doc_label }} reads &ldquo;Invoice&rdquo; or &ldquo;Sales Receipt&rdquo; to match the document.
                     {{ pay_url }} is only set when a payment provider is enabled &mdash; guard it with {% if pay_url %}.</span>
                 </div>
                 ${t.template_type === 'invoice' ? `<div style="margin-top:12px;">
@@ -1378,7 +1378,6 @@ const SettingsPage = {
         const needsEndpoint = !!currentSpec.needs_endpoint_url;
         const hasKey = !!cfg.has_api_key;
         const currentModel = cfg.model || '';
-        const displayedModel = currentModel || currentSpec.default_model || '';
 
         const providerOptions = providers.map(p =>
             `<option value="${escapeHtml(p.key)}"${p.key === currentProvider ? ' selected' : ''}>` +
@@ -1400,15 +1399,13 @@ const SettingsPage = {
             </div>
             <label class="form-field">
                 <span>Model</span>
-                <select id="ai-settings-model-select">
-                    ${SettingsPage._modelOptionsHtml(currentSpec, displayedModel)}
+                <select id="ai-settings-model-select" data-admin>
+                    ${SettingsPage._modelOptionsHtml(currentSpec, currentModel)}
                 </select>
-                <input type="text" id="ai-settings-model-custom"
-                       value="${escapeHtml(SettingsPage._isCustomModel(currentSpec, displayedModel) ? displayedModel : '')}"
-                       maxlength="255"
-                       placeholder="Type any provider model ID"
-                       style="margin-top:6px; ${SettingsPage._isCustomModel(currentSpec, displayedModel) ? '' : 'display:none;'}">
-                <small>Choose a tested default or select Custom… to enter a current model ID.</small>
+                <input type="text" id="ai-settings-model-custom" data-admin
+                       value="${escapeHtml(currentModel || '')}"
+                       placeholder="Type a model ID"
+                       style="margin-top:6px; ${SettingsPage._isCustomModel(currentSpec, currentModel) ? '' : 'display:none;'}">
             </label>
             <label class="form-field" id="ai-settings-cf-wrap" style="${needsAccount ? '' : 'display:none'}">
                 <span>Cloudflare Account ID</span>
@@ -1480,11 +1477,11 @@ const SettingsPage = {
         `;
     },
 
-    // True when the model isn't in the curated list. Providers without a
-    // bundled default (the generic adapter) must also start in Custom mode.
+    // True when the saved model isn't in the curated list — the dropdown
+    // should show "Custom…" pre-selected and reveal the text input.
     _isCustomModel(spec, model) {
+        if (!model) return false;
         const choices = (spec && spec.model_choices) || [];
-        if (!model) return choices.length === 0 && !(spec && spec.default_model);
         return choices.indexOf(model) === -1;
     },
 
@@ -1522,7 +1519,6 @@ const SettingsPage = {
                 modelSel.value === '__custom__' ? '' : 'none';
         };
         modelSel.addEventListener('change', syncCustomVisibility);
-        syncCustomVisibility();
 
         providerSel.addEventListener('change', () => {
             const spec = providers.find(p => p.key === providerSel.value) || {};
@@ -1975,3 +1971,4 @@ SettingsPage.toggleEquipment = async function (id, active) {
         SettingsPage.loadEquipment();
     } catch (err) { toast(err.message, 'error'); }
 };
+

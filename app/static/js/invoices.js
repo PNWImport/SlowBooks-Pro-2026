@@ -526,7 +526,9 @@ const InvoicesPage = {
                 </div>
                 <details style="margin-top:4px;" open>
                     <summary style="cursor:pointer; font-size:12px; font-weight:600;">Preview — this is what will be sent</summary>
-                    <iframe id="email-preview" sandbox="" title="Email preview" style="width:100%;height:260px;border:1px solid var(--border);border-radius:4px;margin-top:6px;background:#fff;"></iframe>
+                    <div id="email-preview" style="border:1px solid var(--border); border-radius:4px; padding:10px; margin-top:6px; max-height:260px; overflow:auto; background:#fff; color:#333;">
+                        <em>Loading…</em>
+                    </div>
                 </details>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -536,9 +538,10 @@ const InvoicesPage = {
         InvoicesPage.refreshEmailPreview(id, true);
     },
 
-    // The preview is rendered by the same server code that sends, then kept in
-    // a sandboxed iframe so an operator-authored template cannot execute in the
-    // application page.
+    // The preview is rendered by the SAME server code that sends, so what an
+    // operator reads here is what the customer receives. Before #140 the
+    // dialog showed a hardcoded subject and the saved template was never
+    // loaded at all — so there was nothing to preview and no way to tell.
     _previewTimer: null,
 
     queueEmailPreview(id) {
@@ -549,7 +552,7 @@ const InvoicesPage = {
     async refreshEmailPreview(id, fillSubject = false) {
         const form = $('#modal-body form');
         if (!form) return;
-        const frame = $('#email-preview');
+        const target = $('#email-preview');
         try {
             const out = await API.post(`/invoices/${id}/email-preview`, {
                 recipient: form.recipient.value || null,
@@ -557,9 +560,9 @@ const InvoicesPage = {
                 message: form.message.value || null,
             });
             if (fillSubject && !form.subject.value) form.subject.value = out.subject;
-            if (frame) frame.srcdoc = out.html_body;
+            if (target) target.innerHTML = out.html_body;
         } catch (err) {
-            if (frame) frame.srcdoc = `<p>Preview unavailable: ${escapeHtml(err.message)}</p>`;
+            if (target) target.textContent = `Preview unavailable: ${err.message}`;
         }
     },
 
@@ -769,21 +772,20 @@ const InvoicesPage = {
 
     recalc() {
         TaxExempt.enforce(InvoicesPage._customers, $('#inv-customer-select')?.value, $('#inv-lines'));
-        let subtotal = 0, taxable = 0;
-        $$('#inv-lines tr').forEach(row => {
-            const qty = parseFloat(row.querySelector('.line-qty')?.value) || 0;
-            const rate = parseFloat(row.querySelector('.line-rate')?.value) || 0;
-            const amount = qty * rate;
-            subtotal += amount;
-            if (row.querySelector('.line-taxable')?.checked !== false) taxable += amount;
-            const amountCell = row.querySelector('.line-amount');
-            if (amountCell) amountCell.textContent = formatCurrency(amount);
-        });
-        const taxPct = parseFloat($('[name="tax_rate"]')?.value) || 0;
-        const tax = taxable * (taxPct / 100);
-        $('#inv-subtotal').textContent = formatCurrency(subtotal);
-        $('#inv-tax').textContent = formatCurrency(tax);
-        $('#inv-total').textContent = formatCurrency(subtotal + tax);
+        const cur = $('#invoice-form [name="currency"]')?.value;
+        const rate = $('#invoice-form [name="tax_rate"]')?.value;
+        const t = SalesLines.totals($('#inv-lines'), rate, cur);
+        const kept = InvoicesPage._keptTax;
+        const taxable = $$('#inv-lines tr').some(row => row.querySelector('.line-taxable')?.checked !== false);
+        const keeping = kept != null && !(parseFloat(rate) > 0) && taxable;
+        if (keeping) {
+            t.tax = kept;
+            t.total = SalesLines.cents(t.subtotal + kept);
+        }
+        const hint = document.getElementById('inv-kept-tax');
+        if (hint) hint.style.display = keeping ? '' : 'none';
+        SalesLines.show(t, ['inv-subtotal', 'inv-tax', 'inv-total'], cur);
+        return t;
     },
 
     // Auto-fill due_date from date + terms when either changes. Backend

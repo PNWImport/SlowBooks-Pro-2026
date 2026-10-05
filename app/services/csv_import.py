@@ -99,6 +99,8 @@ def _contact_import(db: Session, csv_text: str, model, schema, fields, default_t
     created = 0
     skipped = 0
     errors = []
+    # The same name twice in one file: the second row must skip even before
+    # the first is flushed (sessions disable autoflush).
     imported_names = set()
 
     for i, row in enumerate(reader, start=2):
@@ -108,24 +110,27 @@ def _contact_import(db: Session, csv_text: str, model, schema, fields, default_t
                 errors.append(f"Row {i}: Missing name")
                 continue
 
-            existing = db.query(Customer).filter(Customer.name == name).first()
+            existing = db.query(model).filter(model.name == name).first()
             if existing or name in imported_names:
                 skipped += 1
                 continue
 
-            db.add(
-                Customer(
-                    name=name,
-                    company=row.get("Company", ""),
-                    email=row.get("Email", ""),
-                    phone=row.get("Phone", ""),
-                    bill_address1=row.get("Address", ""),
-                    bill_city=row.get("City", ""),
-                    bill_state=row.get("State", ""),
-                    bill_zip=row.get("ZIP", ""),
-                    terms=row.get("Terms", "Net 30"),
-                )
-            )
+            values = {"name": name}
+            for column, attr in fields:
+                value = _cell(row, column)
+                if value is not None:
+                    values[attr] = value
+            values["terms"], problem = _terms(row, default_terms)
+            if problem:
+                errors.append(f"Row {i}: {problem}")
+                continue
+            try:
+                data = schema.model_validate(values)
+            except ValidationError as exc:
+                errors.append(f"Row {i}: {_validation_message(exc, values)}")
+                continue
+
+            db.add(model(**data.model_dump()))
             imported_names.add(name)
             created += 1
         except Exception:
@@ -159,39 +164,29 @@ def import_customers(db: Session, csv_text: str) -> dict:
 
 
 def import_vendors(db: Session, csv_text: str) -> dict:
-    reader = csv.DictReader(io.StringIO(csv_text))
-    created = 0
-    skipped = 0
-    errors = []
-    imported_names = set()
+    fields = (
+        ("Company", "company"),
+        ("Email", "email"),
+        ("Phone", "phone"),
+        ("Address", "address1"),
+        ("City", "city"),
+        ("State", "state"),
+        ("ZIP", "zip"),
+    )
+    # The vendor form's default: Settings' Default Terms are invoice terms.
+    return _contact_import(db, csv_text, Vendor, VendorCreate, fields, "Net 30")
 
 
-            existing = db.query(Vendor).filter(Vendor.name == name).first()
-            if existing or name in imported_names:
-                skipped += 1
-                continue
-
-            db.add(
-                Vendor(
-                    name=name,
-                    company=row.get("Company", ""),
-                    email=row.get("Email", ""),
-                    phone=row.get("Phone", ""),
-                    address1=row.get("Address", ""),
-                    city=row.get("City", ""),
-                    state=row.get("State", ""),
-                    zip=row.get("ZIP", ""),
-                    terms=row.get("Terms", "Net 30"),
-                )
-            )
-            imported_names.add(name)
-            created += 1
-        except Exception:
-            logger.exception("Failed to import vendor row %d", i)
-            errors.append(f"Row {i}: import failed")
-
-    db.commit()
-    return {"created": created, "skipped": skipped, "errors": errors}
+def _amount(row: dict, key: str) -> Decimal | None:
+    """The cell as an amount (blank is 0), or None when it is not one."""
+    raw = (row.get(key) or "").strip().replace(",", "").lstrip("$")
+    if not raw:
+        return Decimal("0")
+    try:
+        value = Decimal(raw)
+    except InvalidOperation:
+        return None
+    return value if value.is_finite() else None
 
 
 def import_items(db: Session, csv_text: str) -> dict:
@@ -205,7 +200,6 @@ def import_items(db: Session, csv_text: str) -> dict:
     created = 0
     skipped = 0
     errors = []
-    imported_names = set()
 
     type_map = {
         "product": ItemType.PRODUCT,
@@ -222,7 +216,7 @@ def import_items(db: Session, csv_text: str) -> dict:
                 continue
 
             existing = db.query(Item).filter(Item.name == name).first()
-            if existing or name in imported_names:
+            if existing or item_name_key(name) in taken:
                 skipped += 1
                 continue
 
@@ -246,7 +240,7 @@ def import_items(db: Session, csv_text: str) -> dict:
                     cost=cost,
                 )
             )
-            imported_names.add(name)
+            taken.add(item_name_key(name))
             created += 1
         except Exception:
             logger.exception("Failed to import item row %d", i)
