@@ -5,7 +5,6 @@ Covers the fix for CodeQL py/path-injection alert #19.
 
 import io
 
-import pytest
 
 
 def test_same_name_uploads_keep_independent_contents(client):

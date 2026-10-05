@@ -4,11 +4,9 @@ Each test corresponds to a specific observed failure, recorded here so the
 behaviour cannot silently return.
 """
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from tests.conftest import WEASYPRINT_AVAILABLE
 
 
 def _bearer(token):

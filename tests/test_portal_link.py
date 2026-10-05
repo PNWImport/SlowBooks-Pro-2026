@@ -9,7 +9,6 @@ in a real browser, with an absolute URL the employee can actually reach."""
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 
 

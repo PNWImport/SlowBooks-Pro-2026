@@ -10,7 +10,6 @@
 
 import hashlib
 
-import pytest
 
 
 
