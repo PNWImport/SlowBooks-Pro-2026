@@ -77,8 +77,8 @@ def _enroll(client, emp_id, plan_id, start="2026-01-01"):
 
 def test_the_page_is_wired_into_the_router_and_nav():
     root = JS.parents[3]
-    app_js = (root / "app" / "static" / "js" / "app.js").read_text()
-    index = (root / "index.html").read_text()
+    app_js = (root / "app" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    index = (root / "index.html").read_text(encoding="utf-8")
 
     assert "'/hr/benefits'" in app_js
     assert "BenefitCoveragePage.render()" in app_js
@@ -91,9 +91,13 @@ def test_the_page_navigates_to_a_route_that_exists():
     nothing raises — this exact typo shipped and was caught in a browser."""
     import re
 
-    app_js = (JS.parents[3] / "app" / "static" / "js" / "app.js").read_text()
+    app_js = (JS.parents[3] / "app" / "static" / "js" / "app.js").read_text(
+        encoding="utf-8"
+    )
     routes = set(re.findall(r"^\s*'(/[^']*)':\s*\{", app_js, re.M))
-    for target in re.findall(r"App\.navigate\('#(/[^']*)'\)", JS.read_text()):
+    for target in re.findall(
+        r"App\.navigate\('#(/[^']*)'\)", JS.read_text(encoding="utf-8")
+    ):
         assert (
             target in routes
         ), f"benefit_coverage.js navigates to unregistered {target!r}"
@@ -281,13 +285,13 @@ def test_aca_months_narrow_when_coverage_ends_mid_year(client, seed_accounts):
 def test_the_page_prints_the_aca_caveat():
     """`data.note` says offer codes and safe harbors are not modelled. A grid
     of green ticks with no caveat reads as a filing-ready return."""
-    assert "data.note" in JS.read_text()
+    assert "data.note" in JS.read_text(encoding="utf-8")
 
 
 def test_the_page_says_what_is_encrypted_when_collecting_a_dependent():
     """A dependent is a family member who never consented to this system
     directly. The form says what happens to their identifiers."""
-    source = JS.read_text()
+    source = JS.read_text(encoding="utf-8")
     assert "encrypted at rest" in source
 
 
@@ -296,5 +300,7 @@ def test_the_page_says_what_is_encrypted_when_collecting_a_dependent():
 )
 def test_every_plan_kind_is_offerable_from_the_page(client, kind):
     """A kind missing from the dropdown is a kind the operator cannot record."""
-    assert f'"{kind}"' in JS.read_text() or f"'{kind}'" in JS.read_text()
+    assert f'"{kind}"' in JS.read_text(encoding="utf-8") or f"'{kind}'" in JS.read_text(
+        encoding="utf-8"
+    )
     assert _plan(client, name=f"Plan {kind}", kind=kind)["kind"] == kind

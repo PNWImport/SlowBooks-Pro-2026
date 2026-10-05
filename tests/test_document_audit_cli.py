@@ -53,7 +53,9 @@ def test_cli_checkpoint_export_and_verify(audit_cli, db_session, tmp_path, to_fi
     if to_file:
         args += ["--export", artifact_path]
     result = audit_cli(*args)
-    artifact = json.loads(artifact_path.read_text() if to_file else result.out)
+    artifact = json.loads(
+        artifact_path.read_text(encoding="utf-8") if to_file else result.out
+    )
     assert artifact["artifact"] == "slowbooks-audit-checkpoint"
     # Exercise both export destinations independently of checkpoint creation.
     stdout = audit_cli("export", 1)
@@ -62,7 +64,7 @@ def test_cli_checkpoint_export_and_verify(audit_cli, db_session, tmp_path, to_fi
     assert artifact.pop("exported_at")
     assert exported == artifact
     audit_cli("export", 1, "--out", artifact_path)
-    exported = json.loads(artifact_path.read_text())
+    exported = json.loads(artifact_path.read_text(encoding="utf-8"))
     assert exported.pop("exported_at")
     assert exported == artifact
     assert json.loads(audit_cli("verify-artifact", artifact_path).out)["ok"]

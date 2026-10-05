@@ -16,7 +16,9 @@ DOC = Path(__file__).resolve().parents[1] / "docs" / "data-model.md"
 
 def _documented_tables() -> set[str]:
     """Table names from the leading `| \\`name\\` |` cell of each doc row."""
-    return set(re.findall(r"^\|\s*`(\w+)`\s*\|", DOC.read_text(), re.MULTILINE))
+    return set(
+        re.findall(r"^\|\s*`(\w+)`\s*\|", DOC.read_text(encoding="utf-8"), re.MULTILINE)
+    )
 
 
 def test_every_model_table_is_documented():
@@ -35,7 +37,7 @@ def test_no_documented_table_is_phantom():
 
 
 def test_stated_table_count_matches_reality():
-    text = DOC.read_text()
+    text = DOC.read_text(encoding="utf-8")
     stated = re.search(r"(\d+) tables", text)
     assert stated, "docs/data-model.md no longer states a table count"
     assert int(stated.group(1)) == len(Base.metadata.tables), (

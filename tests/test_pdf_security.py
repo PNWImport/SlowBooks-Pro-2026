@@ -26,7 +26,7 @@ def _weasyprint_call_sites() -> list[tuple[Path, int, str]]:
     for path in APP.rglob("*.py"):
         if "__pycache__" in str(path):
             continue
-        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if "write_pdf(" in line or re.search(r"\bHTML\s*\(", line):
                 hits.append((path, lineno, line.strip()))
     return hits

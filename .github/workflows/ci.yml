@@ -131,6 +131,16 @@ jobs:
   # something changed in the suite, not in the runner.
   #
   # Verified on real Windows before wiring: 2030 tests, 0 failed, 65 skipped.
+  #
+  # October 2026, after this branch absorbed upstream 2.19.0: 6,231 tests,
+  # 165 skipped (budget 99 -> 175). The extra skips are this branch's own
+  # tests, not a regression: 88 are PDF-rendering tests that skip because the
+  # runner has no WeasyPrint native stack (pango/cairo, see tests/conftest.py),
+  # and the rest are PostgreSQL-only tests (concurrency, row locks, schema
+  # repair) that need MIGRATION_TEST_DATABASE_URL, which only the Linux job
+  # provides. Installing GTK here would turn the PDF skips into coverage, at
+  # the cost of the "no staging" simplicity above; until then the budget names
+  # the number honestly rather than hiding it.
   # ---------------------------------------------------------------------------
   test-windows:
     name: Test on Windows (portability)
@@ -166,7 +176,7 @@ jobs:
           # tests/test_browser_ui.py does.
           # +1: tests/test_field_names.py (#198) skips as one module without playwright too.
           # +1: tests/test_combobox.py (type-ahead pickers), the same.
-          MAX_SKIPS: "99"
+          MAX_SKIPS: "175"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified

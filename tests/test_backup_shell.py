@@ -44,7 +44,7 @@ def test_backup_cleanup_and_retention(tmp_path, fails):
     )
     remaining = list(backup_dir.glob("bookkeeper_*.sql.gz"))
     assert result.returncode == int(fails), result.stderr
-    assert unrelated.read_text() == "keep"
+    assert unrelated.read_text(encoding="utf-8") == "keep"
     if fails:
         assert len(remaining) == 31
         assert all(p.name.startswith("bookkeeper_old ") for p in remaining)

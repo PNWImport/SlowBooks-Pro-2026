@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_build_context_excludes_local_secrets_and_customer_data():
-    patterns = set((ROOT / ".dockerignore").read_text().splitlines())
+    patterns = set((ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines())
     assert {
         "**/.env*",
         "**/.slowbooks-*.key",
@@ -40,7 +40,7 @@ def test_build_context_excludes_local_secrets_and_customer_data():
 
 
 def test_runtime_image_removes_pip_module_and_launchers():
-    dockerfile = (ROOT / "Dockerfile").read_text()
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     for runtime_only_path in (
         "/usr/local/bin/pip",
         "/usr/local/bin/pip3",
@@ -52,7 +52,7 @@ def test_runtime_image_removes_pip_module_and_launchers():
 
 
 def test_gitignore_excludes_local_secrets_and_runtime_state():
-    patterns = set((ROOT / ".gitignore").read_text().splitlines())
+    patterns = set((ROOT / ".gitignore").read_text(encoding="utf-8").splitlines())
     assert {
         ".env",
         ".env.*",
@@ -79,7 +79,7 @@ def test_gitignore_excludes_local_secrets_and_runtime_state():
 def test_compose_passes_required_secrets_to_app(compose_name):
     import yaml
 
-    compose = yaml.safe_load((ROOT / compose_name).read_text())
+    compose = yaml.safe_load((ROOT / compose_name).read_text(encoding="utf-8"))
     env = compose["services"]["slowbooks"]["environment"]
     # PII encryption must fail loudly when unset; the session key is
     # auto-persisted and the settings key derived from the payroll secret
@@ -196,7 +196,7 @@ def _split_outside_braces(spec: str) -> list[str]:
 
 def _published_ports(compose_name: str) -> list[str]:
     """Every `ports:` entry in a compose file, as written."""
-    text = (ROOT / compose_name).read_text()
+    text = (ROOT / compose_name).read_text(encoding="utf-8")
     out, in_ports = [], False
     for line in text.splitlines():
         stripped = line.strip()
@@ -251,7 +251,7 @@ def test_prod_compose_publishes_nothing():
 
 def test_entrypoint_honors_app_host():
     """A config knob that silently does nothing is worse than no knob."""
-    text = (ROOT / "docker-entrypoint.sh").read_text()
+    text = (ROOT / "docker-entrypoint.sh").read_text(encoding="utf-8")
     assert "--host 0.0.0.0" not in text, (
         "docker-entrypoint.sh hardcodes --host, so APP_HOST is ignored: "
         "setting it in .env or compose changes nothing and warns nobody"
@@ -269,15 +269,15 @@ def test_native_default_is_loopback_while_containers_bind_internally():
     Docker and explicit Server Edition launches override this value because
     their own exposure controls live outside the application process.
     """
-    config = (ROOT / "app" / "config.py").read_text()
-    env_example = (ROOT / ".env.example").read_text()
+    config = (ROOT / "app" / "config.py").read_text(encoding="utf-8")
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
     assert 'os.getenv("APP_HOST", "127.0.0.1")' in config
     assert re.search(r"^APP_HOST=127\.0\.0\.1$", env_example, re.MULTILINE)
 
     import yaml
 
     for compose_name in ("docker-compose.yml", "docker-compose.prod.yml"):
-        compose = yaml.safe_load((ROOT / compose_name).read_text())
+        compose = yaml.safe_load((ROOT / compose_name).read_text(encoding="utf-8"))
         assert compose["services"]["slowbooks"]["environment"]["APP_HOST"] == (
             "0.0.0.0"
         )
@@ -287,7 +287,7 @@ def test_dockerignore_excludes_secrets_and_history():
     """Anything listed here cannot be baked into an image layer."""
     ignored = {
         line.strip()
-        for line in (ROOT / ".dockerignore").read_text().splitlines()
+        for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.startswith("#")
     }
     for required in (".env", ".git"):
@@ -300,7 +300,9 @@ def test_dockerignore_excludes_secrets_and_history():
 def test_app_container_is_runtime_hardened(compose_name):
     import yaml
 
-    app = yaml.safe_load((ROOT / compose_name).read_text())["services"]["slowbooks"]
+    app = yaml.safe_load((ROOT / compose_name).read_text(encoding="utf-8"))["services"][
+        "slowbooks"
+    ]
     assert app["read_only"] is True
     assert app["init"] is True
     assert app["cap_drop"] == ["ALL"]
@@ -313,7 +315,7 @@ def test_app_container_is_runtime_hardened(compose_name):
 def test_compose_prepares_writable_data_volumes_without_privileging_app(compose_name):
     import yaml
 
-    compose = yaml.safe_load((ROOT / compose_name).read_text())
+    compose = yaml.safe_load((ROOT / compose_name).read_text(encoding="utf-8"))
     init = compose["services"]["storage-init"]
     app = compose["services"]["slowbooks"]
 
@@ -338,7 +340,7 @@ def test_compose_prepares_writable_data_volumes_without_privileging_app(compose_
 
 
 def test_container_runs_as_non_root():
-    text = (ROOT / "Dockerfile").read_text()
+    text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     users = re.findall(r"^\s*USER\s+(\S+)", text, re.M)
     assert users, "Dockerfile has no USER directive — the container runs as root"
     assert users[-1] != "root", f"Dockerfile's final USER is {users[-1]}"
@@ -347,7 +349,7 @@ def test_container_runs_as_non_root():
 @pytest.mark.parametrize("compose", ["docker-compose.yml", "docker-compose.prod.yml"])
 def test_compose_does_not_hardcode_a_password(compose):
     """Credentials come from the environment, never from the file."""
-    text = (ROOT / compose).read_text()
+    text = (ROOT / compose).read_text(encoding="utf-8")
     for i, line in enumerate(text.splitlines(), 1):
         if line.strip().startswith("#"):
             continue

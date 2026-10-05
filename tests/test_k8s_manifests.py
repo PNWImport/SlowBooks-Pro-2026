@@ -20,7 +20,9 @@ K8S = Path(__file__).resolve().parents[1] / "k8s"
 
 
 def _load(name: str) -> list[dict]:
-    return [d for d in yaml.safe_load_all((K8S / name).read_text()) if d]
+    return [
+        d for d in yaml.safe_load_all((K8S / name).read_text(encoding="utf-8")) if d
+    ]
 
 
 def _one(name: str, kind: str) -> dict:
@@ -40,7 +42,9 @@ def test_every_manifest_parses_and_is_namespaced():
     for path in sorted(K8S.glob("*.yaml")):
         if path.name == "kustomization.yaml":
             continue
-        for doc in [d for d in yaml.safe_load_all(path.read_text()) if d]:
+        for doc in [
+            d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if d
+        ]:
             if doc["kind"] == "Namespace":
                 continue
             assert (
@@ -89,13 +93,15 @@ def test_rollout_strategy_is_safe_for_rwo():
 def test_probes_target_an_auth_exempt_path():
     """Probes carry no session. A probe on an authenticated path gets 401
     and the pod never becomes ready."""
-    main_py = (K8S.parent / "app" / "main.py").read_text()
+    main_py = (K8S.parent / "app" / "main.py").read_text(encoding="utf-8")
     container = _app_container()
     for probe in ("startupProbe", "readinessProbe", "livenessProbe"):
         assert probe in container, f"{probe} missing"
         path = container[probe]["exec"]["command"][-1]
         assert path == "/app/scripts/docker_healthcheck.py", path
-    script = (K8S.parent / "scripts" / "docker_healthcheck.py").read_text()
+    script = (K8S.parent / "scripts" / "docker_healthcheck.py").read_text(
+        encoding="utf-8"
+    )
     assert "http://127.0.0.1:3001/health" in script
     assert '"/health"' in main_py, "/health is not in main.py's auth-exempt list"
 
@@ -108,7 +114,9 @@ def test_probes_do_not_follow_the_https_redirect():
     container = _app_container()
     for probe in ("startupProbe", "readinessProbe", "livenessProbe"):
         assert "httpGet" not in container[probe], probe
-    script = (K8S.parent / "scripts" / "docker_healthcheck.py").read_text()
+    script = (K8S.parent / "scripts" / "docker_healthcheck.py").read_text(
+        encoding="utf-8"
+    )
     assert "{200, 307, 308}" in script and "_NoRedirect" in script
 
 
@@ -210,12 +218,16 @@ def test_secret_template_supplies_every_required_application_secret():
 def test_kustomization_excludes_the_secret_template():
     """Applying the template would create a Secret full of REPLACE_ME,
     which the app would then use as an encryption key."""
-    kust = yaml.safe_load((K8S / "kustomization.yaml").read_text())
+    kust = yaml.safe_load((K8S / "kustomization.yaml").read_text(encoding="utf-8"))
     assert "secret.example.yaml" not in kust["resources"]
 
 
 def test_kustomization_lists_every_other_manifest():
-    listed = set(yaml.safe_load((K8S / "kustomization.yaml").read_text())["resources"])
+    listed = set(
+        yaml.safe_load((K8S / "kustomization.yaml").read_text(encoding="utf-8"))[
+            "resources"
+        ]
+    )
     on_disk = {
         p.name
         for p in K8S.glob("*.yaml")
@@ -238,7 +250,11 @@ def test_network_policies_isolate_the_database_and_cache():
     """Default-deny ingress; Postgres opens only to the app and the migrate
     Job, Redis only to the app, the app only to the ingress namespace."""
     docs = [
-        d for d in yaml.safe_load_all((K8S / "networkpolicy.yaml").read_text()) if d
+        d
+        for d in yaml.safe_load_all(
+            (K8S / "networkpolicy.yaml").read_text(encoding="utf-8")
+        )
+        if d
     ]
     by_name = {d["metadata"]["name"]: d["spec"] for d in docs}
     assert by_name["default-deny-ingress"]["podSelector"] == {}
@@ -260,15 +276,19 @@ def test_network_policies_isolate_the_database_and_cache():
 def test_postgres_speaks_tls_for_sslmode_require():
     """The Secret's DATABASE_URL uses sslmode=require; a Postgres without TLS
     refuses every connection from the app and the migrate Job."""
-    text = (K8S / "postgres.yaml").read_text()
+    text = (K8S / "postgres.yaml").read_text(encoding="utf-8")
     assert '"ssl=on"' in text and "ssl_key_file=/tls/server.key" in text
-    assert "sslmode=require" in (K8S / "secret.example.yaml").read_text()
+    assert "sslmode=require" in (K8S / "secret.example.yaml").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_migrate_job_uses_a_shell_the_alpine_image_has():
     job = next(
         d
-        for d in yaml.safe_load_all((K8S / "migrate-job.yaml").read_text())
+        for d in yaml.safe_load_all(
+            (K8S / "migrate-job.yaml").read_text(encoding="utf-8")
+        )
         if d and d["kind"] == "Job"
     )
     for c in job["spec"]["template"]["spec"]["containers"] + job["spec"]["template"][

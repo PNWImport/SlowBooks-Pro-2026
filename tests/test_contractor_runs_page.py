@@ -183,14 +183,14 @@ def test_nav_entry_in_index():
 
 
 def test_status_badges_cover_all_states():
-    js = (JS / "contractor_runs.js").read_text()
+    js = (JS / "contractor_runs.js").read_text(encoding="utf-8")
     assert "processed" in js
     assert "void" in js
     assert "draft" in js
 
 
 def test_processed_run_exposes_void_action():
-    js = (JS / "contractor_runs.js").read_text()
+    js = (JS / "contractor_runs.js").read_text(encoding="utf-8")
     assert "ContractorRunsPage.voidRun" in js
     assert "/contractor-runs/${runId}/void" in js
     assert "does not recall an ACH" in js

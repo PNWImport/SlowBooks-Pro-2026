@@ -36,7 +36,8 @@ def test_master_key_creation_fallback_and_hard_failure(monkeypatch, tmp_path):
     _reset(monkeypatch, key_file)
     created = crypto._load_or_create_master_key()
     assert key_file.read_bytes() == created
-    assert key_file.stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":  # Windows has no owner-only mode bits
+        assert key_file.stat().st_mode & 0o777 == 0o600
 
     fallback = tmp_path / "fallback.key"
     _reset(monkeypatch, fallback)
@@ -46,7 +47,8 @@ def test_master_key_creation_fallback_and_hard_failure(monkeypatch, tmp_path):
     )
     fallback_key = crypto._load_or_create_master_key()
     assert fallback.read_bytes() == fallback_key
-    assert fallback.stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        assert fallback.stat().st_mode & 0o777 == 0o600
 
     _reset(monkeypatch, tmp_path / "missing" / "key")
     with pytest.raises(RuntimeError, match="refusing to use an ephemeral key"):

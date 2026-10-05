@@ -157,7 +157,9 @@ def test_sales_receipt_hook_failure_rolls_back_whole_receipt(
         raise ValueError("Synthetic inventory rejection")
 
     monkeypatch.setattr(inventory_hooks, "post_sale_for_invoice", fail)
-    result = report.import_sales_receipt_report(db_session, fixture.FIXTURE.read_text())
+    result = report.import_sales_receipt_report(
+        db_session, fixture.FIXTURE.read_text(encoding="utf-8")
+    )
     assert result["imported"] == 0 and len(result["errors"]) == 3
     assert "Synthetic inventory rejection" not in str(result["errors"])
     assert all("server log" in message for message in result["errors"])

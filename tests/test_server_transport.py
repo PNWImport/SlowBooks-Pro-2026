@@ -124,7 +124,7 @@ def test_desktop_remains_loopback_http(monkeypatch):
 def test_windows_installer_restricts_privileges_and_firewall():
     source = (
         Path(__file__).parents[1] / "scripts/windows/serveredition-install.ps1"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "/RU SYSTEM" not in source
     assert "/RL HIGHEST" not in source
     assert "/RU 'NT AUTHORITY\\LOCALSERVICE' /RL LIMITED" in source
@@ -137,7 +137,7 @@ def test_windows_installer_restricts_privileges_and_firewall():
 def test_windows_updater_checks_https_without_bypassing_trust():
     source = (
         Path(__file__).parents[1] / "scripts/windows/update-server-edition.ps1"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert '"https://${HealthHost}:$Port/health"' in source
     assert '"http://127.0.0.1:$Port/health"' not in source
     assert "SkipCertificateCheck" not in source

@@ -82,7 +82,7 @@ def test_migration_enum_labels_match_the_models():
     checked = 0
     problems = []
     for path in _migration_files():
-        src = path.read_text()
+        src = path.read_text(encoding="utf-8")
         match = re.search(r"^_ENUMS\s*=\s*\{(.*?)^\}", src, re.S | re.M)
         if not match:
             continue
@@ -113,7 +113,9 @@ def test_no_migration_declares_a_lowercase_inline_enum():
     """
     offenders = []
     for path in _migration_files():
-        for block in re.findall(r"sa\.Enum\(([^)]*)\)", path.read_text(), re.S):
+        for block in re.findall(
+            r"sa\.Enum\(([^)]*)\)", path.read_text(encoding="utf-8"), re.S
+        ):
             labels = re.findall(r"""["']([^"']+)["']""", block)
             # The trailing name="..." kwarg is lowercase by design; skip it.
             value_labels = [
@@ -143,7 +145,10 @@ def test_every_model_table_is_created_by_a_migration():
     created = set()
     for path in _migration_files():
         created |= set(
-            re.findall(r"""create_table\(\s*["']([a-z_]+)["']""", path.read_text())
+            re.findall(
+                r"""create_table\(\s*["']([a-z_]+)["']""",
+                path.read_text(encoding="utf-8"),
+            )
         )
     missing = sorted(set(Base.metadata.tables) - created - {"alembic_version"})
     assert not missing, (

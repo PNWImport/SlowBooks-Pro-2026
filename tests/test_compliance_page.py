@@ -60,8 +60,8 @@ def _seed_chain(client, seed_accounts):
 def test_the_page_is_wired_into_the_router_and_nav():
     """A page file nothing routes to is dead code that still passes review."""
     root = JS.parents[3]
-    app_js = (root / "app" / "static" / "js" / "app.js").read_text()
-    index = (root / "index.html").read_text()
+    app_js = (root / "app" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    index = (root / "index.html").read_text(encoding="utf-8")
 
     assert "'/compliance'" in app_js
     assert "CompliancePage.render()" in app_js
@@ -102,7 +102,7 @@ def test_every_signature_status_has_a_badge_in_the_page():
     through to a raw string next to a colour that may not match its meaning."""
     from app.services import audit_signing
 
-    source = JS.read_text()
+    source = JS.read_text(encoding="utf-8")
     match = re.search(r"signatureBadge\(status, keyId\) \{(.*?)\n    \}", source, re.S)
     assert match, "signatureBadge() moved — update this test"
     mapped = set(re.findall(r"^\s{12}(\w+):", match.group(1), re.M))
@@ -202,7 +202,7 @@ def test_the_page_warns_when_a_checkpoint_comes_back_unsigned():
     """An unsigned checkpoint is a setup gap, not a success. If the page
     toasted plain success, an operator would believe they had protection they
     do not have."""
-    source = JS.read_text()
+    source = JS.read_text(encoding="utf-8")
     assert "unsigned" in source
     assert "AUDIT_CHECKPOINT_SIGNING_SECRET" in source
 
@@ -213,4 +213,4 @@ def test_the_page_warns_when_a_checkpoint_comes_back_unsigned():
 def test_the_page_reports_containment_separately_from_the_signature(value):
     """Collapsing 'unsigned' and 'tampered' into one red light would train an
     operator to ignore the light."""
-    assert value in JS.read_text()
+    assert value in JS.read_text(encoding="utf-8")

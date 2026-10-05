@@ -30,7 +30,9 @@ def test_prod_compose_requires_forwarded_allow_ips():
     """Compose must refuse to start without it, like the other secrets."""
     import yaml
 
-    compose = yaml.safe_load((ROOT / "docker-compose.prod.yml").read_text())
+    compose = yaml.safe_load(
+        (ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
+    )
     value = compose["services"]["slowbooks"]["environment"]["FORWARDED_ALLOW_IPS"]
     assert value.startswith("${FORWARDED_ALLOW_IPS:?"), (
         "docker-compose.prod.yml must hard-require FORWARDED_ALLOW_IPS — it "
@@ -40,13 +42,13 @@ def test_prod_compose_requires_forwarded_allow_ips():
 
 @pytest.mark.parametrize("compose", ["docker-compose.yml", "docker-compose.prod.yml"])
 def test_compose_exposes_rate_limit_storage(compose):
-    text = (ROOT / compose).read_text()
+    text = (ROOT / compose).read_text(encoding="utf-8")
     assert "RATE_LIMIT_STORAGE_URI" in text
 
 
 @pytest.mark.parametrize("compose", ["docker-compose.yml", "docker-compose.prod.yml"])
 def test_compose_defaults_to_one_worker_without_shared_rate_limits(compose):
-    text = (ROOT / compose).read_text()
+    text = (ROOT / compose).read_text(encoding="utf-8")
     assert 'APP_WORKERS: "${APP_WORKERS:-1}"' in text
 
 

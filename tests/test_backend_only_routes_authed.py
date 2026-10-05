@@ -22,7 +22,7 @@ MAIN = Path(__file__).resolve().parents[1] / "app" / "main.py"
 
 def _backend_only() -> list[tuple[str, str]]:
     """(method, path) pairs from test_wiring's _INTENTIONAL_BACKEND_ONLY."""
-    text = WIRING.read_text()
+    text = WIRING.read_text(encoding="utf-8")
     start = text.index("_INTENTIONAL_BACKEND_ONLY")
     block = text[start : text.index("\n}\n", start)]
     return re.findall(r'\("(\w+)",\s*"([^"]+)"\)', block)
@@ -30,7 +30,7 @@ def _backend_only() -> list[tuple[str, str]]:
 
 def _auth_exempt() -> tuple[tuple[str, ...], set[str]]:
     """The exemption lists as app/main.py actually declares them."""
-    text = MAIN.read_text()
+    text = MAIN.read_text(encoding="utf-8")
     prefixes = tuple(
         re.findall(
             r'"([^"]+)"',

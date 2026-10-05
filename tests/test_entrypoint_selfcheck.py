@@ -1,12 +1,16 @@
 """Exercise the real boot script without a database or server process."""
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
 
+@pytest.mark.skipif(
+    os.name != "posix" or not shutil.which("bash"), reason="Bash required"
+)
 @pytest.mark.parametrize("check_status", [0, 1, 2])
 def test_boot_requires_successful_wiring_check(tmp_path, check_status):
     for name, body in {

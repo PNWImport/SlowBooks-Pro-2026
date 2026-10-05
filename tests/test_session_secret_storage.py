@@ -1,6 +1,7 @@
 """Session key persistence must survive restarts without exposing the key."""
 
 import logging
+import os
 import stat
 
 import pytest
@@ -29,8 +30,9 @@ def test_generated_key_is_private_and_stable(key_path, initial, caplog):
         first = auth.get_session_secret()
         second = auth.get_session_secret()
     assert len(first) >= 48
-    assert first == second == key_path.read_text()
-    assert stat.S_IMODE(key_path.stat().st_mode) == 0o600
+    assert first == second == key_path.read_text(encoding="utf-8")
+    if os.name == "posix":  # Windows has no owner-only mode bits
+        assert stat.S_IMODE(key_path.stat().st_mode) == 0o600
     assert first not in caplog.text
     assert not list(key_path.parent.glob(".session-key-*"))
 
@@ -38,7 +40,7 @@ def test_generated_key_is_private_and_stable(key_path, initial, caplog):
 def test_existing_key_is_preserved(key_path):
     key_path.write_text("  synthetic-existing-key\n")
     assert auth.get_session_secret() == "synthetic-existing-key"
-    assert key_path.read_text() == "  synthetic-existing-key\n"
+    assert key_path.read_text(encoding="utf-8") == "  synthetic-existing-key\n"
 
 
 def test_read_only_storage_warns_without_disclosing_key(key_path, monkeypatch, caplog):

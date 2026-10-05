@@ -396,7 +396,7 @@ def test_the_reindex_cli_actually_sees_the_registrations(tmp_path):
     db_path = tmp_path / "reindex.db"
     setup = (
         "import os;"
-        f"os.environ['DATABASE_URL']='sqlite:///{db_path}';"
+        f"os.environ['DATABASE_URL']='sqlite:///{db_path.as_posix()}';"
         "import app.models;"
         "from app.database import Base, engine, SessionLocal;"
         "Base.metadata.create_all(engine);"
@@ -407,7 +407,7 @@ def test_the_reindex_cli_actually_sees_the_registrations(tmp_path):
     )
     env = {
         **os.environ,
-        "DATABASE_URL": f"sqlite:///{db_path}",
+        "DATABASE_URL": f"sqlite:///{db_path.as_posix()}",
         "PAYROLL_BLIND_INDEX_SECRET": "seed-key",
     }
     assert subprocess.run([sys.executable, "-c", setup], env=env).returncode == 0
@@ -427,7 +427,7 @@ def test_the_reindex_cli_actually_sees_the_registrations(tmp_path):
     # And the row is now findable under the new key.
     check = (
         "import os;"
-        f"os.environ['DATABASE_URL']='sqlite:///{db_path}';"
+        f"os.environ['DATABASE_URL']='sqlite:///{db_path.as_posix()}';"
         "import app.models;"
         "from app.database import SessionLocal;"
         "from app.models.benefit_coverage import BenefitPlan, BenefitKind, plan_kind_index;"
