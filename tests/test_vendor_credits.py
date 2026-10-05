@@ -632,3 +632,65 @@ def test_the_list_filters_by_vendor_and_status(client, seed_accounts, vendor):
 
 def test_unknown_credit_is_a_404(client):
     assert client.get("/api/vendor-credits/999999").status_code == 404
+
+
+@pytest.mark.parametrize("document", ["vendor_credit", "bill", "credit_memo"])
+@pytest.mark.parametrize("initial_tracking", [False, True])
+def test_void_reverses_recorded_stock_after_tracking_changes(
+    client, db_session, seed_accounts, vendor, initial_tracking, document
+):
+    item = _inventory_item(db_session, seed_accounts)
+    item.track_inventory = initial_tracking
+    # Bills have no global fallback account now: an untracked line needs the
+    # item's (or the vendor's) expense account to post to.
+    item.expense_account_id = seed_accounts["5100"].id
+    db_session.commit()
+    item_id = item.id
+    path = "/api/vendor-credits" if document == "vendor_credit" else "/api/bills"
+    party = {"vendor_id": vendor["id"]}
+    if document == "credit_memo":
+        customer = client.post("/api/customers", json={"name": "Stock Returns"})
+        assert customer.status_code == 201, customer.text
+        party = {"customer_id": customer.json()["id"]}
+        path = "/api/credit-memos"
+    created = client.post(
+        path,
+        json={
+            **party,
+            "date": "2026-04-05",
+            "lines": [{"item_id": item_id, "quantity": 2, "rate": "10.00"}],
+        },
+    )
+    assert created.status_code == 201, created.text
+    from app.models.items import Item
+
+    changed = client.put(
+        f"/api/items/{item_id}", json={"track_inventory": not initial_tracking}
+    )
+    assert changed.status_code == 200, changed.text
+    response = client.post(f"{path}/{created.json()['id']}/void")
+    assert response.status_code == 200, response.text
+    db_session.expire_all()
+    assert db_session.get(Item, item_id).quantity_on_hand == Decimal("0")
+    movements = (
+        db_session.query(InventoryMovement)
+        .filter(InventoryMovement.item_id == item_id)
+        .all()
+    )
+    assert sum((m.quantity for m in movements), Decimal("0")) == 0
+    assert len(movements) == (2 if initial_tracking else 0)
+
+
+@pytest.mark.parametrize("amount", ["0.001", "0.005", "1.001"])
+def test_application_rejects_fractional_cents(client, seed_accounts, vendor, amount):
+    bill = _bill(client, vendor, seed_accounts, "10.00")
+    credit = _credit(client, vendor, seed_accounts, "10.00")
+    response = client.post(
+        f"/api/vendor-credits/{credit['id']}/apply",
+        json={"bill_id": bill["id"], "amount": amount},
+    )
+    assert response.status_code == 422, response.text
+    assert client.get(f"/api/bills/{bill['id']}").json()["status"] == "unpaid"
+    assert Decimal(
+        client.get(f"/api/vendor-credits/{credit['id']}").json()["balance_remaining"]
+    ) == Decimal("10.00")

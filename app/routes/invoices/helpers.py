@@ -11,7 +11,6 @@ from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.orm import Session
 
-from app.models.accounts import Account
 from app.models.invoices import InvoiceStatus
 from app.models.items import Item
 from app.services.accounting import (

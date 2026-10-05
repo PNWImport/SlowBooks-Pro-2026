@@ -1,6 +1,5 @@
 """Employee route error handling and document/direct-deposit boundaries."""
 
-from pathlib import Path
 
 from app.models.payroll import Employee
 from app.routes import employees
@@ -81,12 +80,7 @@ def test_employee_bank_account_validation_and_removal(client):
     assert client.delete(f"{endpoint}/{account_id}").status_code == 404
 
 
-def test_employee_document_boundaries(client, db_session, monkeypatch, tmp_path):
-    static_root = tmp_path / "static"
-    upload_root = static_root / "uploads"
-    monkeypatch.setattr(employees, "STATIC_BASE", static_root)
-    monkeypatch.setattr(employees, "UPLOAD_BASE", upload_root)
-
+def test_employee_document_boundaries(client, db_session, monkeypatch):
     missing_endpoint = "/api/employees/999999/documents"
     assert (
         client.post(
@@ -118,8 +112,6 @@ def test_employee_document_boundaries(client, db_session, monkeypatch, tmp_path)
         == 400
     )
     monkeypatch.undo()
-    monkeypatch.setattr(employees, "STATIC_BASE", static_root)
-    monkeypatch.setattr(employees, "UPLOAD_BASE", upload_root)
 
     uploaded = client.post(
         endpoint,
@@ -132,7 +124,10 @@ def test_employee_document_boundaries(client, db_session, monkeypatch, tmp_path)
     from app.models.attachments import Attachment
 
     document = db_session.query(Attachment).filter(Attachment.id == document_id).first()
-    Path(static_root, document.file_path).unlink()
+    # Documents live in the database now: a copy flagged missing (an upgrade
+    # that could not find the original file) is named, not served.
+    document.stored_file.missing = True
+    db_session.commit()
     assert client.get(f"{endpoint}/{document_id}").status_code == 404
     assert client.delete(f"{endpoint}/{document_id}").status_code == 200
     assert client.get(f"{endpoint}/{document_id}").status_code == 404

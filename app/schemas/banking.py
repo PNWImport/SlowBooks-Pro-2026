@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, field_validator
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 from app.models.banking import ReconciliationStatus
 
@@ -72,7 +72,7 @@ class BankTransactionCreate(StrictModel):
     account_id: Optional[int] = None
     bank_account_id: Optional[int] = None
     date: dt_date
-    amount: Decimal
+    amount: Money
     category_account_id: int
     payee: Optional[str] = None
     description: Optional[str] = None
@@ -144,7 +144,7 @@ class ReconciliationCreate(StrictModel):
     account_id: Optional[int] = None
     bank_account_id: Optional[int] = None
     statement_date: dt_date
-    statement_balance: Decimal
+    statement_balance: Money
 
 
 class ReconciliationResponse(BaseModel):

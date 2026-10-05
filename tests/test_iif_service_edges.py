@@ -16,6 +16,7 @@ from app.models.payments import Payment
 from app.models.bills import Bill
 from app.models.transactions import Transaction
 from app.services import iif_import as iif
+from app.services.safe_errors import DataProblem
 
 
 @pytest.mark.parametrize("content", [None, "not an IIF file"])
@@ -131,7 +132,9 @@ def test_estimate_item_tax_rounding_and_deduplication(db_session):
     assert estimate.lines[0].item_id == item.id
     assert estimate.lines[0].rate == Decimal("5.01")
     assert iif.import_transactions(db_session, [block])["imported"]["estimates"] == 0
-    assert iif._import_estimate(db_session, {"NAME": " "}, []) is None
+    # A blank customer NAME is said, not dropped.
+    with pytest.raises(DataProblem, match="missing customer NAME"):
+        iif._import_estimate(db_session, {"NAME": " "}, [])
 
 
 @pytest.mark.parametrize("amount", [Decimal("10"), Decimal("-10")])
@@ -237,7 +240,8 @@ def test_invoice_tax_item_zero_line_and_default_income(db_session, seed_accounts
     assert any(
         "unmatched: Unmapped income" in line.description for line in transaction.lines
     )
-    assert iif._import_invoice(db_session, {"NAME": ""}, []) is None
+    with pytest.raises(DataProblem, match="missing customer NAME"):
+        iif._import_invoice(db_session, {"NAME": ""}, [])
 
 
 @pytest.mark.parametrize(

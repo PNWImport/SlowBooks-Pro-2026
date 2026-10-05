@@ -170,7 +170,7 @@ def get_1099_fire(year: int = Query(...), db: Session = Depends(get_db)):
     from app.services.tax_forms.irs1220 import generate_1099_fire
 
     try:
-        content, warnings = generate_1099_fire(db, year, _company())
+        content, warnings = generate_1099_fire(db, year, _company(db))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {

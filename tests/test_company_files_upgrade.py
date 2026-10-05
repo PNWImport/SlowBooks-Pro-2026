@@ -39,6 +39,7 @@ from starlette.requests import HTTPConnection
 import app.database as db_module
 from app.database import get_db
 from app.main import app
+from app.models.users import User
 
 ROOT = Path(__file__).resolve().parents[1]
 BEFORE = "d3d40d716684"
@@ -60,8 +61,19 @@ def _sign_in_here(Session) -> None:
     from app.services.settings_service import set_setting
 
     signed_in_to = auth_service._company_id()
+    # The session is also bound to its user's current credentials
+    # (auth.refresh_session_principal), so the signed-in user has to exist
+    # in the file being opened: sign in there as the same account.
+    with db_module.SessionLocal() as here:
+        accounts = [
+            {c.name: getattr(u, c.name) for c in User.__table__.columns}
+            for u in here.query(User).all()
+        ]
     with Session() as s:
         set_setting(s, "company_session_id", signed_in_to)
+        for account in accounts:
+            if s.get(User, account["id"]) is None:
+                s.add(User(**account))
         s.commit()
 
 

@@ -146,7 +146,7 @@ def test_function_defaults_from_class_and_explicit_none_wins(
 
 
 def test_journal_and_bill_lines_accept_function_and_voids_carry_it(
-    client, db_session, seed_accounts
+    client, db_session, seed_accounts, monkeypatch
 ):
     fund = client.post("/api/classes", json={"name": "Gala"}).json()
     income, expense = _accts(db_session)
@@ -172,8 +172,25 @@ def test_journal_and_bill_lines_accept_function_and_voids_carry_it(
     assert posted[expense.id]["function"] == "fundraising"
     assert posted[expense.id]["class_id"] == fund["id"]
 
+    from sqlalchemy.orm import Query
+
+    locked_entities = []
+    original_with_for_update = Query.with_for_update
+
+    def spy(query, *args, **kwargs):
+        entity = (
+            query.column_descriptions[0].get("entity")
+            if query.column_descriptions
+            else None
+        )
+        if entity is not None:
+            locked_entities.append(entity.__name__)
+        return original_with_for_update(query, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "with_for_update", spy)
     r = client.post(f"/api/journal/{je['id']}/void")
     assert r.status_code == 200, r.text
+    assert "Transaction" in locked_entities
     void_txn = (
         db_session.query(Transaction)
         .filter(
@@ -192,6 +209,13 @@ def test_journal_and_bill_lines_accept_function_and_voids_carry_it(
     ).json()
     by_name = {c["class_name"]: c for c in data["classes"]}
     assert by_name["Gala"]["expenses"] == 0.0
+
+    # The original row lock makes a second void idempotent under concurrency.
+    # (Production no longer refuses source-owned entries here: the journal
+    # void now follows the document for QBO-imported postings.)
+    again = client.post(f"/api/journal/{je['id']}/void")
+    assert again.status_code == 400
+    assert "already been voided" in again.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -572,16 +596,21 @@ def test_split_is_cents_exact_and_hours_basis_reads_time_entries(
             "pay_rate": 20,
         },
     ).json()
-    for job, hrs in ((a, 30), (b, 10)):
-        client.post(
+    for job, day, hrs in (
+        (a, "2026-07-11", 20),
+        (a, "2026-07-12", 10),
+        (b, "2026-07-12", 10),
+    ):
+        created = client.post(
             "/api/time-entries",
             json={
                 "employee_id": emp["id"],
-                "date": "2026-07-12",
+                "date": day,
                 "hours_regular": hrs,
                 "job_id": job["id"],
             },
         )
+        assert created.status_code == 201, created.text
     hours_rule = _rule(
         client,
         "Wages by grant hours",

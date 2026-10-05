@@ -19,7 +19,8 @@ def test_schedule_c_defaults_csv_and_mapping_upsert(client, seed_accounts, monke
         "/api/tax/schedule-c/csv?start_date=2026-01-01&end_date=2026-12-31"
     )
     assert csv.status_code == 200
-    assert csv.text.startswith("header")
+    # The export opens in Excel: it carries a UTF-8 byte-order mark.
+    assert csv.text.lstrip("\ufeff").startswith("header")
     assert len(calls) == 3
 
     account_id = seed_accounts["6000"].id

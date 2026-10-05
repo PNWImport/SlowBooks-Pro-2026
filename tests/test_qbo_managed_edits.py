@@ -186,6 +186,14 @@ def test_a_payment_shared_with_another_invoice_brings_that_invoice_in_too(
             }
         )
     ]
+    # QBO's own balances already net both payment lines (20 and 10)
+    from quickbooks.objects.invoice import Invoice as QBOInvoice
+    from tests.test_qbo_managed_voids import _invoice
+
+    books.sources[QBOInvoice] = [
+        _invoice("130", "1037", 50, balance=30),
+        _invoice("133", "1038", 40, balance=30),
+    ]
     books.documents()
     invoice = books.invoice("1037")
     r = client.put(

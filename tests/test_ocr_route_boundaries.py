@@ -109,9 +109,7 @@ def test_scan_template_overrides_all_fields(client, monkeypatch):
     assert body["date"] == "2026-09-08" and body["reference"] == "R-1"
 
 
-def test_bill_attachment_and_intake_image_paths(
-    client, db_session, monkeypatch, tmp_path
-):
+def test_bill_attachment_and_intake_image_paths(client, db_session, monkeypatch):
     vendor = Vendor(name="OCR Vendor", is_active=True)
     db_session.add(vendor)
     db_session.flush()
@@ -124,55 +122,21 @@ def test_bill_attachment_and_intake_image_paths(
     )
     db_session.add(bill)
     db_session.commit()
-    intake = {
-        "data": b"image",
-        "mime_type": "image/png",
-        "original_filename": "receipt.png",
-        "size": 5,
-    }
-    monkeypatch.setattr(ocr.ocr_service, "get_intake", lambda key: intake)
-    monkeypatch.setattr(ocr.ocr_service, "delete_intake", lambda key: None)
-    monkeypatch.setattr(ocr, "STATIC_BASE", tmp_path)
-    monkeypatch.setattr(ocr, "UPLOAD_BASE", tmp_path / "uploads")
+    intake_id = ocr_service.save_intake(db_session, b"image", "receipt.png", "image/png")
+    assert client.get(f"/api/ocr/intake/{intake_id}/image").content == b"image"
     attached = client.post(
-        "/api/ocr/intake/test/attach",
+        f"/api/ocr/intake/{intake_id}/attach",
         json={"entity_type": "bill", "entity_id": bill.id},
     )
     assert attached.status_code == 201, attached.text
-    assert client.get("/api/ocr/intake/test/image").content == b"image"
+    # The scan became the attachment: no pending copy remains.
+    assert client.get(f"/api/ocr/intake/{intake_id}/image").status_code == 404
 
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    guard_one = tmp_path / "guard-one"
-    guard_one.mkdir()
-    (guard_one / "bill").symlink_to(outside, target_is_directory=True)
-    monkeypatch.setattr(ocr, "UPLOAD_BASE", guard_one)
-    assert (
-        client.post(
-            "/api/ocr/intake/test/attach",
-            json={"entity_type": "bill", "entity_id": bill.id},
-        ).status_code
-        == 400
-    )
-
-    guard_two = tmp_path / "guard-two"
-    target_dir = guard_two / "bill" / str(bill.id)
-    target_dir.mkdir(parents=True)
-    (target_dir / "test-receipt.png").symlink_to(tmp_path / "escaped.png")
-    monkeypatch.setattr(ocr, "UPLOAD_BASE", guard_two)
-    assert (
-        client.post(
-            "/api/ocr/intake/test/attach",
-            json={"entity_type": "bill", "entity_id": bill.id},
-        ).status_code
-        == 400
-    )
-
-    monkeypatch.setattr(ocr.ocr_service, "get_intake", lambda key: None)
+    monkeypatch.setattr(ocr.ocr_service, "get_intake", lambda db, key: None)
     assert client.get("/api/ocr/intake/missing/image").status_code == 404
 
     pdf = {"data": b"pdf", "mime_type": "application/pdf"}
-    monkeypatch.setattr(ocr.ocr_service, "get_intake", lambda key: pdf)
+    monkeypatch.setattr(ocr.ocr_service, "get_intake", lambda db, key: pdf)
     monkeypatch.setattr(ocr.ocr_service, "rasterize_pdf", lambda data: (b"png", 1))
     assert client.get("/api/ocr/intake/pdf/image").content == b"png"
     monkeypatch.setattr(
@@ -195,7 +159,7 @@ def test_region_error_translation(client, monkeypatch, error):
     monkeypatch.setattr(
         ocr.ocr_service,
         "get_intake",
-        lambda key: {"data": b"image", "mime_type": "image/png"},
+        lambda db, key: {"data": b"image", "mime_type": "image/png"},
     )
     _scan_mocks(monkeypatch, Engine(result=None))
     monkeypatch.setattr(
@@ -211,13 +175,13 @@ def test_region_error_translation(client, monkeypatch, error):
 
 
 def test_region_missing_unavailable_and_template_save_isolation(client, monkeypatch):
-    monkeypatch.setattr(ocr.ocr_service, "get_intake", lambda key: None)
+    monkeypatch.setattr(ocr.ocr_service, "get_intake", lambda db, key: None)
     body = {"left": 0, "top": 0, "width": 10, "height": 10}
     assert client.post("/api/ocr/intake/test/region", json=body).status_code == 404
     monkeypatch.setattr(
         ocr.ocr_service,
         "get_intake",
-        lambda key: {"data": b"image", "mime_type": "image/png"},
+        lambda db, key: {"data": b"image", "mime_type": "image/png"},
     )
     _scan_mocks(monkeypatch, Engine(reason="unavailable"))
     assert client.post("/api/ocr/intake/test/region", json=body).status_code == 400

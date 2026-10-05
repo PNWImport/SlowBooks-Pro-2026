@@ -22,9 +22,10 @@ def _app_volume_paths(compose: str) -> list[str]:
 
 
 def _user_run(dockerfile: str) -> str:
-    """The RUN instruction that makes the app's user, continuation lines and all."""
-    m = re.search(r"^RUN useradd(?:[^\n]*\\\n)*[^\n]*\n", dockerfile, re.M)
-    assert m, "no RUN useradd in the Dockerfile"
+    """The RUN instruction that makes the app's user (adduser on the Alpine
+    base, useradd on a Debian one), continuation lines and all."""
+    m = re.search(r"^RUN (?:useradd|adduser)(?:[^\n]*\\\n)*[^\n]*\n", dockerfile, re.M)
+    assert m, "no RUN useradd/adduser in the Dockerfile"
     return m.group(0)
 
 

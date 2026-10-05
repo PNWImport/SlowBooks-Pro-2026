@@ -353,9 +353,7 @@ const BenefitCoveragePage = {
         const res = await fetch(`/api/benefit-coverage/enrollments/${enrollmentId}/cobra-notice`,
                                 { method: 'POST', credentials: 'same-origin' });
         if (!res.ok) {
-            let msg = 'COBRA notice generation failed';
-            try { msg = (await res.json()).detail || msg; } catch (_) {}
-            return toast(msg, 'error');
+            return toast(await API.responseError(res, 'COBRA notice generation failed'), 'error');
         }
         const url = URL.createObjectURL(await res.blob());
         window.open(url, '_blank');

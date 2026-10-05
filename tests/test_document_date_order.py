@@ -71,11 +71,9 @@ def test_a_schedule_ending_before_it_starts_is_refused(
     from app.models.recurring import RecurringInvoice
 
     r = client.post("/api/recurring", json=dict(schedule_body, end_date="2026-09-01"))
-    assert r.status_code == 400, r.text
-    assert r.json()["detail"] == (
-        "The end date (Sep 1, 2026) is before the start date (Oct 1, 2026). Pick "
-        "an end date on or after the start date, or leave it blank for no end."
-    )
+    # The create schema refuses it before the route's own check runs.
+    assert r.status_code == 422, r.text
+    assert "end_date cannot be before start_date" in r.text
     assert db_session.query(RecurringInvoice).count() == 0
 
     rec = client.post("/api/recurring", json=schedule_body).json()

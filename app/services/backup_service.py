@@ -386,11 +386,16 @@ def backup_path(filename: str) -> Path | None:
     safe_name = _safe_backup_filename(filename)
     if safe_name is None:
         return None
-    backup_root = os.path.normpath(str(BACKUP_DIR))
-    candidate = os.path.normpath(os.path.join(backup_root, safe_name))
-    if not candidate.startswith(backup_root + os.sep):
+    backup_root = Path(BACKUP_DIR).resolve()
+    candidate = Path(backup_root, safe_name)
+    # resolve() follows symlinks: a link inside the backups folder that
+    # points elsewhere must not be served or restored.
+    resolved = candidate.resolve()
+    if resolved != candidate and not resolved.is_relative_to(backup_root):
         return None
-    return Path(candidate)
+    if not os.path.normpath(str(candidate)).startswith(str(backup_root) + os.sep):
+        return None
+    return candidate
 
 
 def read_backup_facts(filename: str) -> dict:

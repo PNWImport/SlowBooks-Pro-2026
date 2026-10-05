@@ -13,10 +13,10 @@ def test_estimate_conversion_preserves_due_date_job_and_cost_code(
 ):
     job = _job(authed_client, seed_customer.id, "Converted project")
     cost = _code(authed_client, "09-01", "Converted labor", "labor")
-    settings = authed_client.put(
-        "/api/settings", json={"default_terms": "Due on receipt"}
-    )
-    assert settings.status_code == 200, settings.text
+    # The converted invoice takes the customer's terms (else the company's)
+    # and is dated the day it is made, not the estimate's date.
+    seed_customer.terms = "Due on receipt"
+    db_session.commit()
     created = authed_client.post(
         "/api/estimates",
         json={
@@ -38,7 +38,8 @@ def test_estimate_conversion_preserves_due_date_job_and_cost_code(
     converted = authed_client.post(f"/api/estimates/{created.json()['id']}/convert")
     assert converted.status_code == 200, converted.text
     invoice = db_session.get(Invoice, converted.json()["id"])
-    assert invoice.due_date == date(2026, 9, 8)
+    assert invoice.date == date.today()
+    assert invoice.due_date == date.today()
     assert invoice.job_id == job["id"]
     assert invoice.lines[0].job_id == job["id"]
     assert invoice.lines[0].cost_code_id == cost["id"]

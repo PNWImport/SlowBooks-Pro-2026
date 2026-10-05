@@ -53,9 +53,10 @@ def test_analysis_action_data_and_provider_wiring(
     elif key == "unpaid_bills":
         assert result["data"]["total_outstanding"] == 40
     elif key == "ar_aging":
-        assert result["data"]["total_outstanding"] == 80
+        # 80 invoiced less 20 of unapplied payments (see test_ai_query_tools).
+        assert result["data"]["total_outstanding"] == 60
     elif key == "ap_aging":
-        assert result["data"]["total_outstanding"] == 40
+        assert result["data"]["total_outstanding"] == 20
 
 
 def test_cash_position_excludes_non_cash_assets(db_session):

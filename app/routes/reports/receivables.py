@@ -550,7 +550,7 @@ def collection_letters(data: CollectionLetterRequest, db: Session = Depends(get_
         for inv in invs:
             inv.days_overdue = (today - inv.due_date).days if inv.due_date else 0
 
-        total_due = sum(float(inv.balance_due) for inv in invs)
+        total_due = sum(Decimal(str(inv.balance_due)) for inv in invs)
 
         try:
             pdf_bytes = generate_collection_letter_pdf(

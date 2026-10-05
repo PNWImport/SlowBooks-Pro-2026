@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
-def invoice(client):
+def invoice(client, seed_accounts):
     cust = client.post(
         "/api/customers", json={"name": "Probe Co", "email": "a@b.com"}
     ).json()
@@ -41,19 +41,18 @@ def invoice(client):
 
 
 def test_the_payload_the_dialog_actually_sends_is_accepted(
-    client, seed_accounts, invoice
+    client, seed_accounts, invoice, monkeypatch
 ):
-    """The claim is only this: the request clears validation.
+    """Prove the actual dialog payload reaches sending, independent of the
+    host's native PDF stack and SMTP configuration (3690ec1)."""
+    from app.routes.invoices import documents
+    from app.services import email_service
 
-    What happens *after* validation is host-dependent and is not what this
-    test is about — SMTP is unconfigured everywhere, so a machine with the
-    PDF stack answers 502 from the send, and one without it answers 500
-    because the attachment cannot be rendered. Asserting 502 made this pass
-    on Linux and fail on Windows CI, which is precisely the defect class
-    that job exists to catch (@ContractorKeith found the same shape in
-    2.10.2: a test that only passed where something was absent). Caught on
-    the 2.11.2 gate, by the job, before anyone ran it.
-    """
+    sent = []
+    monkeypatch.setattr(documents, "generate_invoice_pdf", lambda *a: b"PDF")
+    monkeypatch.setattr(
+        email_service, "send_email", lambda **kw: sent.append(kw) or True
+    )
     r = client.post(
         f"/api/invoices/{invoice['id']}/email",
         json={
@@ -62,11 +61,23 @@ def test_the_payload_the_dialog_actually_sends_is_accepted(
             "message": f"Please find attached Invoice #{invoice['invoice_number']}.",
         },
     )
-    assert r.status_code != 422, (
-        "the dialog's own payload is rejected before reaching the send: " f"{r.text}"
+    assert r.status_code == 200, r.text
+    assert len(sent) == 1
+    assert sent[0]["to_email"] == "a@b.com"
+    assert (
+        f"Please find attached Invoice #{invoice['invoice_number']}."
+        in sent[0]["html_body"]
     )
-    # It got past the request model and into the handler.
-    assert r.status_code in (200, 500, 502), r.text
+
+
+def test_an_unknown_field_is_still_refused_over_http(client, invoice):
+    """cc5dc87: accepting message must not weaken the strict request model."""
+    r = client.post(
+        f"/api/invoices/{invoice['id']}/email",
+        json={"recipient": "a@b.com", "message": "m", "nonsense": "x"},
+    )
+    assert r.status_code == 422
+    assert any(e["type"] == "extra_forbidden" for e in r.json()["detail"])
 
 
 def test_an_unknown_field_is_still_refused():
@@ -124,6 +135,16 @@ def test_the_dialog_and_the_route_agree_on_their_fields():
     assert "message" in accepted, "the route no longer accepts a message"
 
 
+def test_the_dialog_calls_preview_and_renders_it_into_the_preview_pane():
+    js = (ROOT / "app/static/js/invoices.js").read_text(encoding="utf-8")
+    assert "API.post(`/invoices/${id}/email-preview`" in js
+    # Production renders the preview into a plain pane (a div), not a sandboxed
+    # iframe; the failure branch uses textContent so an error is never markup.
+    assert 'id="email-preview"' in js and "sandbox" not in js[js.index('id="email-preview"') : js.index('id="email-preview"') + 200]
+    assert "target.innerHTML = out.html_body" in js
+    assert "target.textContent = `Preview unavailable" in js
+
+
 def test_the_operators_message_reaches_the_email_body(
     client, db_session, seed_accounts, invoice
 ):
@@ -139,8 +160,18 @@ def test_the_operators_message_reaches_the_email_body(
     assert "Ten days, as agreed." in body
 
 
-def test_an_operator_message_is_escaped(client, db_session, seed_accounts, invoice):
+@pytest.mark.parametrize("fallback", [False, True])
+def test_an_operator_message_is_escaped(
+    client, db_session, seed_accounts, invoice, monkeypatch, fallback
+):
     """It is operator-supplied text landing in an HTML email."""
+    if fallback:
+        from app.services import email_service
+
+        def unavailable(*args):
+            raise RuntimeError("synthetic missing template")
+
+        monkeypatch.setattr(email_service._jinja_env, "get_template", unavailable)
     from app.models.invoices import Invoice
     from app.services.email_service import render_invoice_email
     from app.services.settings_service import get_all_settings as get_settings

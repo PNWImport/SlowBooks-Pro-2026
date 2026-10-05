@@ -135,6 +135,36 @@ def test_opposite_sign_and_voided_postings_never_match(
     )
 
 
+def test_manual_match_rejects_voided_posting_and_reversal(
+    client, db_session, seed_accounts, feed, vendor
+):
+    expense = _expense(client, seed_accounts, vendor, "75", 6)
+    response = client.post(f"/api/expenses/{expense['id']}/void")
+    assert response.status_code == 200, response.text
+    reversal = (
+        db_session.query(Transaction)
+        .filter_by(source_type="expense_void", source_id=expense["id"])
+        .one()
+    )
+    import_transactions(
+        db_session, feed["id"], _lines((6, "-75", "original"), (6, "75", "reversal"))
+    )
+    rows = db_session.query(BankTransaction).order_by(BankTransaction.id).all()
+    for statement, transaction_id in zip(rows, (expense["id"], reversal.id)):
+        line = _bank_line(db_session, transaction_id, seed_accounts["1000"].id)
+        response = client.post(
+            f"/api/banking/transactions/{statement.id}/match",
+            json={"line_id": line.id},
+        )
+        assert response.status_code == 400, response.text
+        assert "void" in response.json()["detail"].lower()
+        db_session.refresh(statement)
+        db_session.refresh(line)
+        assert statement.transaction_line_id is None
+        assert statement.match_status == "unmatched"
+        assert not line.cleared
+
+
 def test_manual_match_unmatch_and_the_guards(
     client, db_session, seed_accounts, feed, vendor
 ):
@@ -193,7 +223,7 @@ def test_add_posts_and_links_a_withdrawal_a_card_charge_and_a_card_payment(
         json={"category_account_id": seed_accounts["6000"].id},
     )
     assert r.status_code == 200 and r.json()["match_status"] == "added", r.text
-    txn = db_session.query(Transaction).get(r.json()["transaction_id"])
+    txn = db_session.get(Transaction, r.json()["transaction_id"])
     assert (
         txn.source_type == "bank_entry"
         and txn.source_id == w.id
@@ -206,7 +236,7 @@ def test_add_posts_and_links_a_withdrawal_a_card_charge_and_a_card_payment(
         f"/api/banking/transactions/{c.id}/add",
         json={"category_account_id": seed_accounts["6000"].id},
     )
-    txn = db_session.query(Transaction).get(r.json()["transaction_id"])
+    txn = db_session.get(Transaction, r.json()["transaction_id"])
     assert {ln.account_id: ln.credit for ln in txn.lines if ln.credit > 0} == {
         seed_accounts["2100"].id: Decimal("15")
     }
@@ -214,7 +244,7 @@ def test_add_posts_and_links_a_withdrawal_a_card_charge_and_a_card_payment(
         f"/api/banking/transactions/{p.id}/add",
         json={"category_account_id": seed_accounts["1000"].id},
     )
-    txn = db_session.query(Transaction).get(r.json()["transaction_id"])
+    txn = db_session.get(Transaction, r.json()["transaction_id"])
     assert txn.source_type == "transfer"
     assert {ln.account_id: ln.debit for ln in txn.lines if ln.debit > 0} == {
         seed_accounts["2100"].id: Decimal("300")

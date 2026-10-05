@@ -58,6 +58,7 @@ def invoice(db, customer, number, days, amount="10", status=InvoiceStatus.SENT):
         date=date.today() - timedelta(days=120),
         due_date=date.today() - timedelta(days=days),
         status=status,
+        subtotal=Decimal(amount),
         total=Decimal(amount),
         amount_paid=0,
         balance_due=Decimal(amount),
@@ -77,6 +78,7 @@ def test_email_body_escapes_customer_and_company(
     db_session.flush()
     invoice(db_session, customer, "ESCAPE", 100)
     set_setting(db_session, "company_name", "<b>Synthetic & Company</b>")
+    set_setting(db_session, "smtp_host", "smtp.example.invalid")
     db_session.commit()
     sent = []
     monkeypatch.setattr(
@@ -162,6 +164,7 @@ def test_batch_continues_after_send_failure_and_missing_email(
     db_session.flush()
     for idx, customer in enumerate(customers):
         invoice(db_session, customer, f"FAILURE-{idx}", 100)
+    set_setting(db_session, "smtp_host", "smtp.example.invalid")
     db_session.commit()
     sent = []
 
@@ -169,6 +172,7 @@ def test_batch_continues_after_send_failure_and_missing_email(
         if kwargs["to_email"] == "fail@example.invalid":
             raise RuntimeError("synthetic secret provider detail")
         sent.append(kwargs["to_email"])
+        return True
 
     monkeypatch.setattr(email_service, "send_email", send)
     monkeypatch.setattr(
@@ -193,4 +197,5 @@ def test_batch_continues_after_send_failure_and_missing_email(
         assert len(result["errors"]) == 2
     else:
         assert result["generated"] == 3 and result["emailed"] == 1
-        assert len(result["errors"]) == 1
+        # the failed send and the customer with no address
+        assert len(result["errors"]) == 2

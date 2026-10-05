@@ -151,6 +151,7 @@ def test_callback_without_expiry_or_tokens(db_session, oauth_remote):
     oauth_remote[1].expires_in = None
     oauth_remote[1].access_token = None
     oauth_remote[1].refresh_token = None
-    qbo.handle_callback(db_session, "code", "expected", "realm")
+    with pytest.raises(RuntimeError, match="incomplete OAuth tokens"):
+        qbo.handle_callback(db_session, "code", "expected", "realm")
     assert not qbo.is_connected(db_session)
     assert qbo._get_setting(db_session, "qbo_token_expires_at") == ""

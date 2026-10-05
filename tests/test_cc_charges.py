@@ -19,7 +19,7 @@ def _charge(client, seed_accounts, **over):
 def test_default_card_is_2100_and_a_named_card_works(client, db_session, seed_accounts):
     r = _charge(client, seed_accounts)
     assert r.status_code == 201, r.text
-    txn = db_session.query(Transaction).get(r.json()["transaction_id"])
+    txn = db_session.get(Transaction, r.json()["transaction_id"])
     assert {ln.account_id for ln in txn.lines if ln.credit > 0} == {
         seed_accounts["2100"].id
     }
@@ -34,7 +34,7 @@ def test_default_card_is_2100_and_a_named_card_works(client, db_session, seed_ac
     ).json()
     r = _charge(client, seed_accounts, card_account_id=visa["id"], amount="12.50")
     assert r.status_code == 201, r.text
-    txn = db_session.query(Transaction).get(r.json()["transaction_id"])
+    txn = db_session.get(Transaction, r.json()["transaction_id"])
     assert {ln.account_id: ln.credit for ln in txn.lines if ln.credit > 0} == {
         visa["id"]: Decimal("12.50")
     }

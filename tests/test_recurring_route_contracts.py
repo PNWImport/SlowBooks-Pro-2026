@@ -41,9 +41,13 @@ def test_recurring_crud_filters_and_generate(
     assert [
         row["id"] for row in authed_client.get("/api/recurring?active_only=true").json()
     ] == [second.json()["id"]]
-    monkeypatch.setattr(recurring, "generate_due_invoices", lambda db, as_of: [3, 4])
+    monkeypatch.setattr(recurring, "generate_due_invoices", lambda db, as_of, skipped=None: [3, 4])
     generated = authed_client.post("/api/recurring/generate?as_of=2026-09-08")
-    assert generated.json() == {"invoices_created": 2, "invoice_ids": [3, 4]}
+    assert generated.json() == {
+        "invoices_created": 2,
+        "invoice_ids": [3, 4],
+        "skipped": [],
+    }
     assert (
         authed_client.delete(f"/api/recurring/{first.json()['id']}").status_code == 200
     )
@@ -77,6 +81,8 @@ def test_recurring_update_validation(authed_client, seed_customer):
 
     assert authed_client.put(endpoint, json={"frequency": "daily"}).status_code == 422
     assert authed_client.put(endpoint, json={"frequency": None}).status_code == 422
+    # An end date before the start is the route's own refusal (400), not a
+    # schema one.
     assert (
-        authed_client.put(endpoint, json={"end_date": "2026-09-07"}).status_code == 422
+        authed_client.put(endpoint, json={"end_date": "2026-09-07"}).status_code == 400
     )

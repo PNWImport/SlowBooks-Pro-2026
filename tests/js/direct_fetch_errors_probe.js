@@ -112,6 +112,19 @@ const scenarios = {
     await p.get('InvoicesPage').uploadAttachment(1);
     return last(p.toasts);
   },
+  async 'benefit_coverage.js COBRA notice'() {
+    const p = page(['app/static/js/benefit_coverage.js']);
+    await p.get('BenefitCoveragePage').cobraNotice(1);
+    return last(p.toasts);
+  },
+  async 'tax_forms.js e-file download'() {
+    const p = page(['app/static/js/tax_forms.js']);
+    p.els['#sui-year'] = undefined;  // ensure getElementById stubs fresh
+    const tf = p.get('TaxFormsPage');
+    p.ctx.document.getElementById('w2-year').value = '2026';
+    await tf.generateEFW2();
+    return last(p.toasts);
+  },
   async 'expenses.js attachment'() {
     const p = page(['app/static/js/expenses.js']);
     await p.get('ExpensesPage').uploadAttachment(1);

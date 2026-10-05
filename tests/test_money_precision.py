@@ -55,11 +55,8 @@ CASES = [
             "amount": "VALUE",
         },
     ),
-    (InvoiceLineCreate, {"quantity": 1, "rate": "VALUE"}),
-    (BillLineCreate, {"quantity": 1, "rate": "VALUE"}),
     (JournalLineCreate, {"account_id": 1, "debit": "VALUE"}),
     (BudgetCreate, {"account_id": 1, "year": 2026, "month": 1, "amount": "VALUE"}),
-    (ItemCreate, {"name": "Widget", "item_type": ItemType.PRODUCT, "rate": "VALUE"}),
     (JobCreate, {"customer_id": 1, "name": "Job", "contract_amount": "VALUE"}),
     (
         InKindLineCreate,
@@ -84,7 +81,6 @@ CASES = [
         },
     ),
     (WriteOffRequest, {"date": "2026-01-01", "amount": "VALUE"}),
-    (EquipmentCreate, {"name": "Loader", "hourly_rate": "VALUE"}),
     (AllocationCreate, {"date": "2026-01-01", "amount": "VALUE"}),
     (JobBudgetRow, {"amount": "VALUE"}),
     (
@@ -92,6 +88,22 @@ CASES = [
         {"account_id": 1, "statement_date": "2026-01-01", "statement_balance": "VALUE"},
     ),
 ]
+
+# Rates and unit prices are not posted amounts: upstream keeps four places.
+RATE_CASES = [
+    (InvoiceLineCreate, {"quantity": 1, "rate": "VALUE"}),
+    (BillLineCreate, {"quantity": 1, "rate": "VALUE"}),
+    (ItemCreate, {"name": "Widget", "item_type": ItemType.PRODUCT, "rate": "VALUE"}),
+    (EquipmentCreate, {"name": "Loader", "hourly_rate": "VALUE"}),
+]
+
+
+@pytest.mark.parametrize("schema,payload", RATE_CASES)
+@pytest.mark.parametrize("value", ["0.0001", "0.045", "51.0625"])
+def test_rates_accept_four_places(schema, payload, value):
+    schema.model_validate(
+        {key: (value if item == "VALUE" else item) for key, item in payload.items()}
+    )
 
 
 @pytest.mark.parametrize("schema,payload", CASES)

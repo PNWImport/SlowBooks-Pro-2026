@@ -65,8 +65,12 @@ def test_numbering_seed_shapes_padding_and_collision():
     )
 
 
-def test_document_number_wrappers_and_estimate_setting_fallback(monkeypatch):
-    db = _DB()
+def test_document_number_wrappers_and_estimate_setting_fallback(
+    monkeypatch, db_session
+):
+    # The invoice counter now reads Settings and the existing numbers, so this
+    # runs on a real (empty) database rather than the stub above.
+    db = db_session
     assert numbering.next_invoice_number(db) == "1001"
     assert numbering.next_credit_memo_number(db) == "CM-0001"
     assert numbering.next_po_number(db) == "PO-0001"

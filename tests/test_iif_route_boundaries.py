@@ -61,8 +61,8 @@ def test_upload_rejects_non_iif(client, endpoint):
 def test_legacy_cp1252_upload_reaches_parser(client, monkeypatch, endpoint):
     calls = []
 
-    def parse(*args):
-        calls.append(args[-1])
+    def parse(*args, **kwargs):
+        calls.append(args[1] if endpoint == "import" else args[-1])
         return {} if endpoint == "import" else {"valid": True}
 
     monkeypatch.setattr(

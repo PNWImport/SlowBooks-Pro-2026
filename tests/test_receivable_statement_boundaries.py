@@ -9,6 +9,7 @@ from app.models.invoices import Invoice, InvoiceStatus
 from app.models.payments import Payment
 from app.routes.reports import receivables
 from app.services import email_service
+from app.services.settings_service import set_setting
 
 
 @pytest.mark.parametrize("batch", [False, True])
@@ -16,6 +17,7 @@ def test_statement_excludes_voided_receipts(
     authed_client, db_session, seed_customer, monkeypatch, batch
 ):
     seed_customer.email = "synthetic@example.invalid"
+    set_setting(db_session, "smtp_host", "smtp.example.invalid")
     invoice = Invoice(
         invoice_number="STATEMENT-SYN",
         customer_id=seed_customer.id,
@@ -44,18 +46,15 @@ def test_statement_excludes_voided_receipts(
     db_session.commit()
     calls, emails = [], []
 
-    def render(customer, invoices, selected_payments, settings, as_of):
-        assert sum(row.total for row in invoices) - sum(
-            row.amount for row in selected_payments
-        ) == Decimal("90")
-        calls.append(
-            ([row.id for row in invoices], [row.id for row in selected_payments])
-        )
+    def render(customer, activity, settings, as_of):
+        # The voided and the future-dated receipts are not on the statement.
+        assert activity["balance_due"] == Decimal("90")
+        calls.append([line["amount"] for line in activity["lines"]])
         return b"synthetic-statement"
 
     monkeypatch.setattr(receivables, "generate_statement_pdf", render)
     monkeypatch.setattr(
-        email_service, "send_email", lambda **kwargs: emails.append(kwargs)
+        email_service, "send_email", lambda **kwargs: emails.append(kwargs) or True
     )
     if batch:
         response = authed_client.post("/api/reports/batch-email-statements")
@@ -69,4 +68,4 @@ def test_statement_excludes_voided_receipts(
         assert response.status_code == 200, response.text
         assert response.content == b"synthetic-statement"
         assert emails == []
-    assert calls == [([invoice.id], [payments[0].id])]
+    assert calls == [[Decimal("100"), Decimal("-10")]]

@@ -30,7 +30,35 @@ ENTITIES = [
 def remote_import(monkeypatch):
     records = {kind: [] for kind in ENTITIES}
     failures = set()
-    client = object()
+    class Client:
+        """import_all also reads the (empty) General Ledger report."""
+
+        def get_report(self, name, qs):
+            return {
+                "Header": {
+                    "StartPeriod": qs["start_date"],
+                    "EndPeriod": qs["end_date"],
+                    "ReportBasis": "Accrual",
+                },
+                "Columns": {
+                    "Column": [
+                        {"ColTitle": t}
+                        for t in (
+                            "Date",
+                            "Transaction Type",
+                            "Num",
+                            "Name",
+                            "Memo/Description",
+                            "Split",
+                            "Amount",
+                            "Balance",
+                        )
+                    ]
+                },
+                "Rows": {"Row": []},
+            }
+
+    client = Client()
     monkeypatch.setattr(qbo_import, "get_qbo_client", lambda db: client)
     for kind in ENTITIES:
         module, classname = (
@@ -40,13 +68,31 @@ def remote_import(monkeypatch):
         )
         cls = getattr(import_module(f"quickbooks.objects.{module}"), classname)
 
-        def all_records(qb, kind=kind):
+        def all_records(
+            qb, start_position=1, max_results=100, kind=kind, **_unused
+        ):
             assert qb is client
             if kind in failures:
                 raise RuntimeError("synthetic query failure")
-            return list(records[kind])
+            return list(records[kind])[start_position - 1 :][:max_results]
 
         monkeypatch.setattr(cls, "all", all_records)
+        if kind == "accounts":
+            # inactive accounts are fetched with an explicit query
+            monkeypatch.setattr(
+                cls, "query", classmethod(lambda c, select, *, qb: [])
+            )
+    from quickbooks.objects.journalentry import JournalEntry
+
+    from app.services import qbo_ledger_import
+
+    monkeypatch.setattr(
+        JournalEntry,
+        "all",
+        classmethod(lambda c, qb, start_position=1, max_results=100: []),
+    )
+
+    monkeypatch.setattr(qbo_ledger_import, "get_qbo_client", lambda db: client)
     return records, failures
 
 
@@ -163,6 +209,8 @@ def test_full_import_preserves_links_and_source_balances(db_session, remote_impo
     assert result == dict.fromkeys(ENTITIES, 1) | {
         "accounts": 2,
         "sales_receipts": 0,
+        "journal_entries": 0,
+        "ledger": 0,
         "errors": [],
     }
     accounts = {row.name: row for row in db_session.query(Account)}
@@ -197,6 +245,8 @@ def test_full_import_preserves_links_and_source_balances(db_session, remote_impo
     assert db_session.query(PaymentAllocation).one().invoice_id == invoice.id
     assert db_session.query(QBOMapping).count() == 7
     assert qbo_import.import_all(db_session) == dict.fromkeys(ENTITIES, 0) | {
+        "journal_entries": 0,
+        "ledger": 0,
         "errors": []
     }
 
@@ -229,7 +279,7 @@ def test_query_failure_is_reported(db_session, remote_import, kind):
 def test_false_flags_and_missing_identifiers(db_session, remote_import, kind, model):
     records, _ = remote_import
     records[kind] = [
-        Obj(Name="No ID", DisplayName="No ID"),
+        Obj(Id=None, Name="No ID", DisplayName="No ID"),
         Obj(Id="no-name"),
         Obj(
             Id="valid",
@@ -274,7 +324,9 @@ def test_missing_customer_does_not_import_document(db_session, remote_import, ki
     remote_import[0][kind] = [Obj(), Obj(Id="missing-customer")]
     result = getattr(qbo_import, f"import_{kind}")(db_session)
     assert result["imported"] == 0
-    assert result["errors"][0]["message"] == "Customer not found"
+    assert result["errors"][0]["message"].startswith(
+        f"{kind[:-1]} QBO #missing-customer: Customer not found"
+    )
 
 
 @pytest.mark.parametrize(
@@ -371,7 +423,7 @@ def test_unreadable_remote_record_is_reported(db_session, remote_import, kind):
     result = getattr(qbo_import, f"import_{kind}")(db_session)
     assert result["imported"] == 0
     assert result["errors"][0]["qbo_id"] == "bad-record"
-    assert result["errors"][0]["message"] == (
+    assert result["errors"][0]["message"].endswith(
         "unexpected error — the server log has the details"
     )
     assert db_session.query(QBOMapping).count() == 0

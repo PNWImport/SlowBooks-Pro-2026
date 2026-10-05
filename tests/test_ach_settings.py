@@ -151,32 +151,50 @@ def test_export_uses_saved_details_and_is_audited(client, db_session, seed_accou
 
 
 def test_bookkeeper_needs_the_flag(client, db_session, seed_accounts):
+    # /api/payroll is an admin-only route group (app/main.py), so the role
+    # gate refuses a bookkeeper on every ACH route before the bank-details
+    # flag is consulted; the flag is the second lock, tested next.
     run = _processed_run(client)
     _save(client)
     keeper = _mk_user(db_session, "keeper", ROLE_BOOKKEEPER)
     _login_as(client, "keeper")
 
-    assert client.get("/api/payroll/ach-settings").json()["can_access"] is False
-    assert _save(client).status_code == 403
-    reveal = client.post(
-        "/api/payroll/ach-settings/reveal", json={"password": "keeper-password-1"}
-    )
-    assert reveal.status_code == 403
-    assert client.post(f"/api/payroll/{run['id']}/nacha", json={}).status_code == 403
+    def refused():
+        assert client.get("/api/payroll/ach-settings").status_code == 403
+        assert _save(client).status_code == 403
+        reveal = client.post(
+            "/api/payroll/ach-settings/reveal", json={"password": "keeper-password-1"}
+        )
+        assert reveal.status_code == 403
+        assert client.post(f"/api/payroll/{run['id']}/nacha", json={}).status_code == 403
 
+    refused()
     keeper.can_access_bank_details = True
     db_session.commit()
-    assert client.get("/api/payroll/ach-settings").json()["can_access"] is True
-    reveal = client.post(
-        "/api/payroll/ach-settings/reveal", json={"password": "keeper-password-1"}
-    )
-    assert reveal.status_code == 200
-    assert client.post(f"/api/payroll/{run['id']}/nacha", json={}).status_code == 200
+    refused()
 
-    # Revoking takes effect on the next request, not the next login.
+
+def _request_for(user, db_session):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        state=SimpleNamespace(),
+        session={"authenticated": True, "user_id": user.id, "role": user.role},
+    )
+
+
+def test_can_access_flag_semantics(db_session):
+    from app.services import ach_settings
+
+    keeper = _mk_user(db_session, "keeper", ROLE_BOOKKEEPER)
+    assert ach_settings.can_access(_request_for(keeper, db_session), db_session) is False
+    keeper.can_access_bank_details = True
+    db_session.commit()
+    assert ach_settings.can_access(_request_for(keeper, db_session), db_session) is True
+    # Revoking takes effect on the next check, not the next login.
     keeper.can_access_bank_details = False
     db_session.commit()
-    assert client.post(f"/api/payroll/{run['id']}/nacha", json={}).status_code == 403
+    assert ach_settings.can_access(_request_for(keeper, db_session), db_session) is False
 
 
 def test_reveal_checks_the_signed_in_users_own_password(client, db_session):
@@ -188,12 +206,15 @@ def test_reveal_checks_the_signed_in_users_own_password(client, db_session):
 
 
 def test_readonly_never_gets_access_even_with_the_flag(client, db_session):
+    from app.services import ach_settings
+
     _save(client)
-    _mk_user(db_session, "viewer", ROLE_READONLY, bank=True)
+    viewer = _mk_user(db_session, "viewer", ROLE_READONLY, bank=True)
+    assert ach_settings.can_access(_request_for(viewer, db_session), db_session) is False
     _login_as(client, "viewer")
-    view = client.get("/api/payroll/ach-settings").json()
-    assert view["can_access"] is False
-    assert "9876543210" not in str(view)
+    view = client.get("/api/payroll/ach-settings")
+    assert view.status_code == 403
+    assert "9876543210" not in view.text
 
 
 def test_api_tokens_never_get_access(client, seed_accounts):

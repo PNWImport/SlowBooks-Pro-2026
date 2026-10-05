@@ -15,24 +15,36 @@ def test_document_links_use_document_id(source):
 
 
 @pytest.mark.parametrize(
-    "source",
+    "source,expected",
     [
-        "bill_payment",
-        "journal",
-        "manual_journal",
-        "manual",
-        "expense",
-        "deposit",
-        "cc_charge",
-        "transfer",
-        "bank_entry",
-        "opening_balance",
+        ("bill_payment", "/#/bill-payments/23"),
+        ("vendor_credit", "/#/vendor-credits/23"),
+        ("journal", "/#/journal/23"),
+        ("manual_journal", "/#/journal/23"),
     ],
 )
-def test_posting_links_use_transaction_id_not_source_id(source):
+def test_document_backed_postings_link_by_source_id(source, expected):
+    assert source_link(Transaction(id=91, source_type=source, source_id=23)) == expected
+    assert source_link(Transaction(id=91, source_type=source)) is None
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("manual", "/#/journal/91"),
+        ("expense", "/#/expenses/91"),
+        ("deposit", "/#/deposits/91"),
+        ("cc_charge", "/#/cc-charges/91"),
+        ("transfer", "/#/banking/transfers/91"),
+        ("bank_entry", "/#/journal/91"),
+        ("opening_balance", "/#/journal/91"),
+        ("qbo_ledger", "/#/journal/91"),
+        ("qbo_journal", "/#/journal/91"),
+    ],
+)
+def test_posting_links_use_transaction_id_not_source_id(source, expected):
     assert (
-        source_link(Transaction(id=91, source_type=source, source_id=23))
-        == "/#/journal/91"
+        source_link(Transaction(id=91, source_type=source, source_id=23)) == expected
     )
 
 

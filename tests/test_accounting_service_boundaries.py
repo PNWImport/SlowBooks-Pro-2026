@@ -100,7 +100,7 @@ def test_cost_code_lookup_missing_and_present(db_session):
     [
         ([{"account_id": 1, "debit": -1}], "non-negative"),
         ([{"account_id": 1, "debit": 1, "credit": 1}], "both debit and credit"),
-        ([{"account_id": 1, "debit": 1}], "not balanced"),
+        ([{"account_id": 1, "debit": 1}], "out of balance"),
     ],
 )
 def test_invalid_lines_leave_no_partial_journal(db_session, lines, message):

@@ -125,26 +125,25 @@ def test_receipt_item_and_unmapped_account_fallbacks(db_session, request, chart)
         }
     )
     writer.writerow({"Date": "01/01/2026", "Account": "Unmapped zero", "Credit": "0"})
+    if chart != "full":
+        # A chart missing its control accounts is refused loudly, never
+        # imported without a journal entry.
+        from app.services.control_accounts import MissingControlAccount
+
+        with pytest.raises(MissingControlAccount):
+            report.import_sales_receipt_report(db_session, buffer.getvalue())
+        db_session.rollback()
+        assert db_session.query(Invoice).count() == 0
+        assert db_session.query(Payment).count() == 0
+        return
     result = report.import_sales_receipt_report(db_session, buffer.getvalue())
     assert result["imported"] == 1 and not result["errors"], result
     receipt = db_session.query(Invoice).one()
     assert receipt.lines[0].item_id == item.id
     payment = db_session.query(Payment).one()
-    if chart == "full":
-        assert receipt.transaction_id and payment.transaction_id
-        assert payment.deposit_to_account.account_number == "1200"
-        assert any("default income" in warning for warning in result["warnings"])
-    else:
-        assert receipt.transaction_id is None and payment.transaction_id is None
-        assert any(
-            "journal entry could not be created" in warning
-            for warning in result["warnings"]
-        )
-        assert any("payment journal entry" in warning for warning in result["warnings"])
-        if chart == "empty":
-            assert any(
-                "invoice journal entry" in warning for warning in result["warnings"]
-            )
+    assert receipt.transaction_id and payment.transaction_id
+    assert payment.deposit_to_account.account_number == "1200"
+    assert any("default income" in warning for warning in result["warnings"])
 
 
 def test_sales_receipt_hook_failure_rolls_back_whole_receipt(

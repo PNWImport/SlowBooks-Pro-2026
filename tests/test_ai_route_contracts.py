@@ -129,12 +129,16 @@ def test_connectivity_check_trims_reply_and_uses_configured_model(
 
 def test_query_executor_reads_real_database(authed_client, seed_customer, monkeypatch):
     configure(authed_client)
+    # Read before the request: the fixture's row is expired by its commit, and
+    # a lazy refresh from the test's own session in the middle of the
+    # request's would interleave their savepoints on the shared connection.
+    name = seed_customer.name
 
     def query(**kwargs):
         assert kwargs["max_calls"] == 8
         assert kwargs["user_question"] == "customers"
         data = kwargs["tool_executor"]("list_customers", limit=5)
-        assert seed_customer.name in str(data)
+        assert name in str(data)
         return {"success": True, "final_response": "Synthetic response", "data": data}
 
     monkeypatch.setattr(analytics, "call_with_tools", query)

@@ -142,11 +142,23 @@ def test_reconciliation_lists_totals_and_error_paths(client):
     )
 
     assert client.post(f"{base}/complete").status_code == 200
+    # The account is reconciled through Sep 30: the next statement must be later.
+    assert (
+        client.post(
+            "/api/banking/reconciliations",
+            json={
+                "bank_account_id": account["id"],
+                "statement_date": "2026-09-30",
+                "statement_balance": 999,
+            },
+        ).status_code
+        == 400
+    )
     mismatch = client.post(
         "/api/banking/reconciliations",
         json={
             "bank_account_id": account["id"],
-            "statement_date": "2026-09-30",
+            "statement_date": "2026-10-31",
             "statement_balance": 999,
         },
     ).json()

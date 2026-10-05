@@ -12,7 +12,6 @@ from datetime import date as dt_date
 from app.database import get_db
 from app.models.accounts import Account
 from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
-from app.models.items import Item
 from app.schemas.invoices import InvoiceResponse, ZeroTotalConfirmation
 from app.services.accounting import (
     create_journal_entry,
@@ -122,27 +121,18 @@ def void_invoice(invoice_id: int, db: Session = Depends(get_db)):
             )
 
     # ---- Phase 11: reverse inventory movements ----
-    # Pass the ORIGINAL (invoice, id) so reverse_sale looks up the sale's
-    # historical unit_cost — this keeps the reversal balanced even if
-    # avg_cost moved between the sale and the void.
-    from app.services.inventory_service import reverse_sale
+    # Reverse the RECORDED movements, not today's lines: a void must not
+    # depend on current item settings, edited lines or the latest cost.
+    # Quantity edits can leave several differently costed movements,
+    # including returns for lines no longer on the invoice.
+    from app.services.inventory_hooks import reverse_sale_for_invoice
 
-    for line in invoice.lines:
-        if not line.item_id:
-            continue
-        item = db.query(Item).filter(Item.id == line.item_id).first()
-        if item and item.track_inventory:
-            reverse_sale(
-                db,
-                item,
-                quantity=Decimal(str(line.quantity)),
-                source_type="invoice_void",
-                source_id=invoice.id,
-                original_source_type="invoice",
-                original_source_id=invoice.id,
-                txn_date=invoice.date,
-                post_journal=not cost_in_import,
-            )
+    reverse_sale_for_invoice(
+        db,
+        invoice,
+        txn_date=invoice.date,
+        post_journal=not cost_in_import,
+    )
 
     invoice.status = InvoiceStatus.VOID
     invoice.balance_due = Decimal("0")

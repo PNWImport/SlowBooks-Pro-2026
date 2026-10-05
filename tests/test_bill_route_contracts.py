@@ -149,11 +149,28 @@ def test_missing_vendor_rejected(authed_client):
     assert response.status_code == 404
 
 
-def test_bill_uses_chart_default_expense(authed_client, db_session, seed_accounts):
-    vendor = _vendor(authed_client, "Chart default")
+def test_bill_uses_vendor_default_expense(authed_client, db_session, seed_accounts):
+    # There is no chart-wide 6000 fallback: a line with no account takes its
+    # vendor's default expense account, and is refused when there is none.
+    vendor = _vendor(
+        authed_client,
+        "Vendor default",
+        default_expense_account_id=seed_accounts["6000"].id,
+    )
     bill = _bill(authed_client, vendor["id"], None)
     stored = db_session.get(Bill, bill["id"])
     assert stored.lines[0].account_id == seed_accounts["6000"].id
+    bare = _vendor(authed_client, "No default")
+    refused = authed_client.post(
+        "/api/bills",
+        json={
+            "vendor_id": bare["id"],
+            "date": "2026-09-08",
+            "lines": [{"description": "Line", "quantity": 1, "rate": 10}],
+        },
+    )
+    assert refused.status_code == 400
+    assert "no account to post to" in refused.json()["detail"]
 
 
 def test_void_bill_reverses_inventory_receipt(authed_client, db_session, seed_accounts):

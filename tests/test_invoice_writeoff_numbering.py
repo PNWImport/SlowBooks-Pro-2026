@@ -32,7 +32,16 @@ def test_writeoff_memo_number_collision_handling(
             raise IntegrityError("synthetic", {}, Exception(message))
         return real_flush(*args, **kwargs)
 
+    def rollback():
+        # The suite runs every session inside one shared transaction, so a
+        # real rollback would take the API-created invoice with it. The
+        # synthetic flush never reached the database: dropping the pending
+        # memo is the whole of what the rollback would undo.
+        for row in list(db_session.new):
+            db_session.expunge(row)
+
     monkeypatch.setattr(db_session, "flush", flush)
+    monkeypatch.setattr(db_session, "rollback", rollback)
     data = lifecycle.WriteOffRequest(date=date(2026, 9, 8))
     if mode == "retry":
         result = lifecycle.write_off_invoice(invoice["id"], data, db_session)

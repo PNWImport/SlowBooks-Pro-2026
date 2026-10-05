@@ -1,10 +1,26 @@
 """Build ledger-backed fixtures for the pre-existing banking regressions."""
 
+import itertools
+
+
+_NUMBERS = itertools.count(1)
+
+
+def _number(base):
+    # The chart now refuses an account with no number; each fixture account
+    # takes the next free one.
+    return str(base + next(_NUMBERS))
+
 
 def bank_account(client, name="Operating"):
     chart = client.post(
         "/api/accounts",
-        json={"name": name, "account_type": "asset", "bank_kind": "bank"},
+        json={
+            "name": name,
+            "account_number": _number(1100),
+            "account_type": "asset",
+            "bank_kind": "bank",
+        },
     )
     assert chart.status_code == 201, chart.text
     response = client.post(
@@ -22,7 +38,12 @@ def bank_account(client, name="Operating"):
 
 def bank_transaction(client, account_id, day, amount, **extra):
     category = client.post(
-        "/api/accounts", json={"name": "Test category", "account_type": "expense"}
+        "/api/accounts",
+        json={
+            "name": "Test category",
+            "account_number": _number(6150),
+            "account_type": "expense",
+        },
     )
     assert category.status_code == 201, category.text
     response = client.post(

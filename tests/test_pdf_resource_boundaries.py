@@ -1,7 +1,6 @@
-"""PDF resource helpers reject files outside the upload root without reading."""
+"""PDF resource helpers: only a stored image logo is embedded; no outside fetch."""
 
 from datetime import date
-from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -33,35 +32,76 @@ def test_missing_logo(settings):
     assert pdf_service._company_logo_data_uri(settings) == ""
 
 
+def _logo_row(db_session, content_type="image/png", data=b"\x89PNG-synthetic", **kw):
+    from app.models.stored_files import KIND_LOGO, StoredFile
+
+    row = StoredFile(
+        kind=kw.pop("kind", KIND_LOGO),
+        original_name="logo",
+        content_type=content_type,
+        size=len(data or b""),
+        data=data,
+        **kw,
+    )
+    db_session.add(row)
+    db_session.commit()
+    return row
+
+
+def test_stored_logo_is_embedded(db_session):
+    row = _logo_row(db_session)
+    uri = pdf_service._company_logo_data_uri(
+        {"company_logo_path": f"/api/uploads/logo/{row.id}"}
+    )
+    assert uri.startswith("data:image/png;base64,")
+
+
 @pytest.mark.parametrize(
-    "stored, exists",
+    "stored",
     [
-        ("/static/uploads/../../private.png", True),
-        ("/static/uploads/missing.png", False),
-        ("/static/uploads/not_image.txt", True),
-        ("/static/uploads/unknown", True),
+        "/static/uploads/company_logo.png",  # the old shared-folder address
+        "/static/uploads/../../private.png",
+        "/api/uploads/logo/../1",
+        "/api/uploads/logo/999999999",  # no such stored file
+        "relative.png",
     ],
 )
-def test_rejected_logo_is_never_read(tmp_path, monkeypatch, stored, exists):
-    monkeypatch.setattr(
-        pdf_service.storage, "uploads_root", lambda: tmp_path / "uploads"
-    )
-    monkeypatch.setattr(Path, "is_file", lambda self: exists)
-    read = Mock(side_effect=AssertionError("rejected file was read"))
-    monkeypatch.setattr(Path, "read_bytes", read)
+def test_rejected_logo_is_never_embedded(db_session, stored):
     assert pdf_service._company_logo_data_uri({"company_logo_path": stored}) == ""
-    read.assert_not_called()
 
 
-def test_unreadable_logo_is_omitted(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        pdf_service.storage, "uploads_root", lambda: tmp_path / "uploads"
-    )
-    monkeypatch.setattr(Path, "is_file", lambda self: True)
-    monkeypatch.setattr(Path, "read_bytes", Mock(side_effect=OSError("unreadable")))
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"content_type": "text/plain"},  # not an image type
+        {"content_type": None},
+        {"data": None},
+        {"missing": True},
+        {"kind": "attachment"},  # another kind of file is never a logo
+    ],
+)
+def test_a_stored_file_that_is_not_a_usable_logo_is_omitted(db_session, overrides):
+    row = _logo_row(db_session, **overrides)
     assert (
         pdf_service._company_logo_data_uri(
-            {"company_logo_path": "/static/uploads/logo.png"}
+            {"company_logo_path": f"/api/uploads/logo/{row.id}"}
+        )
+        == ""
+    )
+
+
+def test_unreadable_logo_is_omitted(db_session, monkeypatch):
+    import app.database as db_module
+
+    row = _logo_row(db_session)
+
+    def broken():
+        raise OSError("unreadable")
+
+    monkeypatch.setattr(db_module, "SessionLocal", broken)
+    assert (
+        pdf_service._company_logo_data_uri(
+            {"company_logo_path": f"/api/uploads/logo/{row.id}"}
         )
         == ""
     )
@@ -114,7 +154,7 @@ def test_pdf_wrappers_preserve_context_and_use_shared_renderer(monkeypatch, kind
         assert template.render.call_args.kwargs["est"] is subject
     elif kind == "statement":
         result = pdf_service.generate_statement_pdf(
-            subject, [], [], company, date(2026, 9, 8)
+            subject, {}, company, date(2026, 9, 8)
         )
         name = "statement_pdf.html"
         assert template.render.call_args.kwargs["as_of_date"] == date(2026, 9, 8)

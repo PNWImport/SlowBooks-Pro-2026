@@ -77,7 +77,11 @@ def test_bill_payment_cannot_settle_another_vendors_bill(
     from app.models.bills import BillPayment
     from app.models.contacts import Vendor
 
-    billed_vendor = Vendor(name="Billed Vendor", is_active=True)
+    billed_vendor = Vendor(
+        name="Billed Vendor",
+        is_active=True,
+        default_expense_account_id=seed_accounts["6000"].id,
+    )
     paying_vendor = Vendor(name="Paying Vendor", is_active=True)
     db_session.add_all([billed_vendor, paying_vendor])
     db_session.commit()

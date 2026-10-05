@@ -85,8 +85,7 @@ def test_the_invoice_must_be_this_customers(client, db_session, seed_customer, i
     r = _memo(client, other["id"], original_invoice_id=invoice["id"])
     assert r.status_code == 400, r.text
     assert r.json()["detail"] == (
-        f"Invoice {invoice['invoice_number']} belongs to a different customer "
-        "than this credit memo."
+        "Original invoice must belong to the credit memo customer"
     )
     r = _memo(client, seed_customer.id, original_invoice_id=999999)
     assert r.status_code == 404, r.text

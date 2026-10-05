@@ -2,6 +2,7 @@
 (issue #106). The generator is import-free so the spec can run it."""
 
 import importlib.util
+import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,3 +50,31 @@ def test_rendered_resource_names_the_product(tmp_path):
         )
     }
     eval(compile(text, "version_info.txt", "eval"), names)
+
+
+def test_windows_spec_passes_generated_resource_to_executable():
+    source = (ROOT / "packaging/windows/SlowBooksPro.spec").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    executable = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "EXE"
+    )
+    version = next(
+        keyword.value for keyword in executable.keywords if keyword.arg == "version"
+    )
+    assert isinstance(version, ast.Name) and version.id == "VERSION_FILE"
+    assert "_version_info.write" in source
+
+
+def test_workflow_checks_metadata_before_signing():
+    workflow = (ROOT / ".github/workflows/windows.yml").read_text(encoding="utf-8")
+    gate = workflow.index("- name: Verify the exe's version resource")
+    signing = workflow.index("- name: Azure login")
+    assert gate < signing
+    check = workflow[gate:signing]
+    for field in ("ProductVersion", "FileVersion"):
+        assert f"$vi.{field} -ne" in check
+    assert "-not $vi.ProductName" in check

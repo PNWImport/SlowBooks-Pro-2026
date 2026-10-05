@@ -128,9 +128,9 @@ def test_duplicate_preserves_job_and_class_attribution(
 
 @pytest.mark.parametrize("action", ["send", "void", "duplicate", "write-off"])
 def test_missing_invoice_lifecycle_rejected(authed_client, action):
-    response = authed_client.post(
-        f"/api/invoices/999999/{action}", json={"date": "2026-09-08"}
-    )
+    # duplicate takes only an optional zero-total confirmation, not a date.
+    body = {} if action == "duplicate" else {"date": "2026-09-08"}
+    response = authed_client.post(f"/api/invoices/999999/{action}", json=body)
     assert response.status_code == 404
 
 

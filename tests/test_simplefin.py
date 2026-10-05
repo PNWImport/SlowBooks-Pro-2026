@@ -213,7 +213,8 @@ def test_sync_imports_dedups_and_applies_rules(db_session):
     assert {t.import_id for t in txns} == {"TXN-1", "TXN-2"}
     assert all(t.import_source == "simplefin" for t in txns)
     bait = next(t for t in txns if t.import_id == "TXN-1")
-    assert bait.match_status == "unmatched"  # rules categorise; adding is a click
+    assert bait.match_status == "unmatched"
+    assert bait.transaction_line_id is None
     assert bait.category_account_id == expense.id
 
     # Second sync of the same window: everything dedups

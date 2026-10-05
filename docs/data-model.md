@@ -1,6 +1,6 @@
 # Data Model
 
-Schema reference for the Slowbooks PostgreSQL database. 97 tables on
+Schema reference for the Slowbooks PostgreSQL database. 98 tables on
 a double-entry accounting foundation. For migration history, see the
 files under `migrations/versions/`; for model code, see `app/models/`.
 
@@ -50,6 +50,7 @@ files under `migrations/versions/`; for model code, see `app/models/`.
 | `pay_stubs` | Individual pay stubs with withholding breakdowns |
 | `qbo_mappings` | QBO ID ↔ Slowbooks ID mapping for sync deduplication |
 | `attachments` | File attachments linked to invoices, bills, etc. |
+| `stored_files` | Every file a company keeps, inside its own database: the logo, attachment and employee-document bytes, and scanned receipts awaiting review (kind `receipt_scan`, addressed by `token`, swept after 24 hours) |
 | `bank_rules` | Pattern-matching rules for auto-categorizing bank imports |
 | `budgets` | Budget amounts by account and period |
 | `email_templates` | Customizable email templates |

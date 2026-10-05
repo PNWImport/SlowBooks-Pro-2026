@@ -14,9 +14,7 @@ function _openForm(url) {
 async function _downloadEfile(url, fallbackName) {
     const res = await fetch(url, { method: url.includes('/efw2/') ? 'POST' : 'GET', credentials: 'same-origin' });
     if (!res.ok) {
-        let msg = 'E-file generation failed';
-        try { msg = (await res.json()).detail || msg; } catch (_) {}
-        toast(msg, 'error');
+        toast(await API.responseError(res, 'E-file generation failed'), 'error');
         return;
     }
     const data = await res.json();

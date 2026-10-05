@@ -138,6 +138,10 @@ def test_export_all_preserves_dependency_references(db_session, export_rows, rem
         "items": 1,
         "invoices": 1,
         "payments": 1,
+        "sales_receipts": 0,
+        "updated": 0,
+        "voided": 0,
+        "notes": [],
         "errors": [],
     }
     calls, _ = remote
@@ -178,6 +182,7 @@ def test_export_all_preserves_dependency_references(db_session, export_rows, rem
             "SalesItemLineDetail": {
                 "Qty": 2.0,
                 "UnitPrice": 12.34,
+                "TaxCodeRef": {"value": "NON"},
                 "ItemRef": {"value": item.Id},
             },
         }
@@ -189,11 +194,14 @@ def test_export_all_preserves_dependency_references(db_session, export_rows, rem
         {"Amount": 24.68, "LinkedTxn": [{"TxnId": invoice.Id, "TxnType": "Invoice"}]}
     ]
     assert db_session.query(QBOMapping).count() == 8
-    assert all(row.qbo_sync_token == "0" for row in db_session.query(QBOMapping))
+    # Exports record a "sent:" marker so later edits can be told from first sends.
+    assert all(
+        row.qbo_sync_token.startswith("sent:") for row in db_session.query(QBOMapping)
+    )
     # Repeat exports must not create another remote copy.
     assert qbo_export.export_all(db_session) == dict.fromkeys(
-        result.keys() - {"errors"}, 0
-    ) | {"errors": []}
+        result.keys() - {"errors", "notes"}, 0
+    ) | {"notes": [], "errors": []}
     assert len(calls) == 8
 
 
@@ -239,7 +247,8 @@ def test_item_uses_mapped_default_income(db_session, export_rows, remote):
         )
     )
     db_session.commit()
-    assert qbo_export.export_items(db_session) == {"exported": 1, "errors": []}
+    result = qbo_export.export_items(db_session)
+    assert result["exported"] == 1 and result["errors"] == []
     assert remote[0][0][1].IncomeAccountRef == {"value": "default-income"}
 
 

@@ -71,8 +71,19 @@ def _sign_in_here(Session) -> None:
     from app.services.settings_service import set_setting
 
     signed_in_to = auth_service._company_id()
+    # The session is also bound to its user's current credentials
+    # (auth.refresh_session_principal), so the signed-in user has to exist
+    # in the file being opened: sign in there as the same account.
+    with db_module.SessionLocal() as here:
+        accounts = [
+            {c.name: getattr(u, c.name) for c in User.__table__.columns}
+            for u in here.query(User).all()
+        ]
     with Session() as s:
         set_setting(s, "company_session_id", signed_in_to)
+        for account in accounts:
+            if s.get(User, account["id"]) is None:
+                s.add(User(**account))
         s.commit()
 
 
@@ -646,14 +657,21 @@ def test_the_old_uploads_folder_is_not_served(client, unauthed_client):
     legacy.mkdir(parents=True, exist_ok=True)
     (legacy / "old-W-4.pdf").write_bytes(b"%PDF-1.4 an older release's W-4")
     try:
+        # The private upload paths need a sign-in (local hardening, see
+        # test_private_upload_auth.py): 401 to a stranger, and 404 -- the
+        # folder is not served -- even to a signed-in user.
         for path in (
             f"/static/uploads/attachments/employee/{emp['id']}/W-4.pdf",
             "/static/uploads/attachments/employee/1/old-W-4.pdf",
-            "/static/uploads/company_logo.png",
         ):
-            r = unauthed_client.get(path)
-            assert r.status_code == 404, (path, r.status_code)
-            assert b"W-4" not in r.content
+            for who, expected in ((unauthed_client, 401), (client, 404)):
+                r = who.get(path)
+                assert r.status_code == expected, (path, r.status_code)
+                assert b"W-4" not in r.content
+        # The logo's old public path is exempt from the sign-in, and not
+        # served either.
+        r = unauthed_client.get("/static/uploads/company_logo.png")
+        assert r.status_code == 404, r.status_code
         assert unauthed_client.get("/static/js/app.js").status_code == 200
     finally:
         (legacy / "old-W-4.pdf").unlink()

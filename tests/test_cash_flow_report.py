@@ -108,3 +108,45 @@ def test_cash_flow_matches_linked_cash_change_for_native_journals(client, db_ses
     assert report["total_investing"] == -200.0
     assert report["total_financing"] == 250.0
     assert report["net_change"] == 430.0
+
+
+def test_cash_flow_cards_are_not_cash_and_inactive_bank_history_remains(
+    client, db_session
+):
+    bank = Account(
+        name="Closed bank",
+        account_type=AccountType.ASSET,
+        bank_kind="bank",
+        is_active=False,
+    )
+    card = Account(
+        name="Card", account_type=AccountType.LIABILITY, bank_kind="credit_card"
+    )
+    expense = Account(name="Supplies", account_type=AccountType.EXPENSE)
+    db_session.add_all([bank, card, expense])
+    db_session.flush()
+    _post(
+        db_session,
+        date(2026, 1, 2),
+        "cc_charge",
+        (expense, "30", "0"),
+        (card, "0", "30"),
+    )
+    _post(
+        db_session, date(2026, 1, 3), "transfer", (card, "20", "0"), (bank, "0", "20")
+    )
+    _post(
+        db_session, date(2025, 12, 31), "expense", (expense, "5", "0"), (bank, "0", "5")
+    )
+    db_session.commit()
+    report = client.get(
+        "/api/reports/cash-flow?start_date=2026-01-01&end_date=2026-01-31"
+    ).json()
+    # A credit card is a current liability here, not cash: the charge and the
+    # payment both stay in operating (net income -30, card +10 = -20).
+    assert report["total_operating"] == -20
+    assert report["total_investing"] == 0
+    assert report["total_financing"] == 0
+    assert report["net_change"] == -20
+    # The inactive bank's earlier history still counts as beginning cash.
+    assert report["beginning_cash"] == -5

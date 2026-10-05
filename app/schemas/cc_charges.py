@@ -1,9 +1,8 @@
 from datetime import date as dt_date
-from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 
 class CCChargeCreate(StrictModel):
@@ -12,7 +11,7 @@ class CCChargeCreate(StrictModel):
     account_id: int
     # the card (a liability account; default 2100 Credit Card)
     card_account_id: Optional[int] = None
-    amount: Decimal
+    amount: Money
     memo: Optional[str] = None
     reference: Optional[str] = None
     class_id: Optional[int] = None

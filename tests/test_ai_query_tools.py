@@ -30,10 +30,14 @@ def query_rows(db_session):
     today = date.today()
     for i, days in enumerate([0, 31, 61, 91]):
         day = today - timedelta(days=days)
+        # Aging is by days past the due date: 0 is current, then 1-30,
+        # 31-60 and 61+ days late.
+        due = today - timedelta(days=[0, 15, 45, 75][i])
         bill = Bill(
             bill_number=f"B-{i}",
             vendor_id=vendor.id,
             date=day,
+            due_date=due,
             total=10,
             balance_due=10,
         )
@@ -46,6 +50,7 @@ def query_rows(db_session):
                     invoice_number=f"I-{i}",
                     customer_id=customer.id,
                     date=day,
+                    due_date=due,
                     total=20,
                     balance_due=20,
                     tax_amount=2,
@@ -193,10 +198,14 @@ def test_summary_invalid_dates_and_valid_period(db_session, query_rows, name):
 
 def test_aging_covers_each_bucket(db_session, query_rows):
     result = ai.get_aging_report(db_session)
-    assert result["ar_aging"] == dict.fromkeys(["current", "30", "60", "90"], 20)
-    assert result["ap_aging"] == dict.fromkeys(["current", "30", "60", "90"], 10)
-    assert result["total_ar_outstanding"] == 80
-    assert result["total_ap_outstanding"] == 40
+    # The fixture's unapplied payments (4 x 5 per side) are credits, and a
+    # credit has no due date: it nets against the newest bucket.
+    assert result["ar_aging"] == {"current": 0, "30": 20, "60": 20, "90": 20}
+    assert result["ap_aging"] == {"current": -10, "30": 10, "60": 10, "90": 10}
+    assert result["ar_unapplied_credits"] == 20
+    assert result["ap_unapplied_credits"] == 20
+    assert result["total_ar_outstanding"] == 60
+    assert result["total_ap_outstanding"] == 20
 
 
 def test_all_tools_are_serializable_and_read_only(db_session, query_rows):
@@ -221,7 +230,10 @@ def test_all_tools_are_serializable_and_read_only(db_session, query_rows):
             json.dumps(schema)
     finally:
         event.remove(engine, "before_cursor_execute", capture)
-    assert statements and set(statements) == {"SELECT"}
+    # SAVEPOINT: a tool that fails rolls back to its own savepoint rather than
+    # the caller's transaction; nothing is ever written.
+    assert statements and set(statements) <= {"SELECT", "SAVEPOINT", "RELEASE"}
+    assert "SELECT" in statements
     assert not db_session.new and not db_session.dirty and not db_session.deleted
 
 

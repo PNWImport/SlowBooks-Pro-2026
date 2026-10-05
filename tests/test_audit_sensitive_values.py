@@ -85,8 +85,14 @@ def test_audit_redacts_insert_update_delete(
     )
     assert [row.action for row in rows] == ["INSERT", "UPDATE", "DELETE"]
     assert rows[0].new_values[field] == "***"
-    assert rows[1].old_values[field] == rows[1].new_values[field] == "***"
-    assert field in rows[1].changed_fields
+    if field == "portal_token":
+        # Since 2.18 the token is a property over a SHA-256 digest and an
+        # encrypted copy: an update changes those two columns, and neither
+        # holds the token itself (checked for every row below).
+        assert {"portal_token_hash", "portal_token_enc"} <= set(rows[1].changed_fields)
+    else:
+        assert rows[1].old_values[field] == rows[1].new_values[field] == "***"
+        assert field in rows[1].changed_fields
     assert rows[2].old_values[field] == "***"
     for row in rows:
         assert before not in str(row.old_values) + str(row.new_values)

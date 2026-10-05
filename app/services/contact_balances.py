@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date
+from datetime import date as dt_date
 from decimal import Decimal
 from typing import Iterable, Optional
 
@@ -68,7 +68,7 @@ class UnappliedPayment:
 
     payment_id: int
     customer_id: int
-    date: date
+    date: dt_date
     currency: Optional[str]
     exchange_rate: Decimal
     amount: Decimal  # the whole payment, document currency
@@ -86,8 +86,8 @@ def _not_voided(column):
 def unapplied_payments(
     db: Session,
     customer_ids: Optional[Iterable[int]] = None,
-    start: Optional[date] = None,
-    end: Optional[date] = None,
+    start: Optional[dt_date] = None,
+    end: Optional[dt_date] = None,
 ) -> list[UnappliedPayment]:
     """Every non-void customer payment dated in [start, end] whose amount is
     more than what is allocated to invoices — a prepayment, an overpayment,

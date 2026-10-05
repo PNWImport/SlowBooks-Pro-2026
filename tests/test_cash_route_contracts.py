@@ -96,27 +96,52 @@ def test_pending_deposit_partial_allocation_and_completion(
     body = {
         "deposit_to_account_id": seed_accounts["1000"].id,
         "date": "2026-09-09",
-        "total": 10,
         "reference": "DEP-1",
     }
-    too_large = client.post("/api/deposits", json={**body, "total": 40.01})
-    assert too_large.status_code == 400, too_large.text
-    assert "pending" in too_large.text.lower()
-    assert client.post("/api/deposits", json=body).status_code == 200
+    # A deposit names the payments it takes (newest first on the list); the
+    # total is only a cross-check against them.
+    ten, thirty = client.get("/api/deposits/pending").json()
+    assert (ten["amount"], thirty["amount"]) == (10, 30)
+    wrong_total = client.post(
+        "/api/deposits",
+        json={**body, "line_ids": [ten["transaction_line_id"]], "total": 40.01},
+    )
+    assert wrong_total.status_code == 400, wrong_total.text
+    assert "add up to $10.00" in wrong_total.text
+    unknown = client.post("/api/deposits", json={**body, "line_ids": [999999]})
+    assert unknown.status_code == 400
+    taken = client.post(
+        "/api/deposits",
+        json={**body, "line_ids": [ten["transaction_line_id"]], "total": 10},
+    )
+    assert taken.status_code == 200 and taken.json()["items"] == 1
     pending = client.get("/api/deposits/pending").json()
     assert len(pending) == 1
     assert pending[0]["amount"] == 30
-    assert client.post("/api/deposits", json={**body, "total": 30}).status_code == 200
+    # The same payment cannot be deposited twice.
+    again = client.post(
+        "/api/deposits", json={**body, "line_ids": [ten["transaction_line_id"]]}
+    )
+    assert again.status_code == 400
+    assert (
+        client.post(
+            "/api/deposits",
+            json={**body, "line_ids": [thirty["transaction_line_id"]], "total": 30},
+        ).status_code
+        == 200
+    )
     assert client.get("/api/deposits/pending").json() == []
 
     assert (
         client.post(
             "/api/deposits",
-            json={**body, "deposit_to_account_id": 999999},
+            json={**body, "total": 10, "deposit_to_account_id": 999999},
         ).status_code
         == 404
     )
     assert client.post("/api/deposits", json={**body, "total": 0}).status_code == 400
+    # The amount-only form (no line_ids) is still accepted.
+    assert client.post("/api/deposits", json={**body, "total": 5}).status_code == 200
 
 
 def test_deposit_requires_undeposited_funds_account(client, db_session):
@@ -124,8 +149,9 @@ def test_deposit_requires_undeposited_funds_account(client, db_session):
     db_session.add(bank)
     db_session.commit()
     pending = client.get("/api/deposits/pending")
-    assert pending.status_code == 409
-    assert "1200" in pending.json()["detail"]
+    # With no Undeposited Funds nothing was ever received into it: the list
+    # is empty, and only making a deposit is refused.
+    assert pending.status_code == 200 and pending.json() == []
     response = client.post(
         "/api/deposits",
         json={"deposit_to_account_id": bank.id, "date": "2026-09-08", "total": 1},
@@ -194,8 +220,9 @@ def test_check_printing_for_customer_and_vendor_payments(
     assert client.get("/api/checks/print?payment_id=999999").status_code == 404
     assert client.get("/api/checks/print?bill_payment_id=999999").status_code == 404
     customer_pdf = client.get(f"/api/checks/print?payment_id={payment.id}")
-    assert customer_pdf.status_code == 200
-    assert customer_pdf.content == b"%PDF-test"
+    # A payment received is money in: the customer wrote that check.
+    assert customer_pdf.status_code == 400
+    assert "no check to print" in customer_pdf.json()["detail"]
     vendor_pdf = client.get(f"/api/checks/print?bill_payment_id={bill_payment.id}")
     assert vendor_pdf.status_code == 200
     assert vendor_pdf.content == b"%PDF-test"

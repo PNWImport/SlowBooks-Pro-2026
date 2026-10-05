@@ -49,7 +49,8 @@ def test_active_entities_escape_text_preserve_money(db_session, prefix, kind, mo
         assert result[0]["Description"] == "'@Synthetic description"
         assert result[0]["Taxable"] == "False"
     else:
-        assert result[0]["Balance"] == "12.34"
+        # Contact.balance is never written; the export sums open documents.
+        assert result[0]["Balance"] == "0.00"
         assert result[0]["Company"] == "'=Synthetic company"
         assert result[0]["Email"] == ""
 
@@ -76,7 +77,7 @@ def test_invoice_date_bounds_and_order(db_session, seed_customer):
     )
     assert [row["Date"] for row in result] == ["2026-01-02", "2026-01-03"]
     assert all(row["Invoice #"].startswith("'=SYN-") for row in result)
-    assert all(row["Due Date"] == "" and row["Total"] == "10.3" for row in result)
+    assert all(row["Due Date"] == "" and row["Total"] == "10.30" for row in result)
     assert len(rows(export.export_invoices(db_session))) == 3
 
 

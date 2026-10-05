@@ -1,4 +1,3 @@
-from datetime import date
 
 from decimal import Decimal
 
@@ -19,7 +18,6 @@ from app.models.payroll import (
     PayRunStatus,
     Employee,
 )
-from app import config
 
 
 @router.get("/{run_id}/paystub/{stub_id}")

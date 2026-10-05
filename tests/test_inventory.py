@@ -53,7 +53,9 @@ def test_invoice_void_reverses_all_historical_cogs_after_edit(
     response = client.put(
         f"/api/invoices/{invoice['id']}",
         json={
-            "lines": [{"item_id": item.id, "quantity": edited_quantity, "rate": "25"}]
+            "lines": [{"item_id": item.id, "quantity": edited_quantity, "rate": "25"}],
+            # Quantity 0 makes a $0.00 invoice, which is saved only on request.
+            "allow_zero_total": True,
         },
     )
     assert response.status_code == 200, response.text
@@ -70,7 +72,7 @@ def test_invoice_void_reverses_all_historical_cogs_after_edit(
 
     rows = (
         db_session.query(TransactionLine)
-        .join(Transaction)
+        .join(Transaction, TransactionLine.transaction_id == Transaction.id)
         .filter(
             Transaction.source_type.in_(["invoice", "invoice_edit", "invoice_void"]),
             Transaction.source_id == invoice["id"],

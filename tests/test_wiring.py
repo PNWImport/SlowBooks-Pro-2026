@@ -264,9 +264,6 @@ def test_collector_finds_something():
 # - Legacy paths superseded by newer endpoints (kept for backwards compat)
 _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("POST", "/api/stripe/webhook"),  # legacy alias for provider webhook
-    # A garnishment order is ended, never deleted; DELETE stays so an API
-    # client is told why (405) and where to go (POST .../end).
-    ("DELETE", "/api/deductions/garnishments/{order_id}"),
     # Provider payment routes without SPA callers: webhooks fire from the
     # provider's servers; create-checkout-session is called from the
     # public /pay/{token} page (a Jinja template, outside the JS scan).
@@ -283,7 +280,6 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     # not a literal the JS scan can see.
     ("GET", "/api/uploads/logo/{file_id}"),
     ("POST", "/api/payroll/gross-up"),
-    ("POST", "/api/payroll/{run_id}/nacha"),
     ("POST", "/api/time-entries/classify"),
     # Legacy: superseded by /api/payroll/forms/* — kept until next major release.
     # Migration tracker in docs/todo.md. (The 1099 summary, the 1099-NEC and
@@ -297,12 +293,27 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("GET", "/api/tax-forms/941/pdf"),
     ("GET", "/api/tax-forms/sui"),
     ("GET", "/api/tax-forms/liability"),
+    ("GET", "/api/tax-forms/fica-tip-credit"),
+    # E-signature — admin API (signing lives in the portal, excluded there).
+    ("GET", "/api/esign"),
+    ("GET", "/api/esign/{envelope_id}"),
+    ("POST", "/api/esign"),
+    ("POST", "/api/esign/{envelope_id}/void"),
+    ("GET", "/api/esign/{envelope_id}/verify"),
+    # Contractor pay runs — vendor bank-account management is admin/scripting;
+    # the SPA page calls the run + process + NACHA endpoints directly.
+    ("GET", "/api/contractor-runs/vendors/{vendor_id}/bank"),
+    ("POST", "/api/contractor-runs/vendors/{vendor_id}/bank"),
     # Legacy JSON-mode tax form endpoints — superseded by /pdf variants.
     # Kept for machine readers / future e-file integration.
     ("POST", "/api/payroll/forms/w2/{emp_id}"),
     ("POST", "/api/payroll/forms/w3/{year}"),
     ("POST", "/api/payroll/forms/940/{year}"),
     ("POST", "/api/payroll/forms/941/{year}/{quarter}"),
+    # SUI quarterly wage report — JSON is the machine-readable contract
+    # (the SPA's Generate button hits the /pdf variant, wired in
+    # tax_forms.js like the other forms).
+    ("POST", "/api/payroll/forms/sui/{year}/{quarter}"),
     # /decision is the canonical endpoint; /approve and /reject are aliases
     # the SPA actually calls. Decision route stays for scripts / API users.
     ("POST", "/api/pto/requests/{request_id}/decision"),
@@ -324,11 +335,10 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     # Year-end PTO carryover — annual admin batch job, scheduled via
     # cron or run manually by the operator at fiscal year-end.
     ("POST", "/api/pto/accruals/year-end-carryover"),
-    # DocumentAudit hash-chain viewer/verifier — endpoints ready, the
-    # admin UI ("Compliance" tab) is future work (docs/todo.md).
-    ("GET", "/api/document-audits"),
+    # Single-audit lookup by row id — reached from a PDF footer's printed
+    # ID, which is a support/auditor path rather than a page control. The
+    # Compliance tab lists rows and looks them up by content hash instead.
     ("GET", "/api/document-audits/{audit_id}"),
-    ("GET", "/api/document-audits/verify/{content_hash}"),
 }
 
 

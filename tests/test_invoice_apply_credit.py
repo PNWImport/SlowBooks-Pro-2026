@@ -166,8 +166,9 @@ def test_a_credit_memo_applies_an_amount_more_than_zero(
         f"/api/credit-memos/{cm['id']}/apply",
         json={"invoice_id": inv["id"], "amount": amount},
     )
-    assert r.status_code == 400, r.text
-    assert r.json()["detail"] == "Enter an amount more than zero to apply."
+    # The request schema refuses it before the route runs.
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"][0]["message"] == "Amount must be more than 0."
     memo = client.get(f"/api/credit-memos/{cm['id']}").json()
     assert Decimal(memo["balance_remaining"]) == Decimal("50.00")
     assert Decimal(memo["amount_applied"]) == Decimal("0")

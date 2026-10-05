@@ -303,7 +303,7 @@ def test_1099_sums_both_payment_paths(client, db_session, seed_accounts):
             "due_date": "2026-03-01",
             "bill_number": "CR-MIX-1",
             "lines": [
-                {"description": "work", "quantity": 1, "rate": 400, "line_order": 0}
+                {"description": "work", "quantity": 1, "rate": 400, "account_id": seed_accounts["6000"].id, "line_order": 0}
             ],
         },
     ).json()

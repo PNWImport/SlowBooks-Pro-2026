@@ -24,7 +24,9 @@ def test_deduction_fallback(raw):
         pretax_deductions=5,
         posttax_deductions=6,
     )
-    lines = pdf._deduction_lines(stub)
+    lines = [
+        {"label": r["label"], "amount": r["amount"]} for r in pdf._deduction_lines(stub)
+    ]
     assert len(lines) == 7
     assert sum(row["amount"] for row in lines) == Decimal("31")
     assert lines[0] == {"label": "Federal Income Tax", "amount": Decimal("10")}
@@ -46,7 +48,10 @@ def test_itemization_does_not_double_count_totals_or_employer_costs():
             }
         )
     )
-    assert pdf._deduction_lines(stub) == [
+    assert [
+        {"label": r["label"], "amount": r["amount"]}
+        for r in pdf._deduction_lines(stub)
+    ] == [
         {"label": "Health", "amount": Decimal("20")},
         {"label": "Garnishment Child Support", "amount": Decimal("10")},
         {"label": "Other Deduction", "amount": Decimal("5")},

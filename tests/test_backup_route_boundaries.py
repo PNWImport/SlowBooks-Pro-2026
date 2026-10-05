@@ -5,13 +5,14 @@ import pytest
 from app.models.audit import AuditLog
 from app.models.backups import Backup
 from app.routes import backups
+from app.services import backup_service
 
 
 @pytest.fixture
 def backup_dir(tmp_path, monkeypatch):
     directory = tmp_path / "backups"
     directory.mkdir()
-    monkeypatch.setattr(backups, "BACKUP_DIR", directory)
+    monkeypatch.setattr(backup_service, "BACKUP_DIR", directory)
     return directory
 
 
@@ -99,8 +100,13 @@ def test_backup_list_omits_missing_files(client, db_session, backup_dir):
 def test_restore_records_intent_before_service_and_maps_result(
     client, db_session, backup_dir, monkeypatch, result, status
 ):
+    (backup_dir / "snapshot.db").write_bytes(b"synthetic backup contents")
+    calls = []
+
     def restore(db, filename):
-        assert filename == "snapshot.db"
+        calls.append(filename)
+        if filename != "snapshot.db":
+            return {"success": True}  # the put-back from the safety copy
         # A service abort must not erase the already-committed intent.
         db.rollback()
         intent = (
@@ -110,17 +116,54 @@ def test_restore_records_intent_before_service_and_maps_result(
         assert intent.source == "admin"
         return result
 
+    safety = {"success": True, "filename": "safety.db"}
     monkeypatch.setattr(backups, "restore_backup", restore)
+    monkeypatch.setattr(backups, "create_backup", lambda db, **kw: safety)
+    monkeypatch.setattr(
+        backup_service, "bring_restored_books_up_to_date", lambda: {"success": True}
+    )
     response = client.post("/api/backups/restore", json={"filename": "snapshot.db"})
     assert response.status_code == status, response.text
-    assert response.json() == (
-        result if status == 200 else {"detail": result.get("error", "Restore failed")}
-    )
+    if status == 200:
+        assert response.json() == {**result, "safety_backup": "safety.db"}
+    else:
+        detail = response.json()["detail"]
+        assert detail.startswith(result.get("error", "Restore failed"))
+        if status == 500:
+            # a copy that failed part-way is put back from the safety backup
+            assert calls == ["snapshot.db", "safety.db"]
+            assert "safety.db" in detail
     assert (
         db_session.query(AuditLog)
         .filter_by(table_name="backups", action="RESTORE")
         .count()
         == 1
+    )
+
+
+def test_restore_refuses_missing_and_other_company_backups_before_anything_runs(
+    client, db_session, backup_dir, monkeypatch
+):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Refused restore reached the service")
+
+    monkeypatch.setattr(backups, "restore_backup", unexpected)
+    monkeypatch.setattr(backups, "create_backup", unexpected)
+    r = client.post("/api/backups/restore", json={"filename": "../etc/passwd"})
+    assert r.status_code == 400
+    r = client.post("/api/backups/restore", json={"filename": "absent.db"})
+    assert r.status_code == 404
+    (backup_dir / "other-co_20260906_120000.db").write_bytes(b"x")
+    r = client.post(
+        "/api/backups/restore", json={"filename": "other-co_20260906_120000.db"}
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "other_company"
+    assert (
+        db_session.query(AuditLog)
+        .filter_by(table_name="backups", action="RESTORE")
+        .count()
+        == 0
     )
 
 
@@ -131,10 +174,11 @@ def test_restore_external_symlink_never_reaches_service(
     outside.write_bytes(b"preserve")
     (backup_dir / "snapshot.db").symlink_to(outside)
 
-    def unexpected(*args):
+    def unexpected(*args, **kwargs):
         pytest.fail("Escaped backup reached restore service")
 
     monkeypatch.setattr(backups, "restore_backup", unexpected)
+    monkeypatch.setattr(backups, "create_backup", unexpected)
     response = client.post("/api/backups/restore", json={"filename": "snapshot.db"})
     assert response.status_code == 400
     assert outside.read_bytes() == b"preserve"

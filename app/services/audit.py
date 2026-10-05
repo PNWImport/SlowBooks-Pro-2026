@@ -172,7 +172,10 @@ def _after_flush(session, flush_context):
         for col in insp.mapper.columns:
             if _is_file_content(col):
                 continue
-            attr = insp.attrs[col.key]
+            # A column whose attribute has another name (Employee maps the
+            # legacy "portal_token" column to portal_token_retired) is not in
+            # insp.attrs under col.key; ask the mapper for the property.
+            attr = insp.attrs[insp.mapper.get_property_by_column(col).key]
             hist = attr.history
             if hist.has_changes():
                 key = attr.key

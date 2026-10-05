@@ -64,12 +64,12 @@ def _run(client, emp_id, **stub):
 def test_unapproved_time_is_named_not_paid_as_zero(client, db_session, seed_accounts):
     hana = _hana(client)
     _log(client, hana["id"], "2026-09-14", 8)
-    _log(client, hana["id"], "2026-09-15", 26)
+    _log(client, hana["id"], "2026-09-15", 20)
     r = _run(client, hana["id"], use_time_entries=True)
     assert r.status_code == 422, r.text
     detail = r.json()["detail"]
     assert "Hana Lee has no approved time" in detail
-    assert "2 time entries (34.00 hours) waiting for approval" in detail
+    assert "2 time entries (28.00 hours) waiting for approval" in detail
     assert db_session.query(PayRun).count() == 0
     assert db_session.query(PayStub).count() == 0
 

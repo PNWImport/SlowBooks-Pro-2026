@@ -77,12 +77,6 @@ services:
       APP_HOST: "0.0.0.0"
       APP_PORT: "3001"
       APP_DEBUG: "${APP_DEBUG:-false}"
-      PAYROLL_ENCRYPTION_SECRET: "${PAYROLL_ENCRYPTION_SECRET:?set a unique payroll encryption secret in .env}"
-      SESSION_SECRET_KEY: "${SESSION_SECRET_KEY:?set a unique session signing secret in .env}"
-      # Encrypts credentials stored in PostgreSQL (AI, SMTP, payment providers,
-      # bank feeds). Keeping it outside the container means those values remain
-      # decryptable after an image update or container replacement.
-      SETTINGS_ENCRYPTION_KEY: "${SETTINGS_ENCRYPTION_KEY:?set a stable Fernet settings encryption key in .env}"
       AUDIT_CHECKPOINT_SIGNING_SECRET: "${AUDIT_CHECKPOINT_SIGNING_SECRET:-}"
       AUDIT_CHECKPOINT_KEY_ID: "${AUDIT_CHECKPOINT_KEY_ID:-}"
       AUDIT_CHECKPOINT_SIGNING_SECRET_PREV: "${AUDIT_CHECKPOINT_SIGNING_SECRET_PREV:-}"

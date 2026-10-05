@@ -67,13 +67,17 @@ def reverse_sale_for_invoice(
     invoice,
     txn_date=None,
     memo: str = "Sale reversal",
+    post_journal: bool = True,
 ) -> None:
     """Undo recorded sales and edit returns using their original postings.
 
     A void must not depend on today's item settings, current invoice lines,
     or the latest sale cost. Quantity edits can leave several differently
     costed movements, including returns for lines no longer on the invoice.
-    Caller guards against repeated voids and commits the whole reversal.
+    `post_journal=False` restores the stock without COGS reversals, for an
+    invoice whose cost lives in the QBO ledger import's posting (that
+    posting is reversed separately). Caller guards against repeated voids
+    and commits the whole reversal.
     """
     from app.models.transactions import Transaction
     from app.services.accounting import create_journal_entry, reversing_lines
@@ -91,7 +95,7 @@ def reverse_sale_for_invoice(
     reversed_transactions = {}
     for movement in movements:
         reversal_id = None
-        if movement.transaction_id:
+        if post_journal and movement.transaction_id:
             if movement.transaction_id not in reversed_transactions:
                 original = db.get(Transaction, movement.transaction_id)
                 if original is not None:

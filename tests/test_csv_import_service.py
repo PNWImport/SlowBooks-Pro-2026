@@ -72,7 +72,11 @@ def test_invalid_item_row_does_not_block_valid_row(db_session):
     result = csv_import.import_items(
         db_session, "Name,Rate,Cost\nBad,not-money,1\nGood,12,5\n"
     )
-    assert result == {"created": 1, "skipped": 0, "errors": ["Row 2: import failed"]}
+    assert result == {
+        "created": 1,
+        "skipped": 0,
+        "errors": ["Row 2: Rate \"not-money\" is not a number."],
+    }
     assert db_session.query(Item).one().name == "Good"
 
 
@@ -80,7 +84,11 @@ def test_failed_item_does_not_reserve_its_name(db_session):
     result = csv_import.import_items(
         db_session, "Name,Rate,Cost\nRetry,invalid,1\nRetry,12,5\n"
     )
-    assert result == {"created": 1, "skipped": 0, "errors": ["Row 2: import failed"]}
+    assert result == {
+        "created": 1,
+        "skipped": 0,
+        "errors": ["Row 2: Rate \"invalid\" is not a number."],
+    }
     assert db_session.query(Item).one().rate == Decimal("12")
 
 
@@ -95,5 +103,5 @@ def test_truncated_names_are_deduplicated(db_session, importer):
 def test_short_csv_row_reports_error_and_continues(db_session, importer):
     run, model = importer
     result = run(db_session, "Company,Name\nMissing column\nExample,Good\n")
-    assert result == {"created": 1, "skipped": 0, "errors": ["Row 2: import failed"]}
+    assert result == {"created": 1, "skipped": 0, "errors": ["Row 2: Missing name"]}
     assert db_session.query(model).one().name == "Good"

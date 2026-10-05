@@ -12,7 +12,13 @@ so editing any other setting doesn't accidentally overwrite the real
 credential with the literal "********".
 """
 
-from app.routes.settings import SECRET_KEYS, SECRET_PLACEHOLDER
+from app.routes.settings import SECRET_KEYS as _ALL_SECRET_KEYS, SECRET_PLACEHOLDER
+from app.services.settings_service import _SENSITIVE_KEYS
+
+# The company ACH details are encrypted like the other credentials but never
+# appear in the settings API in any form: they are read and written only
+# through /api/payroll/ach-settings (tests/test_ach_settings.py).
+SECRET_KEYS = _ALL_SECRET_KEYS - _SENSITIVE_KEYS
 
 
 def _set_settings(client, **kwargs):
@@ -30,6 +36,16 @@ def test_get_redacts_each_secret_key(client):
         assert (
             got[k] == SECRET_PLACEHOLDER
         ), f"settings[{k!r}] leaked plaintext: {got[k]!r}"
+
+
+def test_ach_details_are_not_in_the_settings_api(client):
+    ach = _ALL_SECRET_KEYS & _SENSITIVE_KEYS
+    assert ach
+    _set_settings(client, **{k: f"real-{k}-value" for k in ach})
+    got = client.get("/api/settings").json()
+    for k in ach:
+        assert k not in got
+        assert f"real-{k}-value" not in str(got)
 
 
 def test_get_reports_empty_for_unset_secrets(client):

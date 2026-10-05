@@ -10,6 +10,10 @@
 
 import hashlib
 
+import pytest
+
+
+
 
 def _create_employee(client, **overrides):
     body = {

@@ -89,6 +89,14 @@ def _js(name):
 
 def test_the_pages_open_the_get_url_not_a_blob():
     forms = _js("tax_forms.js")
+    # The fork's EFW2 / SUI e-file downloads are text files, not PDFs: they
+    # are fetched and saved as a blob by _downloadEfile on purpose. Every
+    # PDF form is held to the rule outside it.
+    start = forms.index("async function _downloadEfile")
+    end = forms.index("\n}\n", start) + 3
+    efile = forms[start:end]
+    assert "createObjectURL" in efile and "/pdf" not in efile
+    forms = forms[:start] + forms[end:]
     onboarding = _js("onboarding.js")
     for js in (forms, onboarding):
         assert "createObjectURL" not in js

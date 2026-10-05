@@ -4,6 +4,8 @@ content-derived import_id dedup, and bank-rule parity with OFX import."""
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from app.models.accounts import Account, AccountType
 from app.models.bank_rules import BankRule
 from app.models.banking import BankAccount, BankTransaction
@@ -47,6 +49,14 @@ PAYPAL_NEW_CSV = (
 BOFA_DETAIL_FIXTURE = Path(__file__).parent / "fixtures/bofa_detail_real_shape.csv"
 BOFA_DETAIL_CSV_BYTES = BOFA_DETAIL_FIXTURE.read_bytes()
 BOFA_DETAIL_CSV = BOFA_DETAIL_CSV_BYTES.decode("ascii")
+
+
+@pytest.mark.parametrize("amount", ["NaN", "sNaN", "Infinity", "-Infinity"])
+def test_bofa_nonfinite_amount_is_not_importable(amount):
+    result = parse_csv(
+        f"Date,Description,Amount,Running Bal.\n01/20/2026,Invalid,{amount},0\n"
+    )
+    assert result["transactions"] == []
 
 
 def _mk_bank_account(db_session):
@@ -240,7 +250,8 @@ def test_bank_rules_auto_apply_on_csv_import(db_session):
         .filter(BankTransaction.payee == "COFFEE SHOP")
         .all()
     )
-    assert all(t.match_status == "unmatched" for t in coffee)  # categorised, not posted
+    assert all(t.match_status == "unmatched" for t in coffee)
+    assert all(t.transaction_line_id is None for t in coffee)
     assert all(t.category_account_id == expense.id for t in coffee)
 
 

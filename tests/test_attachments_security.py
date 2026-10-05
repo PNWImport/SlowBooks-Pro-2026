@@ -5,6 +5,23 @@ Covers the fix for CodeQL py/path-injection alert #19.
 
 import io
 
+import pytest
+
+
+def test_same_name_uploads_keep_independent_contents(client):
+    first = _upload(client, "invoice", 1, "receipt.pdf", b"first receipt")
+    second = _upload(client, "invoice", 1, "receipt.pdf", b"second receipt")
+    assert first.status_code == second.status_code == 201
+    first_id, second_id = first.json()["id"], second.json()["id"]
+    assert (
+        client.get(f"/api/attachments/download/{first_id}").content == b"first receipt"
+    )
+    assert client.delete(f"/api/attachments/{first_id}").status_code == 200
+    assert (
+        client.get(f"/api/attachments/download/{second_id}").content
+        == b"second receipt"
+    )
+
 
 def _upload(
     client,

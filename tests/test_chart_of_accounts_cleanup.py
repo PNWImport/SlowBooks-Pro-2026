@@ -36,6 +36,40 @@ def _seeded_ordinary(db):
     return acct
 
 
+def test_account_edit_rejects_indirect_parent_cycle(client):
+    first = client.post(
+        "/api/accounts",
+        json={"name": "Parent", "account_number": "9001", "account_type": "expense"},
+    ).json()
+    second = client.post(
+        "/api/accounts",
+        json={
+            "name": "Child",
+            "account_number": "9001.1",
+            "account_type": "expense",
+            "parent_id": first["id"],
+        },
+    ).json()
+    response = client.put(
+        f"/api/accounts/{first['id']}", json={"parent_id": second["id"]}
+    )
+    assert response.status_code == 400, response.text
+    assert client.get(f"/api/accounts/{first['id']}").json()["parent_id"] is None
+
+
+@pytest.mark.parametrize("editing", [False, True])
+def test_account_parent_must_exist(client, editing):
+    data = {"name": "Account", "account_number": "9002", "account_type": "expense"}
+    if editing:
+        account = client.post("/api/accounts", json=data).json()
+        response = client.put(
+            f"/api/accounts/{account['id']}", json={"parent_id": 999999}
+        )
+    else:
+        response = client.post("/api/accounts", json={**data, "parent_id": 999999})
+    assert response.status_code == 400, response.text
+
+
 def test_a_seeded_account_with_no_history_can_be_deleted(
     client, db_session, seed_accounts
 ):

@@ -166,5 +166,7 @@ def test_purchase_order_conversion_rejects_inventory_without_asset_account(clien
     response = client.post(
         f"/api/purchase-orders/{created.json()['id']}/convert-to-bill"
     )
-    assert response.status_code == 400
-    assert "inventory-tracked" in response.json()["detail"]
+    # An empty chart: the missing control account is reported as a 409
+    # naming it, and nothing is converted.
+    assert response.status_code == 409
+    assert "missing from the chart of accounts" in response.json()["detail"]

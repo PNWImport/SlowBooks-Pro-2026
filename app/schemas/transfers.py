@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 
 class TransferCreate(StrictModel):
@@ -14,7 +14,7 @@ class TransferCreate(StrictModel):
     date: dt_date
     from_account_id: int
     to_account_id: int
-    amount: Decimal
+    amount: Money
     memo: Optional[str] = None
     reference: Optional[str] = None
 

@@ -41,7 +41,8 @@ MAX_QUERIES = 6  # parent SELECT + a fixed number of eager-load/auth queries
 
 
 def test_analytics_dashboard_query_plan_is_constant(db_session, db_engine):
-    """The complete analytics snapshot must remain ten aggregate queries.
+    """The complete analytics snapshot must stay a fixed set of queries (twenty now that A/R and A/P
+    aging also read credits, unapplied payments and exchange rates).
 
     This checks the engine directly so session-authentication queries do not
     obscure the dashboard's own database cost.
@@ -63,7 +64,7 @@ def test_analytics_dashboard_query_plan_is_constant(db_session, db_engine):
         "cash_forecast",
         "customer_profit",
     }
-    assert len(stmts) == 10, "\n".join(stmts)
+    assert len(stmts) == 20, "\n".join(stmts)
 
 
 def _seed_invoices(db_session, customer_id, n):

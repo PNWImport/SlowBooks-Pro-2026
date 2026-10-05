@@ -40,7 +40,10 @@ def _sale_line(amount, description):
     }
 
 
-def _invoice(qbo_id, number, amount):
+def _invoice(qbo_id, number, amount, balance=None):
+    """QBO's Balance already nets its payments; the payment import does not
+    apply them again (it would double-count), so a paid invoice carries the
+    open `balance` here."""
     return QBOInvoice.from_json(
         {
             "Id": qbo_id,
@@ -48,7 +51,7 @@ def _invoice(qbo_id, number, amount):
             "TxnDate": DAY.isoformat(),
             "DueDate": DAY.isoformat(),
             "TotalAmt": amount,
-            "Balance": amount,
+            "Balance": amount if balance is None else balance,
             "CustomerRef": CUSTOMER,
             "Line": [_sale_line(amount, "Catering")],
         }
@@ -80,7 +83,7 @@ class Books:
             db.add(QBOMapping(entity_type=kind, qbo_id=qbo_id, slowbooks_id=local_id))
         db.flush()
         self.sources = {
-            QBOInvoice: [_invoice("130", "1037", 50), _invoice("133", "1038", 40)],
+            QBOInvoice: [_invoice("130", "1037", 50, balance=30), _invoice("133", "1038", 40)],
             QBOPayment: [
                 QBOPayment.from_json(
                     {

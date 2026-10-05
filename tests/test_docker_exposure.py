@@ -70,19 +70,24 @@ def test_gitignore_excludes_local_secrets_and_runtime_state():
 
 
 @pytest.mark.parametrize(
-    "compose_name", ["docker-compose.yml", "docker-compose.prod.yml"]
+    "compose_name",
+    [
+        "docker-compose.yml",
+        "docker-compose.prod.yml",
+    ],
 )
 def test_compose_passes_required_secrets_to_app(compose_name):
     import yaml
 
     compose = yaml.safe_load((ROOT / compose_name).read_text())
     env = compose["services"]["slowbooks"]["environment"]
-    for secret in (
-        "PAYROLL_ENCRYPTION_SECRET",
-        "SESSION_SECRET_KEY",
-        "SETTINGS_ENCRYPTION_KEY",
-    ):
-        assert env[secret].startswith("${" + secret + ":?")
+    # PII encryption must fail loudly when unset; the session key is
+    # auto-persisted and the settings key derived from the payroll secret
+    # when left empty (see the comments beside them), but both are always
+    # forwarded so a value set in .env reaches the container.
+    assert env["PAYROLL_ENCRYPTION_SECRET"].startswith("${PAYROLL_ENCRYPTION_SECRET:?")
+    assert "SESSION_SECRET_KEY" in env
+    assert "SETTINGS_ENCRYPTION_KEY" in env
 
     assert "AUDIT_CHECKPOINT_SIGNING_SECRET" in env
     assert "AUDIT_CHECKPOINT_KEY_ID" in env

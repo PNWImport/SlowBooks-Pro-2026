@@ -73,7 +73,7 @@ def test_csv_import_decoding(authed_client, db_session, monkeypatch, content, ex
     monkeypatch.setattr(
         bank_import,
         "import_csv_transactions",
-        lambda db, account_id, text: {"account_id": account_id, "text": text},
+        lambda db, account_id, text, mapping=None: {"account_id": account_id, "text": text},
     )
     response = authed_client.post(
         f"/api/bank-import/import-csv/{account.id}", files=_file(content)
@@ -86,7 +86,7 @@ def test_csv_preview_error_and_rows(authed_client, monkeypatch):
     monkeypatch.setattr(
         bank_import,
         "parse_csv",
-        lambda text: {"format": "unknown", "error": "bad", "transactions": []},
+        lambda text, mapping=None: {"format": "unknown", "error": "bad", "transactions": []},
     )
     error = authed_client.post("/api/bank-import/preview-csv", files=_file())
     assert error.json() == {
@@ -98,7 +98,7 @@ def test_csv_preview_error_and_rows(authed_client, monkeypatch):
     monkeypatch.setattr(
         bank_import,
         "parse_csv",
-        lambda text: {
+        lambda text, mapping=None: {
             "format": "synthetic",
             "error": None,
             "transactions": [

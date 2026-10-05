@@ -228,6 +228,7 @@ SETTINGS_TAKEN_PARTS = {
     "Users — Server Edition › #user-new-display": "Users — Server Edition › Add User",
     "Users — Server Edition › #user-new-password": "Users — Server Edition › Add User",
     "Users — Server Edition › #user-new-role": "Users — Server Edition › Add User",
+    "Users — Server Edition › #user-new-bank": "Users — Server Edition › Add User",
     "API Tokens — agents & integrations › #token-new-label": (
         "API Tokens — agents & integrations › Create Token"
     ),

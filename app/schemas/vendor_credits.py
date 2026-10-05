@@ -4,6 +4,7 @@ from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator
 
 from app.schemas.common import (
+    Money,
     StrictModel,
     TaxRateFloat,
     TaxRateOut,
@@ -48,7 +49,8 @@ class VendorCreditLineResponse(BaseModel):
 
 class VendorCreditApplicationCreate(StrictModel):
     bill_id: int
-    amount: float
+    # An application settles money against a bill: whole cents only.
+    amount: Money
 
 
 class VendorCreditCreate(StrictModel):

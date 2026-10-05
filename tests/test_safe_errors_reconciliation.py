@@ -31,11 +31,6 @@ def test_error_logging_cannot_forge_lines(caplog, exc_type):
         ValueError("synthetic-private-value"),
         KeyError("synthetic-private-value"),
         RuntimeError("synthetic-private-value"),
-        IntegrityError(
-            "INSERT synthetic-private-value",
-            {"password": "synthetic-private-value"},
-            Exception("synthetic-private-value on the first driver line"),
-        ),
         StatementError(
             "synthetic-private-value",
             "SELECT synthetic-private-value",
@@ -51,6 +46,23 @@ def test_exception_payload_is_not_public(exc):
         message = safe_message(caught, "regression")
     assert "synthetic-private" not in message
     assert "server log" in message
+
+
+def test_integrity_error_shows_only_the_drivers_first_line():
+    # Upstream's contract: the constraint's own first line is the useful
+    # part; the statement and its parameters never reach the message.
+    exc = IntegrityError(
+        "INSERT synthetic-statement-text",
+        {"password": "synthetic-private-param"},
+        Exception("NOT NULL constraint failed: t.c\nsecond line synthetic-extra"),
+    )
+    try:
+        raise exc
+    except Exception as caught:
+        message = safe_message(caught, "regression")
+    assert message == "Database constraint: NOT NULL constraint failed: t.c"
+    for private in ("synthetic-statement", "synthetic-private-param", "synthetic-extra"):
+        assert private not in message
 
 
 def test_only_explicit_user_text_passes_through():
@@ -88,7 +100,10 @@ def test_settings_email_hides_failure(client, db_session, monkeypatch):
     monkeypatch.setattr(email_service, "send_email", fail)
     response = client.post("/api/settings/test-email")
     assert response.status_code == 500
-    assert response.json()["detail"] == "Email failed: " + GENERIC
+    assert response.json()["detail"] == (
+        "Email failed — see the email log for the reason"
+    )
+    assert "synthetic-private" not in response.text
 
 
 def test_invoice_render_failure_is_private_in_response_and_email_log(
@@ -118,6 +133,7 @@ def test_invoice_render_failure_is_private_in_response_and_email_log(
     )
     assert response.status_code == 500
     assert response.json()["detail"] == "Email failed: " + GENERIC
+    assert "synthetic-private" not in response.text
     log = db_session.query(EmailLog).filter_by(entity_id=invoice_id).one()
     assert log.status == "failed"
     assert log.error_message == GENERIC

@@ -108,7 +108,11 @@ def test_parse_csv_handles_bom_empty_and_unknown_headers():
         "\ufeffDetails,Posting Date,Description,Amount,Type\nDEBIT,2026-01-01,Coffee,-1,x\n"
     )
     assert known["format"] == "chase_checking"
-    assert bank_csv.parse_csv("")["error"] == "Empty CSV or no headers"
+    assert (
+        bank_csv.parse_csv("")["error"]
+        == "The file is empty — there is nothing to import."
+    )
     unknown = bank_csv.parse_csv("Only,Headers\n1,2\n")
     assert unknown["format"] == "unknown"
-    assert "Only" in unknown["error"]
+    assert "recognise this file's columns" in unknown["error"]
+    assert unknown["header_row"] == ["Only", "Headers"]
