@@ -141,11 +141,9 @@ def test_helper_validation_audit_failure_and_empty_favicon(db_session, monkeypat
         "get_all_settings",
         lambda _db: {"company_logo_path": "static/missing.png"},
     )
-    assert portal.portal_favicon(db_session).status_code == 204
-    monkeypatch.setattr(
-        portal,
-        "get_all_settings",
-        lambda _db: {"company_logo_path": "static/js/desktop_shim.js"},
-    )
+    # The logo lives in the company database now (file_store); a company
+    # without one answers 204 with no body — the settings-path lookup the
+    # old assertion stubbed is gone.
     response = portal.portal_favicon(db_session)
-    assert response.media_type == "image/png"
+    assert response.status_code == 204
+    assert response.media_type is None

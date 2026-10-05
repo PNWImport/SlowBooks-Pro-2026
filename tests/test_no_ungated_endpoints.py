@@ -43,6 +43,7 @@ EXPECTED_PUBLIC = {
     # same logo already appears on the unauthenticated portal login and the
     # public pay page, so this discloses nothing new.
     "/portal/favicon.ico": "employer logo for the portal favicon; 204 when unset",
+    "/portal/logo": "employer logo for the portal pages; 204 when unset",
 }
 
 # NOT public, despite being exempt from the SESSION middleware: these carry
@@ -52,7 +53,15 @@ EXPECTED_PUBLIC = {
 
 # Prefixes that are exempt as a family, with the reason.
 EXPECTED_PUBLIC_PREFIXES = {
-    "/static/": "static assets",
+    # /static/uploads/* is the exception: private attachments, session
+    # required (app/main.py private_upload) — only the company logo names
+    # stay public. The route answers 401, so the blanket /static/ prefix
+    # must not claim it.
+    "/static/css/": "static assets",
+    "/static/js/": "static assets",
+    "/static/downloads/": "static assets",
+    "/static/uploads/company_logo.": "the public logo filenames",
+    "/static/img/": "static assets",
     "/api/auth/": "login/setup/logout — the endpoints that establish a session",
     "/pay/": "public customer-facing Stripe pay page (per-invoice token in URL)",
 }

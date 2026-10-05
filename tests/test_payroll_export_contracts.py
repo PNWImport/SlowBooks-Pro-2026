@@ -41,7 +41,7 @@ def test_paystub_export_not_found_and_success_context(client, db_session, monkey
     run, stub, employee = _run_with_stub(db_session)
     captured = {}
 
-    def generate(pdf_stub, pdf_employee, pdf_run, company, ytd):
+    def generate(pdf_stub, pdf_employee, pdf_run, company, ytd, ytd_stubs=None):
         captured.update(
             stub=pdf_stub,
             employee=pdf_employee,
@@ -61,14 +61,15 @@ def test_paystub_export_not_found_and_success_context(client, db_session, monkey
     assert response.status_code == 200
     assert response.content == b"synthetic-pdf"
     assert response.headers["content-type"] == "application/pdf"
-    assert response.headers["content-disposition"] == (
-        f"inline; filename=paystub_{run.id}_{stub.id}.pdf"
-    )
+    # Named for the person and the pay date, not internal ids
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith('inline; filename="Pay-Stub_')
+    assert "Export-Worker" in disposition
     assert captured["stub"].id == stub.id
     assert captured["employee"].id == employee.id
     assert captured["run"].id == run.id
-    assert captured["ytd"] == {"gross": "100"}
-    assert {"name", "address", "phone", "ein"} == set(captured["company"])
+    assert captured["ytd"] == {"gross": "100.00", "net": "80.00"}
+    assert {"name", "address", "phone", "ein"} <= set(captured["company"])
 
 
 def test_nacha_export_rejects_unknown_and_unprocessed_runs(client, db_session):
@@ -96,12 +97,35 @@ def test_nacha_export_supplies_company_defaults_and_translates_errors(
 
     monkeypatch.setattr("app.services.nacha_export.generate_nacha_file", generate)
 
+    # Without saved company ACH details the export refuses before the
+    # generator runs: the file carries full account numbers, so the
+    # company's own origination details must exist first.
     rejected = client.post(f"/api/payroll/{run.id}/nacha", json=_originating())
     assert rejected.status_code == 400
-    assert rejected.json()["detail"] == "No direct-deposit accounts"
+    assert "ACH details" in rejected.json()["detail"]
+    assert calls == []
+
+    from app.services import ach_settings
+
+    ach_settings.save(
+        db_session,
+        {
+            "immediate_destination": "021000021",
+            "immediate_origin": "123456789",
+            "originating_dfi_id": "02100002",
+            "company_account": "987654321",
+        },
+    )
+    db_session.commit()
+
+    first = client.post(f"/api/payroll/{run.id}/nacha", json=_originating())
+    assert first.status_code == 400  # the stub's first call raises
+    assert first.json()["detail"] == "No direct-deposit accounts"
     assert calls[0][0] == run.id
     assert calls[0][1]["effective_date"] == run.pay_date
     assert "company_name" in calls[0][1] and "company_id" in calls[0][1]
+    # The saved details filled the origination fields the body left empty.
+    assert calls[0][1]["immediate_destination"] == "021000021"
 
     accepted = client.post(
         f"/api/payroll/{run.id}/nacha",
