@@ -9,7 +9,9 @@ from app.models.items import ItemType, MovementType
 
 
 class ItemCreate(StrictModel):
-    name: str
+    # Trimmed and never blank, as a customer's or vendor's name is: the
+    # duplicate check compares trimmed names.
+    name: NonBlankName
     item_type: ItemType
     description: Optional[str] = None
     rate: Money = Decimal("0")
@@ -25,7 +27,7 @@ class ItemCreate(StrictModel):
 
 
 class ItemUpdate(StrictModel):
-    name: Optional[str] = None
+    name: Optional[NonBlankName] = None
     item_type: Optional[ItemType] = None
     description: Optional[str] = None
     rate: Optional[Money] = None
@@ -44,8 +46,8 @@ class ItemResponse(BaseModel):
     name: str
     item_type: ItemType
     description: Optional[str]
-    rate: Decimal
-    cost: Decimal
+    rate: RateOut
+    cost: RateOut
     income_account_id: Optional[int]
     expense_account_id: Optional[int]
     is_taxable: bool
@@ -57,6 +59,9 @@ class ItemResponse(BaseModel):
     asset_account_id: Optional[int]
     created_at: datetime
     updated_at: datetime
+    # A Discount item (a QuickBooks Online discount came in on it): a line
+    # on it takes a negative price.
+    is_discount: bool = False
 
     model_config = {"from_attributes": True}
 

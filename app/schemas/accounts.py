@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from functools import lru_cache
 from typing import Optional
 
 from typing import Literal

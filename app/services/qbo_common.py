@@ -11,11 +11,15 @@
 #   ItemType.LABOR exports as "Service" and re-imports as ItemType.SERVICE.
 # ============================================================================
 
+from collections import defaultdict
+from decimal import Decimal
+
 from sqlalchemy.orm import Session
 
 from app.models.accounts import AccountType
 from app.models.items import ItemType
 from app.models.qbo_mapping import QBOMapping
+from app.services import qbo_progress
 
 QBO_TO_ACCOUNT_TYPE = {
     "Bank": AccountType.ASSET,
@@ -76,7 +80,7 @@ def get_mapping_by_slowbooks_id(
 
 def get_mapping_by_qbo_id(db: Session, entity_type: str, qbo_id: str) -> QBOMapping:
     """Look up existing mapping by QBO ID."""
-    return (
+    mapping = (
         db.query(QBOMapping)
         .filter(
             QBOMapping.entity_type == entity_type,
@@ -84,6 +88,9 @@ def get_mapping_by_qbo_id(db: Session, entity_type: str, qbo_id: str) -> QBOMapp
         )
         .first()
     )
+    if mapping:
+        qbo_progress.existing(entity_type, qbo_id)
+    return mapping
 
 
 def create_mapping(

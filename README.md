@@ -33,8 +33,9 @@ So I built my own replacement, and transferred my data out of the old
 the code was annotated with invented "decompilation" comments referencing
 `QBW32.EXE` offsets and Btrieve table layouts as a tribute to software
 that served me well until its maker decided it should stop working. The
-codebase has since grown up and the fiction now lives only in this
-origin story; the software never depended on it.
+codebase has since grown up; the last of those comments came out in
+v2.14.0, and the fiction now lives only in this origin story. The
+software never depended on it.
 
 **This is an independent, from-scratch reimplementation.** No Intuit
 source code or binaries were available, decompiled, or used.
@@ -47,7 +48,8 @@ SlowBooks Pro strives to conform to WCAG 2.1 AA: labelled controls,
 real dialogs, live notifications, and contrast improvements in both themes.
 PDF generation requests PDF/UA-1 tagging; accessibility verification is ongoing.
 Details, known gaps and how to report a barrier:
-[docs/accessibility.md](docs/accessibility.md).
+[docs/accessibility.md](docs/accessibility.md) and
+[the accessibility page](https://www.slowbookspro.com/accessibility/).
 
 ## What's New
 
@@ -206,16 +208,17 @@ mid-feature. Release images gate on the same check in CI.
 
 ## What it does
 
-Full catalog (300+ entries) in **[docs/features.md](docs/features.md)**. Highlights:
+Full catalog in **[docs/features.md](docs/features.md)**. Highlights:
 
 - **Accounts receivable** — invoices, estimates, payments with
   multi-invoice allocation, credit memos, recurring schedules, batch
   payments, Quick Entry for paper backlogs
-- **Accounts payable** — purchase orders, bills, bill payments, AP aging
+- **Accounts payable** — purchase orders, bills, bill payments, vendor
+  credits, AP aging
 - **Double-entry core** — auto + manual journals, closing-date
   enforcement, automatic audit log, 50-account contractor chart
-- **Banking** — register, deposits, reconciliation, check printing,
-  OFX/QFX + Chase/PayPal CSV import with dedup, SimpleFIN bank feeds,
+- **Banking** — the register is the ledger (entries post, feeds are a review queue, reconciliation over ledger lines), transfers, deposits, check printing,
+  OFX/QFX + Bank of America/Chase/PayPal CSV import with dedup, SimpleFIN bank feeds,
   shared auto-categorization rules
 - **Reports & tax** — P&L (plain & by Class), Balance Sheet, Trial
   Balance, agings, GL, Cash Flow, Sales Tax with pay-to-government flow,
@@ -228,7 +231,15 @@ Full catalog (300+ entries) in **[docs/features.md](docs/features.md)**. Highlig
 - **Analytics + AI** — 8 live metrics, 90-day cash forecast, optional
   BYOK insights
 - **Server Edition** — users, roles, attributed audit trail, serves the
-  office from one PC ([docs/server-edition.md](docs/server-edition.md))
+  office from one PC, built into the same signed installer
+  ([docs/server-edition.md](docs/server-edition.md))
+- **Bank feeds** — [SimpleFIN](https://www.simplefin.org/): you hold the
+  bank credential, no middleman server
+  ([docs/setup-bank-feeds.md](docs/setup-bank-feeds.md))
+- **Jobs & job costing** — Customer:Job on every form, cost codes and
+  types with burden, time posted at loaded rates, budget vs actual
+- **Receipt intake** — scan a photo or PDF into a Bill, Expense or Sales
+  Receipt with the OCR built into macOS and Windows (Tesseract on Linux)
 - **Online payments** — [Stripe](docs/setup-stripe.md),
   [PayPal](docs/setup-paypal.md), [Square](docs/setup-square.md) behind
   one abstraction, desktop-mode recording included
@@ -238,9 +249,12 @@ Full catalog (300+ entries) in **[docs/features.md](docs/features.md)**. Highlig
   Sage 50 / Wave / Zoho Books / GnuCash, Opening Balances wizard
 - **Fixed assets** — register, depreciation runs, disposal with
   gain/loss, reconciliation report
-- **Nonprofit mode** — funds with restrictions, releases, functional
-  expenses, donor acknowledgments, giving statements, pledges
+- **Nonprofit mode** — your own words on every screen and document; funds
+  with restrictions, releases, functional expenses, donor acknowledgments,
+  giving statements, pledges
   ([docs/nonprofit-module.md](docs/nonprofit-module.md))
+- **Accessibility** — AA contrast in both themes, tagged PDFs, working
+  toward WCAG 2.1 AA ([docs/accessibility.md](docs/accessibility.md))
 - **Duplicate detection** — fuzzy customer/vendor matching at create time
 
 ![Company Snapshot in light and dark themes](screenshots/hero-themes.png)
@@ -249,6 +263,10 @@ Full catalog (300+ entries) in **[docs/features.md](docs/features.md)**. Highlig
 
 ![Invoicing, analytics, inventory, and duplicate detection](screenshots/features-grid.png)
 
+![Server Edition: LAN-served dashboard and user management](screenshots/server-edition-grid.png)
+
+*Server Edition: an edition is a state, not a SKU — add a second user and you've promoted yourself, free either way.*
+
 ---
 
 ## Quick Start
@@ -256,8 +274,10 @@ Full catalog (300+ entries) in **[docs/features.md](docs/features.md)**. Highlig
 ### Windows — signed installer
 
 Download **[SlowBooksPro-Setup-x64.exe](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases/latest/download/SlowBooksPro-Setup-x64.exe)**
-and double-click. Fully self-contained (64-bit Windows 10/11); portable
-.zip on the [releases page](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases/latest).
+and double-click. Fully self-contained (64-bit Windows 10/11); a portable
+.zip is on the [releases page](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases/latest)
+— it needs the Microsoft Edge WebView2 runtime, which Windows 11 has and the
+installer sets up; without it the app offers to open in your browser instead.
 Each company is one SQLite file under `%LOCALAPPDATA%\SlowBooksPro` —
 upgrades and even uninstalls never touch your books.
 
@@ -269,8 +289,9 @@ startup task, and machine-wide data location handled. Details in
 ### macOS — signed Apple Silicon app
 
 Download **[SlowBooksPro-macos-arm64.dmg](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases/latest/download/SlowBooksPro-macos-arm64.dmg)**,
-drag **SlowBooks Pro** to Applications, launch. Signed and notarized;
-macOS 14+. Intel Macs: use Docker until a tested Intel build ships.
+drag **SlowBooks Pro** to Applications, launch. Signed and notarized with
+the project's Apple Developer ID on every release; macOS 14+, Apple
+Silicon. Intel Macs: Docker.
 
 ### Docker (Linux servers, Intel Mac)
 
@@ -323,6 +344,11 @@ Maintainers: [validation results and remaining release checks](docs/validation.m
 | [docs/security-hardening.md](docs/security-hardening.md) | Security pass — what changed, why, how it's tested |
 | [docs/hipaa-compliance.md](docs/hipaa-compliance.md) | HIPAA mapping — honest gap list included |
 | [docs/wiring-audit.md](docs/wiring-audit.md) | Frontend ↔ backend drift audit methodology |
+| [docs/banking.md](docs/banking.md) | The register is the ledger: entries, feeds as a review queue, transfers, reconciliation |
+| [docs/nonprofit-module.md](docs/nonprofit-module.md) | Nonprofit mode: funds, restrictions, functional expenses, donor documents |
+| [docs/accessibility.md](docs/accessibility.md) | WCAG 2.1 AA conformance, known gaps, how to report a barrier |
+| [docs/migrate-from-quickbooks.md](docs/migrate-from-quickbooks.md) | QuickBooks Desktop (IIF) and Online migration, sales receipts included |
+| [docs/state-withholding.md](docs/state-withholding.md) | State income-tax withholding tables and their sources |
 | [docs/setup-bank-feeds.md](docs/setup-bank-feeds.md) | SimpleFIN bank feeds |
 | [docs/setup-qbo.md](docs/setup-qbo.md) · [Stripe](docs/setup-stripe.md) · [PayPal](docs/setup-paypal.md) · [Square](docs/setup-square.md) | Integrations |
 | [docs/migrate-from-myob.md](docs/migrate-from-myob.md) | MYOB migration walkthrough |
@@ -350,18 +376,20 @@ Full layout in [docs/development.md](docs/development.md).
 
 ## License
 
-**Source Available — free for personal and enterprise use. No commercial
-resale.** Use it, modify it, run your business on it; don't sell it or
-offer it as a paid service. Full terms in [LICENSE](LICENSE).
+**Source-available. Free forever. Yours to self-host.** Use it for
+yourself or your business, modify it, redistribute it, keep your clients'
+books on it. Don't sell it, offer it as a paid service, or build it into
+one, in whole or in part. Tools and connectors that talk to it are
+welcome, commercial or not. Illinois law. The full terms, version 2.0,
+are in [LICENSE](LICENSE); the app shows the short form once on first
+launch and the Windows installer shows the whole thing. Contributions
+come in under the Contributor Terms in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
 ## Acknowledgments
 
 - 14 years of QuickBooks 2003 Pro (1 license, $199.95, 2003 dollars)
-- The reverse-engineering community, for the aesthetic the early
-  codebase cosplayed
-- The Pervasive PSQL documentation that nobody else has read since 2005
 - Every small business owner who lost software they paid for when
   activation servers died
 
@@ -370,7 +398,8 @@ offer it as a paid service. Full terms in [LICENSE](LICENSE).
 ## Contributors
 
 - [VonHoltenCodes](https://github.com/VonHoltenCodes) — creator and maintainer
-- [Keith (@ContractorKeith)](https://github.com/ContractorKeith) — macOS maintainer
+- [Keith (@ContractorKeith)](https://github.com/ContractorKeith) — macOS testing and review
 
-Everyone who has contributed is credited in the [CHANGELOG](CHANGELOG.md) and
-the git history.
+Maintainers by platform are in [CONTRIBUTING.md](CONTRIBUTING.md). Everyone
+who has contributed is credited in the [CHANGELOG](CHANGELOG.md) entry that
+shipped their work and in the git history.

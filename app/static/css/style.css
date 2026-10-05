@@ -27,15 +27,15 @@
  * tiled BMP in the original. We recreated it as a CSS gradient. Close enough.
  * ============================================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Tahoma&display=swap');
-
 :root {
     /* -- the classic "Default Blue" palette -- */
     --qb-navy:        #003366;
     --qb-navy-dark:   #002244;
     --qb-navy-mid:    #004488;
     --qb-blue:        #336699;
-    --qb-blue-light:  #4a7fb5;
+    /* the top of the primary-button and dialog-title gradients, under white
+       text: #4a7fb5 was 4.20:1, this is 4.56 */
+    --qb-blue-light:  #4779ad;
     --qb-blue-accent: #5b9bd5;
     /* Link colour. There was no rule for a bare <a> at all, so the browser
        chose — and its default #0000EE sits at 1.73:1 on the dark panel,
@@ -49,7 +49,7 @@
     --qb-green-dark:  #2d7d56;
     --qb-gold:        #cc9933;
     --qb-red:         #cc3333;
-    --qb-orange:      #cc6633;
+    --qb-orange:      #b2592d;
 
     /* -- Form backgrounds (the famous tinted papers) -- */
     --invoice-bg:     #fffef5;    /* yellow tint — RT_BITMAP 0x012C */
@@ -68,8 +68,10 @@
     /* -- Text -- */
     --text-primary:   #1a1a2e;
     --text-secondary: #4a4a6a;
-    --text-muted:     #7a7a9a;
-    --text-light:     #9a9ab0;
+    /* #7a7a9a was 4.14:1 on white, 3.65 on the page and 3.25 on a page
+       header's gradient. 4.59 at that gradient's darkest, 5.85 on white */
+    --text-muted:     #626282;
+    --text-light:     #6a6a88;   /* was #9a9ab0, 2.75:1 on white; 5.21 */
     --text-on-dark:   #e8ecf0;
     --text-on-navy:   #c8d8e8;
 
@@ -84,8 +86,11 @@
     --gray-100: #f3f4f6;
     --gray-200: #e5e7eb;
     --gray-300: #d1d5db;
-    --gray-400: #6b7280; /* was #9ca3af — 2.5:1 on white, failed AA for text */
-    --gray-500: #6b7280;
+    /* Text only. #6b7280 was 4.27:1 on the page, 3.79 on a page header and
+       3.59 on a toolbar; 4.62 at the toolbar, 6.22 on white. (#9ca3af before
+       it was 2.5:1 on white.) */
+    --gray-400: #5b616d;
+    --gray-500: #5b616d;
     --gray-600: #4b5563;
 
     --sidebar-width: 200px;
@@ -150,9 +155,13 @@ body {
     user-select: none;
 }
 
+/* The brand's year, the clock and the status bar sit on the toolbar and
+   status bar gradients, which are darker than the page: muted text there
+   read 2.57-2.66:1. They take the secondary text colour, as they already
+   do in dark theme (macOS gate's contrast sweep, 2.18.0). */
 .topbar-brand span {
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     font-size: 10px;
     margin-left: 4px;
 }
@@ -191,7 +200,7 @@ body {
     font-size: 15px;
     line-height: 1;
     padding: 2px 12px;
-    color: #4a6fa8;                                  /* cool blue moon */
+    color: #3b5987;       /* cool blue moon; #4a6fa8 was 3.27:1 on the toolbar */
     text-shadow: 0 0 6px rgba(74, 111, 168, 0.45);
     transition: color 0.15s, text-shadow 0.15s;
 }
@@ -212,7 +221,7 @@ body {
 .topbar-clock {
     font-size: 10px;
     font-family: var(--font-mono);
-    color: var(--text-muted);
+    color: var(--text-secondary);
 }
 
 /* ========================================================================
@@ -410,7 +419,7 @@ body {
     align-items: center;
     padding: 0 12px;
     font-size: 10px;
-    color: var(--text-muted);
+    color: var(--text-secondary);   /* see .topbar-brand span */
     flex-shrink: 0;
     gap: 16px;
 }
@@ -472,12 +481,12 @@ body {
     color: var(--text-primary);
 }
 
-.btn:hover {
+.btn:hover:not(:disabled) {
     background: linear-gradient(180deg, #f0f4f8 0%, #d8dce4 100%);
     border-color: #5f7d99;
 }
 
-.btn:active {
+.btn:active:not(:disabled) {
     background: linear-gradient(180deg, #d0d4d8 0%, #e0e4e8 100%);
 }
 
@@ -488,7 +497,7 @@ body {
     font-weight: 700;
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
     background: linear-gradient(180deg, var(--qb-blue) 0%, var(--qb-navy-mid) 100%);
 }
 
@@ -498,23 +507,34 @@ body {
     border-color: #7f9db9;
 }
 
-.btn-secondary:hover {
+.btn-secondary:hover:not(:disabled) {
     background: linear-gradient(180deg, #f0f4f8 0%, #d8dce4 100%);
 }
 
 .btn-danger {
-    background: linear-gradient(180deg, #e05555 0%, var(--qb-red) 100%);
+    /* white on the old top stop, #e05555, was 3.75:1 */
+    background: linear-gradient(180deg, #d34242 0%, var(--qb-red) 100%);
     color: white;
     border-color: #992222;
 }
 
-.btn-danger:hover {
+.btn-danger:hover:not(:disabled) {
     background: linear-gradient(180deg, var(--qb-red) 0%, #aa2222 100%);
 }
 
 .btn-sm {
     padding: 2px 8px;
     font-size: 10px;
+}
+
+/* A disabled button looks it: dimmed, a not-allowed cursor, and no hover
+   (the hover rules above skip :disabled). Disabled buttons looked enabled
+   and did nothing when clicked: the QBO page's Import with no connection,
+   Restore before its tick (macbase1 NEW-15, 2.18.0 gate). WCAG exempts an
+   inactive control from contrast. */
+.btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
 }
 
 .btn-group {
@@ -569,7 +589,8 @@ thead th.sort-active {
 thead th .sort-arrow {
     font-size: 9px;
     margin-left: 2px;
-    color: var(--qb-blue);
+    /* --qb-blue was 3.38:1 on the sorted column's header, 3.23 in dark */
+    color: var(--qb-navy);
 }
 
 tbody td {
@@ -641,9 +662,16 @@ td.amount, th.amount {
  * sunken 3D edit controls (WS_EX_CLIENTEDGE)
  * ======================================================================== */
 
+/* minmax(0, 1fr), not 1fr: a column may be narrower than what is in it. A
+   select is as wide as its longest option, so one customer with a
+   120-character name widened the first column until the second (Date, Due
+   Date, Class, Exchange Rate) sat past the Edit Invoice dialog's edge,
+   behind a sideways scrollbar (macbase1, F22, still there at the 2.18.0
+   gate). Each field now fills its own column; the open list still shows
+   every name in full. */
 .form-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px 12px;
 }
 
@@ -651,6 +679,7 @@ td.amount, th.amount {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    min-width: 0;
 }
 
 .form-group.full-width {
@@ -838,11 +867,13 @@ a:hover { text-decoration: underline; }
     border: none;
     font-size: 16px;
     cursor: pointer;
-    color: rgba(255,255,255,0.7);
+    /* white: the dialog header's gradient starts at --qb-blue-light, where
+       0.7 white was 3.11:1 and white is 4.56 */
+    color: #ffffff;
     padding: 2px 4px;
     line-height: 1;
 }
-.modal-close:hover { color: #ffffff; }
+.modal-close:hover { color: #ffffff; background: rgba(255, 255, 255, 0.15); }
 
 #modal-body {
     padding: 14px 16px;
@@ -941,8 +972,49 @@ a:hover { text-decoration: underline; }
 
 .line-items-table .col-qty    { width: 60px; }
 .line-items-table .col-rate   { width: 80px; }
-.line-items-table .col-amount { width: 80px; text-align: right; }
+.line-items-table .col-amount { width: 80px; text-align: right; white-space: nowrap; }
 .line-items-table .col-actions{ width: 30px; text-align: center; }
+
+.invoice-logo-option {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 10px;
+    margin-bottom: 12px;
+    border: 1px solid var(--panel-border);
+    background: var(--form-bg);
+}
+
+.invoice-logo-preview {
+    max-width: 140px;
+    max-height: 56px;
+    object-fit: contain;
+    padding: 4px;
+    background: white;
+}
+
+.invoice-logo-option label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 700;
+}
+
+.invoice-logo-option input {
+    width: auto;
+}
+
+.invoice-logo-help,
+.invoice-logo-status {
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-top: 3px;
+}
+
+.invoice-logo-status.invoice-logo-error {
+    color: var(--danger);
+}
 
 .invoice-totals {
     display: flex;
@@ -1093,7 +1165,9 @@ tr.clickable { cursor: pointer; }
 
 .splash-info {
     font-size: 10px;
-    color: rgba(255,255,255,0.5);
+    /* 0.5 was 4.28:1 at the top of the navy (4.48 as skytech measured it
+       with the terms showing, R3-1); 0.6 is 5.47. Its bold stays 0.7. */
+    color: rgba(255,255,255,0.6);
     line-height: 1.6;
     margin-bottom: 16px;
 }
@@ -1117,9 +1191,32 @@ tr.clickable { cursor: pointer; }
 .splash-whatsnew ul { margin: 0; padding-left: 16px; }
 .splash-whatsnew li { margin: 2px 0; }
 
+.splash-terms {
+    text-align: left;
+    margin: 12px 0 4px;
+    padding: 10px 14px;
+    border: 1px solid var(--gray-300, #d0d4dc);
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.45;
+    max-height: 260px;
+    overflow-y: auto;
+    /* the sibling .splash-whatsnew's panel; without it the text sits at 1.16:1 on the
+       splash navy (macbase1, 2.14.0 gate) */
+    background: rgba(255, 255, 255, 0.55);
+}
+.splash-terms-title { font-weight: 700; margin-bottom: 6px; }
+.splash-terms-list { margin: 0; padding-left: 18px; }
+.splash-terms-list li { margin-bottom: 6px; }
+/* the link to LICENSE sat at 4.29:1 on the light panel (measured in headless
+   Chromium, 2.16.2 gate); the navy the button uses reads at AA there. The dark
+   theme overrides it in dark.css. */
+.splash-terms a { color: #002244; font-weight: 600; }
+
 .splash-legal {
     font-size: 8px;
-    color: rgba(255,255,255,0.25);
+    /* 0.25 was 2.22:1 (skytech R3-1); 0.55 is 4.84, still the faintest line */
+    color: rgba(255,255,255,0.55);
     line-height: 1.5;
     margin-bottom: 16px;
     padding: 0 16px;
@@ -1288,6 +1385,77 @@ tr.clickable { cursor: pointer; }
     border-bottom: 1px solid var(--panel-border);
 }
 
+/* QBO imports: keep the live log inside the import controls' column. */
+.qbo-sections { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.qbo-sections > .iif-section { min-width: 0; }
+.qbo-import-log {
+    --qbo-log-warning: #9a4b12;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 12px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel-bg);
+    font: 10px/1.5 var(--font-mono);
+    color: var(--text-primary);
+}
+.qbo-log-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 9px;
+    background: var(--form-bg);
+    border-bottom: 1px solid var(--panel-border);
+}
+.qbo-log-heading > strong { font-size: 11px; }
+.qbo-log-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+.qbo-log-controls .btn { padding: 2px 5px; font-size: 10px; }
+.qbo-log-controls .btn[hidden] { display: none; }
+.qbo-run-status { font-weight: 700; color: var(--text-secondary); }
+.qbo-status-running { color: var(--text-link); }
+.qbo-status-complete { color: var(--text-success); }
+.qbo-status-warning { color: var(--qbo-log-warning); }
+.qbo-status-error { color: var(--danger); }
+.qbo-run-detail, .qbo-run-activity { padding: 5px 9px; overflow-wrap: anywhere; }
+.qbo-run-activity { color: var(--text-secondary); border-bottom: 1px solid var(--panel-border); }
+.qbo-run-counts { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 0 9px; }
+.qbo-run-counts strong { font-variant-numeric: tabular-nums; }
+.qbo-log-scroll { height: 320px; overflow: auto; overscroll-behavior: contain; }
+.qbo-log-table { width: 100%; min-width: 480px; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: inherit; }
+.qbo-log-table th, .qbo-log-table td {
+    padding: 4px 5px;
+    font-size: inherit;
+    vertical-align: top;
+    text-align: left;
+    overflow-wrap: anywhere;
+    border-bottom: 1px solid var(--panel-border);
+}
+.qbo-log-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--form-bg);
+    color: var(--text-secondary);
+    font-weight: 700;
+}
+.qbo-log-table td:first-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.qbo-col-ts { width: 87px; }
+.qbo-col-code, .qbo-col-item, .qbo-col-action { width: 56px; }
+.qbo-log-code, .qbo-log-item-label { display: block; color: var(--text-secondary); }
+.qbo-log-level { font-weight: 700; }
+.qbo-log-error .qbo-log-level { color: var(--danger); }
+.qbo-log-warning .qbo-log-level { color: var(--qbo-log-warning); }
+.qbo-log-error td:first-child { border-left: 2px solid var(--danger); }
+.qbo-log-warning td:first-child { border-left: 2px solid var(--qbo-log-warning); }
+.qbo-log-empty { padding: 18px 10px; color: var(--text-secondary); text-align: center; }
+.qbo-errors-only #qbo-log-rows > tr:not(.qbo-log-error) { display: none; }
+#qbo-errors-filter[aria-pressed="true"] { color: var(--danger); font-weight: 700; border-color: var(--danger); }
+.qbo-log-error .qbo-log-code { color: var(--danger); }
+[data-theme="dark"] .qbo-import-log { --qbo-log-warning: var(--qb-orange); }
+@media (max-width: 800px) {
+    .qbo-sections { grid-template-columns: minmax(0, 1fr); }
+}
+
 .iif-export-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1452,6 +1620,34 @@ tr.clickable { cursor: pointer; }
     color: var(--qb-orange);
 }
 
+/* "Change ALL-CAPS names" on the IIF import (#195): the box, and a few of
+   the file's own names as it would import them */
+.iif-retitle {
+    margin-top: 8px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    padding: 8px 10px;
+    font-size: 11px;
+    color: var(--text-primary);
+}
+
+.iif-retitle label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 700;
+}
+
+.iif-retitle ul {
+    margin: 6px 0 6px 20px;
+    font-family: var(--font-mono);
+}
+
+.iif-retitle p {
+    margin: 0;
+    color: var(--text-secondary);
+}
+
 /* ===========================================================================
    Phase 9: Analytics page (#/analytics)
    Inline SPA page matching the QB2003 blue skin with light/dark support.
@@ -1613,7 +1809,7 @@ tr.clickable { cursor: pointer; }
     display: flex;
     align-items: center;
     gap: 8px;
-    color: #a855f7;
+    color: #9b3cf6;   /* #a855f7, the card's border, is 3.96:1 as text on white */
 }
 
 .ai-insights-body {
@@ -1802,7 +1998,7 @@ tr.clickable { cursor: pointer; }
 }
 
 .ai-key-saved {
-    color: #00c48f;
+    color: var(--text-success);   /* #00c48f was 2.26:1 as text on white */
     font-style: normal;
     font-weight: 600;
     margin-left: 4px;
@@ -1824,8 +2020,8 @@ tr.clickable { cursor: pointer; }
     color: var(--text-muted);
 }
 
-.ai-test-ok { color: #00c48f; }
-.ai-test-fail { color: var(--qb-red); }
+.ai-test-ok { color: var(--text-success); }   /* #00c48f was 2.26:1 on white */
+.ai-test-fail { color: var(--text-danger); }
 
 /* ----------------------------------------------------------------
  * Cloudflare Worker Gateway section (appears when provider is
@@ -1867,7 +2063,7 @@ tr.clickable { cursor: pointer; }
 }
 
 .ai-worker-security {
-    color: #00c48f;  /* green — safety callout */
+    color: var(--text-success);  /* green — safety callout (#00c48f was 2.26:1 on white) */
     border-top: 1px dashed rgba(243, 128, 32, 0.3);
     padding-top: 6px;
     margin-top: 6px;

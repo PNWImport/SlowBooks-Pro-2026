@@ -29,7 +29,7 @@ class CreditMemoLineResponse(BaseModel):
     item_id: Optional[int] = None
     description: Optional[str] = None
     quantity: Decimal = Decimal("0")
-    rate: Decimal = Decimal("0")
+    rate: RateOut = Decimal("0")
     amount: Decimal = Decimal("0")
     line_order: int = 0
     model_config = {"from_attributes": True}
@@ -44,11 +44,16 @@ class CreditMemoCreate(StrictModel):
     customer_id: int
     date: dt_date
     original_invoice_id: Optional[int] = None
-    tax_rate: TaxRateFloat = 0
+    # Left out: the original invoice's rate when one is named, else 0 (the
+    # Credit Memo form fills in the company's default rate itself).
+    tax_rate: Optional[TaxRateFloat] = None
     notes: Optional[str] = None
     class_id: Optional[int] = None
     job_id: Optional[int] = None
     lines: list[CreditMemoLineCreate] = []
+    # A credit memo for $0.00 is saved only when this says so; otherwise it
+    # is refused with 409 "zero_total".
+    allow_zero_total: bool = False
 
     @field_validator("lines")
     @classmethod
@@ -67,7 +72,7 @@ class CreditMemoResponse(BaseModel):
     original_invoice_id: Optional[int] = None
     date: dt_date
     subtotal: Decimal = Decimal("0")
-    tax_rate: Decimal = Decimal("0")
+    tax_rate: TaxRateOut = Decimal("0")
     tax_amount: Decimal = Decimal("0")
     total: Decimal = Decimal("0")
     amount_applied: Decimal = Decimal("0")

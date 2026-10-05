@@ -98,7 +98,7 @@ const OnboardingPage = {
             const signable = this._signableTasks.has(t.task_type);
             const signedChk = signable
                 ? `<label style="font-size:.85em;white-space:nowrap">
-                       <input type="checkbox" ${t.signed ? 'checked' : ''}
+                       <input type="checkbox" ${t.signed ? 'checked' : ''} aria-label="Signed, ${label}"
                            onchange="OnboardingPage.signTask(${t.id}, this.checked, ${empId})">
                        Signed
                    </label>`
@@ -130,8 +130,7 @@ const OnboardingPage = {
                 </table>
             </div>
             <div class="form-actions" style="margin-top:1rem">
-                <button class="btn btn-secondary" onclick="OnboardingPage.viewReport(${empId})">New-Hire Report JSON</button>
-                <button class="btn btn-secondary" onclick="OnboardingPage.downloadReport(${empId})">Download PDF Report</button>
+                <button class="btn btn-secondary" onclick="OnboardingPage.downloadReport(${empId})">New-Hire Report PDF</button>
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`;
 
@@ -160,27 +159,12 @@ const OnboardingPage = {
         }
     },
 
-    async viewReport(empId) {
-        try {
-            const report = await API.get(`/onboarding/${empId}/new-hire-report`);
-            openModal('New-Hire Report', `<pre style="white-space:pre-wrap;word-break:break-all;max-height:60vh;overflow:auto">${escapeHtml(JSON.stringify(report, null, 2))}</pre>
-                <div class="form-actions">
-                    <button class="btn btn-secondary" onclick="closeModal()">Close</button>
-                </div>`);
-        } catch (err) {
-            toast(err.message || 'Failed to load report', 'error');
-        }
-    },
-
-    async downloadReport(empId) {
-        async function _openPDF(url, method = 'POST') {
-            const res = await fetch(url, { method, credentials: 'same-origin' });
-            if (!res.ok) { toast('PDF generation failed', 'error'); return; }
-            const blob = await res.blob();
-            const u = URL.createObjectURL(blob);
-            window.open(u, '_blank');
-            setTimeout(() => URL.revokeObjectURL(u), 15000);
-        }
-        await _openPDF(`/api/onboarding/${empId}/new-hire-report/pdf`, 'GET');
+    downloadReport(empId) {
+        // The New-Hire Report is this PDF. A second button showed the owner
+        // the report's raw JSON, SSN digits included (2.18.0 gate, NEW-4);
+        // GET /api/onboarding/{id}/new-hire-report stays for API clients.
+        // Opened like an invoice PDF (the desktop shim shows it in the
+        // native viewer); a fetched blob: window opened nothing on the Mac.
+        window.open(`/api/onboarding/${empId}/new-hire-report/pdf`, '_blank');
     },
 };

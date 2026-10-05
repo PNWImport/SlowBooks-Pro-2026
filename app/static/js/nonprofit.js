@@ -11,14 +11,14 @@ const ReleasesPage = {
 
     async render() {
         const releases = await API.get('/nonprofit/releases');
-        const rows = releases.map(r => `<tr class="clickable" onclick="ReleasesPage.view(${r.id})" style="${r.status === 'void' ? 'opacity:.6' : ''}">
+        const rows = releases.map(r => `<tr class="clickable${r.status === 'void' ? ' row--dim' : ''}" onclick="ReleasesPage.view(${r.id})">
             <td>${escapeHtml(r.number)}</td>
             <td>${escapeHtml(r.date)}</td>
             <td>${escapeHtml(r.class_name || '')}</td>
             <td>${escapeHtml(r.period_start || '')} — ${escapeHtml(r.period_end || '')}</td>
             <td>${escapeHtml(r.memo || '')}</td>
             <td class="amount">${formatCurrency(r.amount)}</td>
-            <td>${r.status === 'void' ? '<span style="color:#a4242b">void</span>' : 'posted'}</td>
+            <td>${r.status === 'void' ? '<span style="color:var(--text-danger)">void</span>' : 'posted'}</td>
         </tr>`).join('');
         return `
             <div class="page-header">
@@ -109,12 +109,12 @@ const ReleasesPage = {
             <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
                 <div style="font-size:13px">
                     <div><strong>${escapeHtml(r.date)}</strong> · ${escapeHtml(r.class_name || '')}</div>
-                    <div style="color:#666">Period ${escapeHtml(r.period_start || '')} — ${escapeHtml(r.period_end || '')}</div>
-                    ${r.memo ? `<div style="color:#666">${escapeHtml(r.memo)}</div>` : ''}
+                    <div style="color:var(--text-muted)">Period ${escapeHtml(r.period_start || '')} — ${escapeHtml(r.period_end || '')}</div>
+                    ${r.memo ? `<div style="color:var(--text-muted)">${escapeHtml(r.memo)}</div>` : ''}
                 </div>
                 <div style="text-align:right">
                     <div style="font-size:20px;font-weight:700">${formatCurrency(r.amount)}</div>
-                    <div>${r.status === 'void' ? '<span style="color:#a4242b;font-weight:600">VOID</span>' : `<button class="btn btn-sm btn-secondary" onclick="ReleasesPage.voidEntry(${r.id})">Void</button>`}</div>
+                    <div>${r.status === 'void' ? '<span style="color:var(--text-danger);font-weight:600">VOID</span>' : `<button class="btn btn-sm btn-secondary" onclick="ReleasesPage.voidEntry(${r.id})">Void</button>`}</div>
                 </div>
             </div>
             <div style="font-size:11px;color:var(--gray-500)">Posted as a debit to Net Assets With Donor Restrictions and a credit to Net Assets Without, both tagged to the ${T('class')}.</div>
@@ -153,15 +153,15 @@ const AllocationsPage = {
     async render() {
         const [runs, rules] = await Promise.all([API.get('/nonprofit/allocations'), API.get('/nonprofit/allocation-rules?include_inactive=true')]);
         AllocationsPage._rules = rules;
-        const rows = runs.map(a => `<tr class="clickable" onclick="AllocationsPage.view(${a.id})" style="${a.status === 'void' ? 'opacity:.6' : ''}">
+        const rows = runs.map(a => `<tr class="clickable${a.status === 'void' ? ' row--dim' : ''}" onclick="AllocationsPage.view(${a.id})">
             <td>${escapeHtml(a.number)}</td>
             <td>${escapeHtml(a.date)}</td>
             <td>${escapeHtml(a.rule_name || '')}</td>
             <td>${escapeHtml(a.period_start)} — ${escapeHtml(a.period_end)}</td>
             <td class="amount">${formatCurrency(a.total)}</td>
-            <td>${a.status === 'void' ? '<span style="color:#a4242b">void</span>' : 'posted'}</td>
+            <td>${a.status === 'void' ? '<span style="color:var(--text-danger)">void</span>' : 'posted'}</td>
         </tr>`).join('');
-        const ruleRows = rules.map(r => `<tr style="${r.is_active ? '' : 'opacity:.6'}">
+        const ruleRows = rules.map(r => `<tr${r.is_active ? '' : ' class="row--dim"'}>
             <td>${escapeHtml(r.name)}</td>
             <td>${escapeHtml({ percent: 'Percent', square_feet: 'Square feet', hours: 'Hours on grants' }[r.basis] || r.basis)}</td>
             <td>${escapeHtml(r.source_account_name || 'any expense')}${r.source_class_name ? ` · ${escapeHtml(r.source_class_name)}` : ''}</td>
@@ -377,11 +377,11 @@ const AllocationsPage = {
             <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
                 <div style="font-size:13px">
                     <div><strong>${escapeHtml(a.date)}</strong> · ${escapeHtml(a.rule_name || '')} · ${escapeHtml(a.period_start)} — ${escapeHtml(a.period_end)}</div>
-                    ${a.memo ? `<div style="color:#666">${escapeHtml(a.memo)}</div>` : ''}
+                    ${a.memo ? `<div style="color:var(--text-muted)">${escapeHtml(a.memo)}</div>` : ''}
                 </div>
                 <div style="text-align:right">
                     <div style="font-size:20px;font-weight:700">${formatCurrency(a.total)}</div>
-                    <div>${a.status === 'void' ? '<span style="color:#a4242b;font-weight:600">VOID</span>' : `<button class="btn btn-sm btn-secondary" onclick="AllocationsPage.voidEntry(${a.id})">Void</button>`}</div>
+                    <div>${a.status === 'void' ? '<span style="color:var(--text-danger);font-weight:600">VOID</span>' : `<button class="btn btn-sm btn-secondary" onclick="AllocationsPage.voidEntry(${a.id})">Void</button>`}</div>
                 </div>
             </div>
             <div class="table-container"><table class="data-table" style="font-size:12px">

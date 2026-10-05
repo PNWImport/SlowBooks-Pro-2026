@@ -32,7 +32,7 @@ class POLineResponse(BaseModel):
     item_id: Optional[int] = None
     description: Optional[str] = None
     quantity: Decimal = Decimal("0")
-    rate: Decimal = Decimal("0")
+    rate: RateOut = Decimal("0")
     amount: Decimal = Decimal("0")
     received_qty: Decimal = Decimal("0")
     job_id: Optional[int] = None
@@ -71,6 +71,19 @@ class POUpdate(StrictModel):
     lines: Optional[list[POLineCreate]] = None
 
 
+class POConvertLineAccount(StrictModel):
+    line_id: int  # a line of the purchase order being converted
+    account_id: int  # where that line posts on the bill
+
+
+class POConvertToBill(StrictModel):
+    """The To Bill dialog's choices: an account for each line that needs
+    one. Lines left out post to their item's expense account, else the
+    vendor's default expense account."""
+
+    lines: list[POConvertLineAccount] = []
+
+
 class POResponse(BaseModel):
     id: int
     po_number: str
@@ -82,7 +95,7 @@ class POResponse(BaseModel):
     expected_date: Optional[dt_date] = None
     ship_to: Optional[str] = None
     subtotal: Decimal = Decimal("0")
-    tax_rate: Decimal = Decimal("0")
+    tax_rate: TaxRateOut = Decimal("0")
     tax_amount: Decimal = Decimal("0")
     total: Decimal = Decimal("0")
     notes: Optional[str] = None

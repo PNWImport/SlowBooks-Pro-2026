@@ -1,16 +1,42 @@
 # ============================================================================
 # Slowbooks Pro 2026 — pytest configuration
 #
-# Each test gets a fresh in-memory SQLite database via the db_engine fixture.
-# The `client` fixture wires the app's get_db dependency to that same engine
-# so API calls and direct db_session queries hit the same tables.
+# One in-memory SQLite database for the whole run, built once; each test
+# runs inside a transaction on it that is rolled back at the end (issue
+# #128). The `client` fixture wires the app's get_db dependency to that same
+# connection so API calls and direct db_session queries hit the same tables.
 # Rate limiting is disabled by default so per-test counters don't collide.
 # ============================================================================
 
+import atexit
 import os
+import shutil
 import sys
+import tempfile
 from decimal import Decimal
 from pathlib import Path
+
+from cryptography.fernet import Fernet
+
+# ---- The machine's own SlowBooks files stay out of the suite ----
+# Without SLOWBOOKS_DATA_DIR, company_service.data_dir() is the real per-user
+# folder (~/Library/Application Support/SlowBooksPro/data on a Mac), so the
+# suite saw the tester's own companies: a test that renames its company to
+# "Harbor Light Bakery" got a 409 from a real company of that name (2.18.0
+# gate, macbase1). And storage.files_root() is app/static, so attachments,
+# receipt intake and backups were written into the source tree, where a
+# local build could pick them up. One folder per run, set before anything
+# imports the app (the upload roots are read at import) and set always: a
+# SLOWBOOKS_DATA_DIR in the shell would point the suite at real books.
+SUITE_DATA_DIR = Path(tempfile.mkdtemp(prefix="slowbooks-suite-")).resolve()
+atexit.register(shutil.rmtree, SUITE_DATA_DIR, True)
+os.environ["SLOWBOOKS_DATA_DIR"] = str(SUITE_DATA_DIR)
+# The checkout's own .env (a developer's DATABASE_URL, company name and
+# keys) is not read either; CI has none, so a run here is the run CI does.
+os.environ["SLOWBOOKS_ENV_FILE"] = str(SUITE_DATA_DIR / "suite.env")
+# Settings encryption with a key for this run only: without one, crypto
+# writes .slowbooks-master.key next to the code.
+os.environ["SETTINGS_ENCRYPTION_KEY"] = Fernet.generate_key().decode("ascii")
 
 # ---- Environment overrides (must run BEFORE any app imports) ----
 os.environ["APP_DEBUG"] = "true"  # Disable production security checks in test
@@ -94,8 +120,8 @@ def pytest_runtest_call(item):
 
 from starlette.requests import HTTPConnection  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
-from sqlalchemy.orm import sessionmaker  # noqa: E402
+from sqlalchemy import create_engine, event  # noqa: E402
+from sqlalchemy.orm import close_all_sessions, sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 # Import all model modules so Base.metadata sees every table before create_all.
@@ -145,8 +171,23 @@ from app.seed.chart_of_accounts import CHART_OF_ACCOUNTS  # noqa: E402
 from app.main import app  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Per-test in-memory engine — every test gets a clean slate
+# ONE session factory for the whole suite.
+#
+# Issue #124: the suite used to build a fresh sessionmaker per test — two of
+# them, in fact — and call register_audit_hooks() on each. That is ~4,060
+# event registrations over a run, and SQLAlchemy keeps per-target listener
+# bookkeeping for every one. Measured growth was ~1.6 MB retained per test,
+# reaching 1.2 GB by the end and never plateauing, which is what terminated
+# the suite at a random point on a memory-constrained Windows box.
+#
+# A sessionmaker can be re-pointed with .configure(bind=...), so one factory
+# serves every test and the listener is attached exactly once.
+#
+# The old comment here warned that id-reuse across short-lived factories made
+# `event.contains` unreliable. With one long-lived factory that hazard is gone
+# by construction rather than worked around.
 # ---------------------------------------------------------------------------
+_SUITE_SESSION_FACTORY = sessionmaker(autocommit=False, autoflush=False)
 
 
 _SUITE_SESSION_FACTORY = sessionmaker(autocommit=False, autoflush=False)
@@ -165,10 +206,33 @@ def _shared_factory(engine):
 def db_engine():
     """Per-test in-memory SQLite engine with full schema."""
     engine = create_engine(
-        "sqlite:///:memory:",
+        url,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    # pysqlite's legacy transaction handling never emits BEGIN for a
+    # SAVEPOINT, so a savepoint released before any BEGIN "functions on its
+    # own" and a rollback of the enclosing transaction leaves it in place —
+    # the exact failure that would make a test pass while leaking rows into
+    # the next one. SQLAlchemy's documented fix: take BEGIN away from the
+    # driver and emit it ourselves.
+    @event.listens_for(engine, "connect")
+    def _no_implicit_begin(dbapi_connection, _record):
+        dbapi_connection.isolation_level = None
+        # A file-backed database at memory speed: nothing here needs to
+        # survive a crash, and the file exists only so the database does
+        # (see _suite_engine).
+        cur = dbapi_connection.cursor()
+        cur.execute("PRAGMA journal_mode=MEMORY")
+        cur.execute("PRAGMA synchronous=OFF")
+        cur.execute("PRAGMA temp_store=MEMORY")
+        cur.close()
+
+    @event.listens_for(engine, "begin")
+    def _explicit_begin(conn):
+        conn.exec_driver_sql("BEGIN")
+
     Base.metadata.create_all(bind=engine)
     # Route and direct-service sessions share this isolated DB and the same
     # long-lived audit-hook target; no per-test listener targets accumulate.
@@ -176,6 +240,97 @@ def db_engine():
     db_module.SessionLocal = _shared_factory(engine)
     yield engine
     engine.dispose()
+
+
+# Tables that are empty at the start of every test. A test that commits
+# outside its transaction (after a dispose, say) shows up here at the NEXT
+# test's setup, named, rather than as a mystery failure three files later.
+_SENTINEL_TABLES = ("accounts", "customers", "vendors", "transactions", "users")
+_previous_test = {"nodeid": "(none)"}
+
+
+def _assert_pristine(connection, nodeid):
+    from sqlalchemy import text
+
+    for table in _SENTINEL_TABLES:
+        n = connection.execute(text(f"SELECT count(*) FROM {table}")).scalar()
+        if n:
+            pytest.fail(
+                f"{table} has {n} row(s) at the start of {nodeid}: a previous "
+                f"test ({_previous_test['nodeid']}) committed outside its "
+                "transaction, so its rows leaked into this one"
+            )
+
+
+@pytest.fixture
+def db_engine(_suite_engine, request):
+    """The suite's engine, with this test's transaction open on it. Rolled
+    back — every row the test wrote, whether it committed or not — at exit."""
+    connection = _suite_engine.connect()
+    outer = connection.begin()
+    _assert_pristine(connection, request.node.nodeid)
+    # Point the app module at this engine so SessionLocal-based code (the
+    # startup helpers, api_token_service, encryption) also lands in the
+    # same transaction.
+    db_module.engine = _suite_engine
+    db_module.SessionLocal = _shared_factory(connection)
+    try:
+        yield _suite_engine
+    finally:
+        _previous_test["nodeid"] = request.node.nodeid
+        close_all_sessions()
+        # A test that disposed the engine already lost this connection;
+        # what it wrote after that is the sentinel's job to catch.
+        try:
+            outer.rollback()
+        except Exception:
+            pass
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
+@pytest.fixture(scope="session")
+def suite_data_dir():
+    """The run's own data folder (see SUITE_DATA_DIR at the top): what
+    data_dir() and every upload root resolve to during the suite."""
+    return SUITE_DATA_DIR
+
+
+@pytest.fixture(autouse=True)
+def _forget_closing_date_override_attempts():
+    """Wrong closing-date passwords are counted per company file in the
+    process; every test's in-memory file has the same URL, so start each test
+    with no count and no lock."""
+    import app.services.closing_date as closing_date
+
+    reset = getattr(closing_date, "reset_override_attempts", None)
+    if reset is not None:
+        reset()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _release_closed_event_loops():
+    """anyio 4.12 keeps a registry of per-run variables keyed weakly by
+    event loop — and one of the values is the run's root Task, which holds
+    the loop strongly. A value that references its own weak key can never
+    be collected, so every event loop the test client spins up (one per
+    request, without a context manager) stayed alive after it was closed:
+    loop, task, thread limiter, worker sets, contexts. Measured at ~2.3
+    loops per test and about a third of the suite's remaining growth.
+    Drop the entries for closed loops after each test. Private API, so a
+    version that changes it simply leaves the leak in place."""
+    yield
+    try:
+        from anyio.lowlevel import _run_vars
+    except Exception:
+        return
+    for loop in [
+        k for k in list(_run_vars) if getattr(k, "is_closed", lambda: False)()
+    ]:
+        _run_vars.pop(loop, None)
 
 
 @pytest.fixture
@@ -278,9 +433,11 @@ def unauthed_client(db_engine, TestSession):
     logout) where you need to start from an unauthenticated state.
     """
     _wire_app(TestSession)
-    with TestClient(app) as c:
+    c = TestClient(app)  # no lifespan — see the note on `client` below
+    try:
         yield c
-    app.dependency_overrides.clear()
+    finally:
+        app.dependency_overrides.clear()
 
 
 @pytest.fixture
@@ -291,11 +448,44 @@ def client(db_engine, TestSession):
     made through this client is already authenticated.
     """
     _wire_app(TestSession)
-    with TestClient(app) as c:
+    # No `with`, so the app's lifespan does NOT run (issue #124). Startup does
+    # security checks, a manifest warning, the control-account check and the
+    # at-rest secret upgrader — none of which a route reads, and all of which
+    # the three tests that care call directly rather than through a client.
+    # Running it 2,030 times cost roughly 56 KB of retained memory per test
+    # and bought nothing. `lifespan_client` below is there for anything that
+    # genuinely needs startup.
+    c = TestClient(app)
+    try:
         r = c.post("/api/auth/setup", json={"password": "test-password-123"})
         assert r.status_code == 200, f"Auth setup failed: {r.text}"
         yield c
-    app.dependency_overrides.clear()
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def lifespan_client():
+    """An authenticated client with the app's startup events actually run.
+
+    Use this only for a test that asserts on startup behaviour; `client` skips
+    the lifespan on purpose (issue #124). Startup opens engine-level
+    transactions (the migration guard, create_all), which cannot nest inside
+    a test's open transaction — so this one gets a private engine of its own,
+    the way every test used to."""
+    engine = _test_engine()
+    db_module.engine = engine
+    db_module.SessionLocal = _shared_factory(engine)
+    _wire_app(_SUITE_SESSION_FACTORY)
+    try:
+        with TestClient(app) as c:
+            r = c.post("/api/auth/setup", json={"password": "test-password-123"})
+            assert r.status_code == 200, f"Auth setup failed: {r.text}"
+            yield c
+    finally:
+        app.dependency_overrides.clear()
+        close_all_sessions()
+        engine.dispose()
 
 
 @pytest.fixture

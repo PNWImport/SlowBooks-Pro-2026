@@ -37,7 +37,9 @@ def _advance_next_due(current: date, frequency: str) -> date:
     return current + relativedelta(months=1)
 
 
-def generate_due_invoices(db: Session, as_of: date = None) -> list[int]:
+def generate_due_invoices(
+    db: Session, as_of: date = None, skipped: list | None = None
+) -> list[int]:
     """Generate all invoices that are due on or before as_of date.
     Returns list of created invoice IDs."""
     from app.services.donor_documents import document_label

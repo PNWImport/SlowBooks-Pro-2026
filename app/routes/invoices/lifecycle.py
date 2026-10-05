@@ -13,13 +13,11 @@ from app.database import get_db
 from app.models.accounts import Account
 from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
 from app.models.items import Item
-from app.schemas.invoices import InvoiceResponse
+from app.schemas.invoices import InvoiceResponse, ZeroTotalConfirmation
 from app.services.accounting import (
     create_journal_entry,
     reversing_lines,
     get_ar_account_id,
-    get_default_income_account_id,
-    get_sales_tax_account_id,
     _q,
 )
 from app.services.numbering import next_invoice_number
@@ -56,6 +54,17 @@ def void_invoice(invoice_id: int, db: Session = Depends(get_db)):
             ),
         )
     check_closing_date(db, invoice.date)
+
+    # An invoice or sales receipt the QuickBooks Online import created has
+    # no posting of its own: the ledger import's posting for it is reversed
+    # instead (none if that import never ran, as in 2.17). When that posting
+    # carried the cost of its stock, the stock goes back without a cost
+    # entry of ours.
+    from app.services import qbo_documents
+
+    cost_in_import = qbo_documents.void_invoice_import_posting(
+        db, invoice, document_label(invoice, terms_from_db(db)).lower()
+    )
 
     # Create reversing journal entry if original had one
     if invoice.transaction_id:
@@ -388,7 +397,6 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
     if not original:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
-    new_number = next_invoice_number(db)
     today = date.today()
 
     due_date = _due_date_from_terms(today, original.terms)
@@ -400,12 +408,13 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
     subtotal, tax_amount, total = compute_line_totals(copied, original.tax_rate)
 
     new_invoice = Invoice(
-        invoice_number=new_number,
+        invoice_number=next_invoice_number(db),
         customer_id=original.customer_id,
-        status=InvoiceStatus.DRAFT,
+        status=opening_status(total),
         date=today,
-        due_date=due_date,
+        due_date=_due_date_from_terms(today, original.terms),
         terms=original.terms,
+        po_number=original.po_number,
         bill_address1=original.bill_address1,
         bill_address2=original.bill_address2,
         bill_city=original.bill_city,
@@ -439,7 +448,7 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
             description=oline.description,
             quantity=oline.quantity,
             rate=oline.rate,
-            amount=oline.amount,
+            amount=_q(Decimal(str(oline.quantity)) * Decimal(str(oline.rate))),
             class_name=oline.class_name,
             class_id=oline.class_id,
             job_id=oline.job_id,
@@ -447,7 +456,8 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
             is_taxable=cline.is_taxable,
             line_order=oline.line_order,
         )
-        db.add(new_line)
+        db.add(line)
+        new_lines.append(line)
 
     # Journal Entry — mirror what create_invoice does (DR A/R, CR Income per line)
     ar_id = get_ar_account_id(db)
@@ -515,8 +525,6 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
     # must hit the inventory ledger just like create_invoice does.
     db.flush()
     db.refresh(new_invoice)
-    from app.services.inventory_hooks import post_sale_for_invoice
-
     post_sale_for_invoice(db, new_invoice, txn_date=today)
 
     db.commit()

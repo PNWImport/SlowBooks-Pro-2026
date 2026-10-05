@@ -21,7 +21,6 @@
 const JobsPage = {
     _jobs: [],
     _bva: {},
-    _customers: [],
     _filter: { customer_id: '', status: '', q: '' },
     // detail state
     _job: null,
@@ -41,17 +40,20 @@ const JobsPage = {
     // List page
     // =====================================================================
     async render() {
-        const [jobs, bva, customers] = await Promise.all([
+        const [jobs, bva] = await Promise.all([
             API.get('/jobs?include_inactive=true'),
             API.get('/jobs/budget-vs-actual?include_inactive=true').catch(() => []),
-            API.get('/customers'),
         ]);
         JobsPage._jobs = jobs;
-        JobsPage._customers = customers;
         JobsPage._bva = {};
         for (const r of bva) JobsPage._bva[r.job_id] = r;
 
-        const custOpts = customers.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+        // The filter offers the customers these jobs belong to — every one,
+        // an inactive customer's too — rather than every customer on file.
+        const jobCustomers = new Map();
+        for (const j of jobs) if (j.customer_id) jobCustomers.set(j.customer_id, j.customer_name || '');
+        const custOpts = [...jobCustomers].sort((a, b) => a[1].localeCompare(b[1]))
+            .map(([cid, name]) => `<option value="${cid}">${escapeHtml(name)}</option>`).join('');
         const statusOpts = Object.entries(JobsPage.STATUS_LABELS)
             .map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
 
@@ -65,9 +67,9 @@ const JobsPage = {
             </div>
             <div class="toolbar" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                 <input type="text" placeholder="${Terms.text('Search jobs...')}" id="job-search" oninput="JobsPage.setFilter('q', this.value)">
-                <select id="job-filter-customer" onchange="JobsPage.setFilter('customer_id', this.value)">
+                <select id="job-filter-customer" aria-label="${Terms.text('Customer')}" onchange="JobsPage.setFilter('customer_id', this.value)">
                     <option value="">${Terms.text('All customers')}</option>${custOpts}</select>
-                <select id="job-filter-status" onchange="JobsPage.setFilter('status', this.value)">
+                <select id="job-filter-status" aria-label="Status" onchange="JobsPage.setFilter('status', this.value)">
                     <option value="">Active jobs</option>${statusOpts}<option value="__inactive__">Inactive</option></select>
                 <span style="font-size:11px; color:var(--gray-500);">${Terms.text('Job-to-date figures from posted lines. Click a job to drill down.')}</span>
             </div>
@@ -149,7 +151,7 @@ const JobsPage = {
     pct(v) { return (v === null || v === undefined) ? '—' : `${v.toFixed(1)}%`; },
     varColor(f) {
         if (!f || f.revised === undefined || !f.revised) return '';
-        return f.variance < 0 ? 'color:#a4242b;' : 'color:#1f7a36;';
+        return f.variance < 0 ? 'color:var(--text-danger);' : 'color:var(--text-success);';
     },
 
     // =====================================================================
@@ -172,12 +174,12 @@ const JobsPage = {
                     <div style="font-size:11px;"><a href="#/jobs">${T('Jobs')}</a> › ${escapeHtml(job.customer_name)}</div>
                     <h2 style="margin:2px 0 0 0;">${escapeHtml(job.name)}
                         <span class="badge" style="font-size:11px; vertical-align:middle;">${escapeHtml(JobsPage.STATUS_LABELS[job.status] || job.status)}</span>
-                        ${job.is_active ? '' : '<span style="font-size:11px;color:#a4242b;">inactive</span>'}
+                        ${job.is_active ? '' : '<span style="font-size:11px;color:var(--text-danger);">inactive</span>'}
                     </h2>
                 </div>
                 <div>
-                    <button class="btn btn-secondary" onclick="InvoicesPage.showForm(null,${job.customer_id})">${T('New Invoice')}</button>
-                    <button class="btn btn-secondary" onclick="JobCostsPage.showForm(null, ${job.id})">${T('Job')} Cost Entry</button>
+                    <button class="btn btn-secondary" data-write onclick="InvoicesPage.showForm(null,${job.customer_id})">${T('New Invoice')}</button>
+                    <button class="btn btn-secondary" data-write onclick="JobCostsPage.showForm(null, ${job.id})">${T('Job')} Cost Entry</button>
                     <button class="btn btn-secondary" onclick="JobsPage.showForm(${job.id})">Edit</button>
                 </div>
             </div>
@@ -185,8 +187,8 @@ const JobsPage = {
                 ${Object.entries(JobsPage.TAB_LABELS).map(([t, label]) => `
                     <button class="btn btn-sm ${JobsPage._tab === t ? 'btn-primary' : 'btn-secondary'}" data-jobtab="${t}" onclick="JobsPage.setTab('${t}')">${label}</button>`).join('')}
                 <span style="margin-left:auto; font-size:11px; display:flex; gap:6px; align-items:center;">
-                    Period <input type="date" id="job-period-start" value="${JobsPage._period.start}" onchange="JobsPage.setPeriod()">
-                    – <input type="date" id="job-period-end" value="${JobsPage._period.end}" onchange="JobsPage.setPeriod()">
+                    Period <input type="date" id="job-period-start" aria-label="Period start" value="${JobsPage._period.start}" onchange="JobsPage.setPeriod()">
+                    – <input type="date" id="job-period-end" aria-label="Period end" value="${JobsPage._period.end}" onchange="JobsPage.setPeriod()">
                     <button class="btn btn-sm btn-secondary" onclick="JobsPage.clearPeriod()" title="${T('Job')} to date">JTD</button>
                 </span>
             </div>
@@ -229,7 +231,7 @@ const JobsPage = {
                 default: return await JobsPage.overviewHtml();
             }
         } catch (err) {
-            return `<div style="color:#a4242b;">${escapeHtml(err.message)}</div>`;
+            return `<div style="color:var(--text-danger);">${escapeHtml(err.message)}</div>`;
         }
     },
 
@@ -244,7 +246,7 @@ const JobsPage = {
         const tree = await JobsPage.loadTree();
         const t = tree.totals;
         const stat = (label, value, color, title) => `<div style="min-width:130px;" title="${title || ''}">
-            <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.05em">${label}</div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">${label}</div>
             <div style="font-size:18px;font-weight:700;${color ? `color:${color}` : ''}">${value}</div></div>`;
         const contract = job.contract_amount ? parseFloat(job.contract_amount) : null;
         const billedPct = contract ? (t.act_revenue / contract * 100) : null;
@@ -265,26 +267,26 @@ const JobsPage = {
                 ${stat('Committed', JobsPage.money(t.committed), null, 'Open POs not yet billed')}
                 ${stat('Actual cost', JobsPage.money(t.actual))}
                 ${stat('Projected', JobsPage.money(t.projected), null, 'Actual + committed')}
-                ${stat('Variance', JobsPage.money(t.variance), t.revised ? (t.variance < 0 ? '#a4242b' : '#1f7a36') : null, 'Budget − projected')}
+                ${stat('Variance', JobsPage.money(t.variance), t.revised ? (t.variance < 0 ? 'var(--text-danger)' : 'var(--text-success)') : null, 'Budget − projected')}
                 ${stat('Revenue', JobsPage.money(t.act_revenue))}
-                ${stat('Margin', JobsPage.pct(margin), margin !== null && margin < 0 ? '#a4242b' : null, '(revenue − cost) / revenue')}
+                ${stat('Margin', JobsPage.pct(margin), margin !== null && margin < 0 ? 'var(--text-danger)' : null, '(revenue − cost) / revenue')}
                 ${stat('Billed vs contract', JobsPage.pct(billedPct))}
             </div>
             <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:start;">
                 <div>
-                    <h4 style="font-size:11px;text-transform:uppercase;color:#888;margin:0 0 4px 0">By cost type — click a row to drill down</h4>
+                    <h4 style="font-size:11px;text-transform:uppercase;color:var(--text-muted);margin:0 0 4px 0">By cost type — click a row to drill down</h4>
                     <div class="table-container"><table class="data-table" style="font-size:12px">
                         <thead><tr><th scope="col">Type</th><th scope="col" class="amount">Budget</th><th scope="col" class="amount">Committed</th><th scope="col" class="amount">Actual</th><th scope="col" class="amount">Projected</th><th scope="col" class="amount">Variance</th><th scope="col" class="amount">% Used</th></tr></thead>
-                        <tbody>${typeRows || '<tr><td colspan="7" style="color:#888">Nothing budgeted or posted yet.</td></tr>'}</tbody>
+                        <tbody>${typeRows || '<tr><td colspan="7" style="color:var(--text-muted)">Nothing budgeted or posted yet.</td></tr>'}</tbody>
                     </table></div>
                 </div>
                 <div style="font-size:13px">
-                    <h4 style="font-size:11px;text-transform:uppercase;color:#888;margin:0 0 4px 0">${T('Job')}</h4>
+                    <h4 style="font-size:11px;text-transform:uppercase;color:var(--text-muted);margin:0 0 4px 0">${T('Job')}</h4>
                     <div>${job.job_number ? `#${escapeHtml(job.job_number)} · ` : ''}${escapeHtml(job.job_type || '')}</div>
                     <div>${job.start_date ? escapeHtml(job.start_date) : ''}${job.projected_end_date ? ` → ${escapeHtml(job.projected_end_date)}` : ''}${job.end_date ? ` (ended ${escapeHtml(job.end_date)})` : ''}</div>
                     ${job.site_address ? `<pre style="font-family:inherit;white-space:pre-wrap;margin:6px 0">${escapeHtml(job.site_address)}</pre>` : ''}
                     ${job.description ? `<p style="margin:6px 0">${escapeHtml(job.description)}</p>` : ''}
-                    ${job.notes ? `<h4 style="font-size:11px;text-transform:uppercase;color:#888;margin:10px 0 4px 0">Notes</h4><pre style="font-family:inherit;white-space:pre-wrap;margin:0">${escapeHtml(job.notes)}</pre>` : ''}
+                    ${job.notes ? `<h4 style="font-size:11px;text-transform:uppercase;color:var(--text-muted);margin:10px 0 4px 0">Notes</h4><pre style="font-family:inherit;white-space:pre-wrap;margin:0">${escapeHtml(job.notes)}</pre>` : ''}
                 </div>
             </div>`;
     },
@@ -301,7 +303,7 @@ const JobsPage = {
         const tree = await JobsPage.loadTree();
         if (!tree.types.length) {
             return `<div class="empty-state"><p>Nothing budgeted or posted to this job yet.</p>
-                <p style="font-size:12px;color:#888">Tag a bill, expense, time entry or job cost entry to it, or set a budget on the Budget tab.</p></div>`;
+                <p style="font-size:12px;color:var(--text-muted)">Tag a bill, expense, time entry or job cost entry to it, or set a budget on the Budget tab.</p></div>`;
         }
         const head = `<thead><tr>
             <th scope="col" style="min-width:260px">Cost type › code</th>
@@ -320,7 +322,7 @@ const JobsPage = {
         for (const ty of tree.types) {
             const key = `type:${ty.cost_type}`;
             const open = JobsPage._open.has(key);
-            body += JobsPage.rowHtml(key, 0, `${escapeHtml(ty.name)}${ty.is_labor ? ' <span style="font-size:10px;color:#888">(burden applies)</span>' : ''}`, ty.figures, open, true, 'type');
+            body += JobsPage.rowHtml(key, 0, `${escapeHtml(ty.name)}${ty.is_labor ? ' <span style="font-size:10px;color:var(--text-muted)">(burden applies)</span>' : ''}`, ty.figures, open, true, 'type');
             if (open) {
                 for (const node of ty.codes) body += JobsPage.nodeHtml(node, 1);
                 const un = ty.uncoded;
@@ -346,7 +348,7 @@ const JobsPage = {
             <td class="amount">${JobsPage.money(t.est_revenue)}</td><td class="amount">${JobsPage.money(t.act_revenue)}</td>
         </tr></tfoot>`;
         return `
-            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;font-size:11px;color:#888">
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;font-size:11px;color:var(--text-muted)">
                 <button class="btn btn-sm btn-secondary" onclick="JobsPage.expandAll(true)">Expand all</button>
                 <button class="btn btn-sm btn-secondary" onclick="JobsPage.expandAll(false)">Collapse all</button>
                 <span>Click a type or code to open it; click the line count to see the posted lines; click a line to open its document.</span>
@@ -358,11 +360,11 @@ const JobsPage = {
         const key = `code:${node.id}`;
         const open = JobsPage._open.has(key);
         const hasKids = node.children.length > 0;
-        let html = JobsPage.rowHtml(key, depth, `<code>${escapeHtml(node.code)}</code> ${escapeHtml(node.name)}${node.is_active ? '' : ' <span style="font-size:10px;color:#888">(inactive)</span>'}`, node.figures, open, hasKids, 'code', node.lines.length);
+        let html = JobsPage.rowHtml(key, depth, `<code>${escapeHtml(node.code)}</code> ${escapeHtml(node.name)}${node.is_active ? '' : ' <span style="font-size:10px;color:var(--text-muted)">(inactive)</span>'}`, node.figures, open, hasKids, 'code', node.lines.length);
         if (open && hasKids) for (const ch of node.children) html += JobsPage.nodeHtml(ch, depth + 1);
         if (JobsPage._showLines.has(key)) {
             if (hasKids && (node.own.actual || node.own.act_revenue)) {
-                html += `<tr><td colspan="11" style="padding-left:${16 + depth * 18}px;font-size:11px;color:#888">Own lines on ${escapeHtml(node.code)} (children listed under their own codes):</td></tr>`;
+                html += `<tr><td colspan="11" style="padding-left:${16 + depth * 18}px;font-size:11px;color:var(--text-muted)">Own lines on ${escapeHtml(node.code)} (children listed under their own codes):</td></tr>`;
             }
             html += JobsPage.linesHtml(node.lines, depth + 1);
         }
@@ -390,9 +392,9 @@ const JobsPage = {
     },
 
     linesHtml(lines, depth) {
-        if (!lines.length) return `<tr><td colspan="11" style="padding-left:${16 + depth * 18}px;color:#888;font-size:11px">No posted lines.</td></tr>`;
+        if (!lines.length) return `<tr><td colspan="11" style="padding-left:${16 + depth * 18}px;color:var(--text-muted);font-size:11px">No posted lines.</td></tr>`;
         return lines.map(l => `<tr class="clickable" onclick="JobsPage.openSource('${escapeHtml(l.source_type || '')}', ${l.source_id === null ? 'null' : l.source_id}, ${l.transaction_id})" style="font-size:11px;color:var(--gray-600)">
-            <td style="padding-left:${16 + depth * 18}px">${escapeHtml(l.date)} · <strong>${escapeHtml(JobsPage.sourceLabel(l.source_type))}</strong>${l.reference ? ` ${escapeHtml(l.reference)}` : ''} · ${escapeHtml(l.description || '')} <span style="color:#aaa">(${escapeHtml(l.account_name)})</span>${l.is_billable ? ' <span class="badge" style="font-size:9px">billable</span>' : ''}</td>
+            <td style="padding-left:${16 + depth * 18}px">${escapeHtml(l.date)} · <strong>${escapeHtml(JobsPage.sourceLabel(l.source_type))}</strong>${l.reference ? ` ${escapeHtml(l.reference)}` : ''} · ${escapeHtml(l.description || '')} <span style="color:var(--text-muted)">(${escapeHtml(l.account_name)})</span>${l.is_billable ? ' <span class="badge" style="font-size:9px">billable</span>' : ''}</td>
             <td colspan="4"></td>
             <td class="amount">${l.kind === 'cost' ? formatCurrency(l.amount) : ''}</td>
             <td colspan="3"></td>
@@ -449,43 +451,43 @@ const JobsPage = {
         const codeRows = codes.map(c => {
             const r = byCode[c.id] || {};
             return `<tr data-budget-code="${c.id}">
-                <td style="padding-left:${8 + (c.depth || 0) * 18}px"><code>${escapeHtml(c.code)}</code> ${escapeHtml(c.name)} <span style="font-size:10px;color:#888">${escapeHtml(c.cost_type)}</span></td>
-                <td><input type="number" step="0.01" class="bud-cost" value="${r.amount ?? ''}" style="width:110px;text-align:right"></td>
-                <td><input type="number" step="0.01" class="bud-rev" value="${r.revenue_amount ?? ''}" style="width:110px;text-align:right"></td>
-                <td style="font-size:10px;color:#888">${r.source ? escapeHtml(r.source) : ''}</td>
+                <td style="padding-left:${8 + (c.depth || 0) * 18}px"><code>${escapeHtml(c.code)}</code> ${escapeHtml(c.name)} <span style="font-size:10px;color:var(--text-muted)">${escapeHtml(c.cost_type)}</span></td>
+                <td><input type="number" step="0.01" class="bud-cost" data-write value="${r.amount ?? ''}" style="width:110px;text-align:right"></td>
+                <td><input type="number" step="0.01" class="bud-rev" data-write value="${r.revenue_amount ?? ''}" style="width:110px;text-align:right"></td>
+                <td style="font-size:10px;color:var(--text-muted)">${r.source ? escapeHtml(r.source) : ''}</td>
             </tr>`;
         }).join('');
         const typeRows = types.map(t => {
             const r = byType[t.code] || {};
             return `<tr data-budget-type="${t.code}">
-                <td>${escapeHtml(t.name)} <span style="font-size:10px;color:#888">(whole type, not by code)</span></td>
-                <td><input type="number" step="0.01" class="bud-cost" value="${r.amount ?? ''}" style="width:110px;text-align:right"></td>
-                <td><input type="number" step="0.01" class="bud-rev" value="${r.revenue_amount ?? ''}" style="width:110px;text-align:right"></td>
-                <td style="font-size:10px;color:#888">${r.source ? escapeHtml(r.source) : ''}</td>
+                <td>${escapeHtml(t.name)} <span style="font-size:10px;color:var(--text-muted)">(whole type, not by code)</span></td>
+                <td><input type="number" step="0.01" class="bud-cost" data-write value="${r.amount ?? ''}" style="width:110px;text-align:right"></td>
+                <td><input type="number" step="0.01" class="bud-rev" data-write value="${r.revenue_amount ?? ''}" style="width:110px;text-align:right"></td>
+                <td style="font-size:10px;color:var(--text-muted)">${r.source ? escapeHtml(r.source) : ''}</td>
             </tr>`;
         }).join('');
         const estOpts = (estimates || []).filter(e => e.job_id === job.id || !e.job_id)
             .map(e => `<option value="${e.id}">${escapeHtml(e.estimate_number || ('#' + e.id))} · ${escapeHtml(e.date || '')} · ${formatCurrency(e.total)}${e.job_id === job.id ? ' (this job)' : ''}</option>`).join('');
         return `
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;font-size:12px">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;font-size:12px" data-write>
                 <span>Seed from an estimate:</span>
                 <select id="budget-estimate"><option value="">Pick an estimate…</option>${estOpts}</select>
                 <button class="btn btn-sm btn-secondary" onclick="JobsPage.seedBudget()">Load estimate lines as budget</button>
-                <span style="color:#888;font-size:11px">Cost = qty × unit cost (or the line amount when no cost is entered); revenue = the line amount. Rows you edit here become manual and survive re-seeding.</span>
+                <span style="color:var(--text-muted);font-size:11px">Cost = qty × unit cost (or the line amount when no cost is entered); revenue = the line amount. Rows you edit here become manual and survive re-seeding.</span>
             </div>
             <div class="table-container"><table class="data-table" style="font-size:12px">
                 <thead><tr><th scope="col">Cost code</th><th scope="col">Budget cost</th><th scope="col">Est. revenue</th><th scope="col">Source</th></tr></thead>
                 <tbody>
-                    ${codeRows || '<tr><td colspan="4" style="color:#888">No cost codes yet — add them under Settings → Cost Codes, or budget by type below.</td></tr>'}
+                    ${codeRows || '<tr><td colspan="4" style="color:var(--text-muted)">No cost codes yet — add them under Settings → Cost Codes, or budget by type below.</td></tr>'}
                     <tr><td colspan="4" style="background:var(--gray-50);font-weight:600;font-size:11px">By cost type</td></tr>
                     ${typeRows}
                     <tr data-budget-whole="1"><td><em>Whole job (not by code or type)</em></td>
-                        <td><input type="number" step="0.01" class="bud-cost" value="${whole?.amount ?? ''}" style="width:110px;text-align:right"></td>
-                        <td><input type="number" step="0.01" class="bud-rev" value="${whole?.revenue_amount ?? ''}" style="width:110px;text-align:right"></td>
-                        <td style="font-size:10px;color:#888">${whole?.source ? escapeHtml(whole.source) : ''}</td></tr>
+                        <td><input type="number" step="0.01" class="bud-cost" data-write value="${whole?.amount ?? ''}" style="width:110px;text-align:right"></td>
+                        <td><input type="number" step="0.01" class="bud-rev" data-write value="${whole?.revenue_amount ?? ''}" style="width:110px;text-align:right"></td>
+                        <td style="font-size:10px;color:var(--text-muted)">${whole?.source ? escapeHtml(whole.source) : ''}</td></tr>
                 </tbody>
             </table></div>
-            <div class="form-actions"><button class="btn btn-primary" onclick="JobsPage.saveBudget()">Save Budget</button></div>`;
+            <div class="form-actions" data-write><button class="btn btn-primary" onclick="JobsPage.saveBudget()">Save Budget</button></div>`;
     },
 
     async saveBudget() {
@@ -542,11 +544,11 @@ const JobsPage = {
             <td>${escapeHtml(e.cost_code_label || '')}</td>
             <td class="amount">${e.hours_regular}</td><td class="amount">${e.hours_overtime}</td><td class="amount">${e.hours_doubletime}</td>
             <td>${escapeHtml(e.status)}</td>
-            <td>${e.job_cost_id ? `<a href="#" onclick="event.preventDefault();JobCostsPage.view(${e.job_cost_id})">posted</a>` : ((e.status === 'approved' || e.status === 'submitted') ? `<button class="btn btn-sm btn-secondary" onclick="JobsPage.postTime([${e.id}])">Post to job</button>` : '<span style="color:#888">draft</span>')}</td>
+            <td>${e.job_cost_id ? `<a href="#" onclick="event.preventDefault();JobCostsPage.view(${e.job_cost_id})">posted</a>` : ((e.status === 'approved' || e.status === 'submitted') ? `<button class="btn btn-sm btn-secondary" onclick="JobsPage.postTime([${e.id}])">Post to job</button>` : '<span style="color:var(--text-muted)">draft</span>')}</td>
         </tr>`).join('');
         return `
             ${unposted.length ? `<div style="margin-bottom:8px"><button class="btn btn-sm btn-primary" onclick="JobsPage.postTime([${unposted.map(e => e.id).join(',')}])">Post ${unposted.length} approved entr${unposted.length === 1 ? 'y' : 'ies'} to this job</button>
-                <span style="font-size:11px;color:#888">Labor posts at the employee's loaded cost rate with burden as its own line.</span></div>` : ''}
+                <span style="font-size:11px;color:var(--text-muted)">Labor posts at the employee's loaded cost rate with burden as its own line.</span></div>` : ''}
             <div class="table-container"><table class="data-table" style="font-size:12px">
                 <thead><tr><th scope="col">Date</th><th scope="col">Employee</th><th scope="col">Cost code</th><th scope="col" class="amount">Reg</th><th scope="col" class="amount">OT</th><th scope="col" class="amount">DT</th><th scope="col">Status</th><th scope="col">${T('Job')} cost</th></tr></thead>
                 <tbody>${rows}</tbody></table></div>`;
@@ -570,8 +572,8 @@ const JobsPage = {
             description: '', site_address: '', start_date: '', projected_end_date: '', end_date: '',
             contract_amount: '', notes: '', is_active: true };
         if (id) { try { job = await API.get(`/jobs/${id}`); } catch (err) { toast(err.message, 'error'); return; } }
-        if (!JobsPage._customers.length) { try { JobsPage._customers = await API.get('/customers'); } catch (e) { /* keep empty */ } }
-        const custOpts = JobsPage._customers.map(c => `<option value="${c.id}" ${String(job.customer_id) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+        const customers = await JobsPage._pickerCustomers(job);
+        const custOpts = customers.map(c => `<option value="${c.id}" ${String(job.customer_id) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
         const statusOpts = Object.entries(JobsPage.STATUS_LABELS)
             .map(([k, v]) => `<option value="${k}" ${job.status === k ? 'selected' : ''}>${v}</option>`).join('');
         const html = `
@@ -611,6 +613,21 @@ const JobsPage = {
                 </div>
             </form>`;
         openModal(id ? `Edit ${T('Job')}` : `New ${T('Job')}`, html);
+    },
+
+    // Active customers only — the picker listed inactive ones too — plus the
+    // job's own customer if it has gone inactive since (or the Customer
+    // Center's, for a new job), so an edit never asks for a customer again.
+    async _pickerCustomers(job) {
+        let customers = [];
+        try { customers = await API.get('/customers?active_only=true'); } catch (e) { /* keep empty */ }
+        const own = job.customer_id ? String(job.customer_id) : '';
+        if (own && !customers.some(c => String(c.id) === own)) {
+            let name = job.customer_name;
+            if (!name) { try { name = (await API.get(`/customers/${own}`)).name; } catch (e) { name = ''; } }
+            customers.push({ id: job.customer_id, name: `${name || `${T('Customer')} ${own}`} (inactive)` });
+        }
+        return customers;
     },
 
     async save(e, id) {

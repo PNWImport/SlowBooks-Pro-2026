@@ -22,7 +22,7 @@ import csv
 import io
 import logging
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from sqlalchemy.orm import Session
 
@@ -31,6 +31,7 @@ from app.models.contacts import Customer
 from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
 from app.models.items import Item
 from app.models.payments import Payment, PaymentAllocation
+from app.schemas.common import TAX_RATE_PLACES
 from app.services.accounting import (
     _q,
     create_journal_entry,
@@ -38,6 +39,7 @@ from app.services.accounting import (
     get_default_income_account_id,
     get_undeposited_funds_id,
 )
+from app.services.csv_export import strip_formula_guard
 from app.services.iif_import import _find_account
 from app.services.safe_errors import DataProblem, safe_message
 from app.services.control_accounts import MissingControlAccount
@@ -76,14 +78,20 @@ def _parse_date(s):
 
 
 def _parse_tax_rate(price: str) -> Decimal:
-    """'6.4%' -> Decimal('0.064'); anything else -> 0."""
+    """'6.4%' -> 0.064, '8.875%' -> 0.08875; anything else -> 0. A document
+    keeps its rate to six places (a percent to four), so a finer one is
+    rounded half up here, not left to the database: PostgreSQL rounds it as
+    it stores it, SQLite stores it as given and rounds it as it reads it."""
     price = (price or "").strip()
     if not price.endswith("%"):
         return Decimal("0")
     try:
-        return Decimal(price[:-1]) / Decimal("100")
+        rate = Decimal(price[:-1]) / Decimal("100")
     except InvalidOperation:
         return Decimal("0")
+    if not rate.is_finite():
+        return Decimal("0")
+    return rate.quantize(TAX_RATE_PLACES, rounding=ROUND_HALF_UP)
 
 
 def _find_header_for(rows: list[list[str]], required: tuple):
@@ -196,7 +204,7 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
         "errors": [],
         "warnings": [],
     }
-    rows = list(csv.reader(io.StringIO(csv_text)))
+    rows = _csv_rows(csv_text)
     header_idx, cols = _find_header(rows)
     if header_idx is None:
         result["errors"].append(
@@ -494,7 +502,7 @@ def _group_blocks(rows, cols, start, header_type, skipped=None):
 def import_deposit_report(db: Session, csv_text: str) -> dict:
     """Import a QB Deposit Detail report CSV as deposit journal entries."""
     result = {"deposits": 0, "duplicates_skipped": 0, "errors": [], "warnings": []}
-    rows = list(csv.reader(io.StringIO(csv_text)))
+    rows = _csv_rows(csv_text)
     header_idx, cols = _find_header_for(rows, DEPOSIT_COLUMNS)
     if header_idx is None:
         result["errors"].append("Could not find the Deposit Detail header row.")
@@ -614,7 +622,7 @@ def import_deposit_report(db: Session, csv_text: str) -> dict:
 def import_check_report(db: Session, csv_text: str) -> dict:
     """Import a QB Check Detail report CSV as check journal entries."""
     result = {"checks": 0, "duplicates_skipped": 0, "errors": [], "warnings": []}
-    rows = list(csv.reader(io.StringIO(csv_text)))
+    rows = _csv_rows(csv_text)
     header_idx, cols = _find_header_for(rows, CHECK_COLUMNS)
     if header_idx is None:
         result["errors"].append("Could not find the Check Detail header row.")
@@ -742,7 +750,7 @@ def import_check_report(db: Session, csv_text: str) -> dict:
 
 def detect_report_type(csv_text: str) -> str | None:
     """Identify which QB report a CSV is, by column signature."""
-    rows = list(csv.reader(io.StringIO(csv_text)))
+    rows = _csv_rows(csv_text)
     if _find_header_for(rows, REQUIRED_COLUMNS)[0] is not None:
         return "sales_receipts"
     if _find_header_for(rows, CHECK_COLUMNS)[0] is not None:

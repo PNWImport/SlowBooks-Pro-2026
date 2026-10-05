@@ -16,11 +16,14 @@
 # ============================================================================
 
 import io
+import logging
 import re
 import subprocess
 from typing import Optional
 
 from app.services import ocr_service
+
+logger = logging.getLogger(__name__)
 
 # Per-field tesseract configuration: page-segmentation mode + charset.
 # PSM 7 = single text line; PSM 6 = uniform block (merchant names can wrap).

@@ -348,6 +348,29 @@ def rewrap_all(db, dry_run: bool = False) -> dict:
                     flag_modified(row, field)
                 summary["rewrapped"] += 1
 
+    # With no SETTINGS_ENCRYPTION_KEY and no key file (a Docker install), the
+    # settings key is derived from this secret (app/services/crypto.py), so
+    # the saved passwords and API keys rotate with it.
+    from app.services import crypto
+
+    if crypto.key_source() == "derived":
+        from app.models.settings import Settings
+
+        for row in db.query(Settings).filter(Settings.value.like("fernet:%")).all():
+            summary["checked"] += 1
+            rewrapped = crypto.rewrap_value(row.value)
+            if rewrapped is None:
+                summary["failed"] += 1
+                logger.error(
+                    "rewrap: setting %s did not decrypt under any key", row.key
+                )
+            elif rewrapped == row.value:
+                summary["already_current"] += 1
+            else:
+                if not dry_run:
+                    row.value = rewrapped
+                summary["rewrapped"] += 1
+
     if not dry_run:
         db.commit()
     return summary

@@ -1,10 +1,23 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
 from app.schemas.common import BlankableEmail, Money, NonBlankName, StrictModel
+
+
+def _check_credit_limit(value):
+    """A credit limit is an amount the customer may owe; below zero it
+    means nothing (explore 2.17.3, W-L4: −500 was accepted)."""
+    if value is not None and value < 0:
+        raise ValueError(
+            "A credit limit can't be negative. Leave it blank for no limit."
+        )
+    return value
+
+
+CreditLimit = Annotated[Optional[Decimal], AfterValidator(_check_credit_limit)]
 
 
 # Field lengths below mirror the VARCHAR(n) widths on the Customer model.

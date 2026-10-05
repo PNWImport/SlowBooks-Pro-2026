@@ -44,9 +44,7 @@ const CCChargesPage = {
         ).join('');
         const classGroup = await classFormGroupHtml();
         const jobGroup = await jobFormGroupHtml(null);
-        const acctOpts = accounts.map(a =>
-            `<option value="${a.id}">${escapeHtml(a.account_number)} - ${escapeHtml(a.name)}</option>`
-        ).join('');
+        const acctOpts = PurchaseAccounts.options(accounts);
 
         openModal('Enter Credit Card Charge', `
             <form onsubmit="CCChargesPage.save(event)">

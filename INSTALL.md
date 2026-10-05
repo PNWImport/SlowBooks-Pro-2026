@@ -102,9 +102,9 @@ company is an ordinary SQLite file under
 backups, uploads, and `launcher.log` live under the same `data` directory and
 remain outside the app bundle during upgrades.
 
-This path has the same single-user tradeoffs as the Windows desktop app. Intel
-Macs should use Docker or the developer-oriented native install below until a
-separately tested Intel build is available.
+This path has the same single-user tradeoffs as the Windows desktop app. The
+app is built for Apple Silicon only; Intel Macs use Docker or the
+developer-oriented native install below.
 
 ---
 
@@ -240,6 +240,8 @@ sudo apt install -y postgresql python3-venv libcairo2-dev libpango-1.0-0 \
 
 # Optional — receipt scanning (Tier 2 OCR). The feature degrades
 # gracefully without these; the Scan Receipt button just stays disabled.
+# poppler-utils turns PDF receipts into images on Linux only: the Windows
+# and macOS apps render PDFs with the OS and need nothing extra.
 sudo apt install -y tesseract-ocr poppler-utils
 # Only if you want the desktop window (python3 desktop_launcher.py) rather
 # than a browser: pywebview renders through WebKitGTK and needs the

@@ -1,7 +1,7 @@
 # ============================================================================
 # Slowbooks Pro 2026 — Auth routes
 #
-#   GET  /api/auth/status  → {setup_needed, authenticated, multi_user, user?}
+#   GET  /api/auth/status  → {setup_needed, authenticated, multi_user, desktop, user?}
 #   POST /api/auth/setup   → first-time password set (409 if already set)
 #   POST /api/auth/login   → password (+ username once 2+ users exist)
 #   POST /api/auth/logout  → clear session
@@ -10,6 +10,8 @@
 # how you become authenticated in the first place.
 # ============================================================================
 
+import ipaddress
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -24,12 +26,17 @@ from app.services.auth import (
     ensure_admin_user,
     is_multi_user,
     password_is_set,
+    remember_this_start,
     set_password,
     session_credential,
 )
 from app.services.rate_limit import limiter
 from app.services.request_utils import client_ip as _client_ip
-from app.services.settings_service import set_setting
+from app.services.settings_service import (
+    SettingValueError,
+    clean_setting_value,
+    set_setting,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -102,11 +109,62 @@ _SETUP_SETTINGS_KEYS = (
 )
 
 
+def _company_name(db: Session) -> str:
+    """The company's name as the books carry it, else as the company list
+    (the picker) names this file — a company created before its name was
+    written into the file has only the latter. The shipped placeholder
+    ("My Company") is nobody's name: setup must not offer it as one."""
+    from app.models.settings import DEFAULT_SETTINGS
+    from app.services.settings_service import get_setting_raw
+
+    placeholder = DEFAULT_SETTINGS["company_name"]
+    name = (get_setting_raw(db, "company_name") or "").strip()
+    if not name:
+        try:
+            from app.services.company_service import current_manifest_name
+
+            name = current_manifest_name() or ""
+        except Exception:
+            name = ""
+    return "" if name == placeholder else name
+
+
+def _desktop_window(request: Request) -> bool:
+    """True when the request comes from the desktop app's own window: the
+    launcher's flag, not the windowless Server Edition (--serve-lan), and a
+    request from this machine, as app.main decides for its CSP.
+
+    The sign-in screen offers "Choose a different company →" by it. It used
+    to wait for the launcher's bridge, which macOS injects after the page
+    has loaded: the screen the app starts on never had the link (2.18.0
+    gate, macbase1 NEW-8)."""
+    if os.environ.get("SLOWBOOKS_DESKTOP") != "1":
+        return False
+    if os.environ.get("SLOWBOOKS_SERVER_MODE") == "1":
+        return False
+    host = request.client.host if request.client else ""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 @router.get("/status")
 def auth_status(request: Request, db: Session = Depends(get_db)):
     """Tell the SPA whether first-run setup is needed and whether the
     current session is authenticated."""
     authenticated = request.session.get("authenticated") is True
+    if authenticated and (
+        signed_in_before_this_start(request.session)
+        or signed_in_to_another_company(request.session)
+    ):
+        # "Ask for the password each time SlowBooks Pro starts": a session
+        # from before this start is signed out here too, or the page would
+        # be told it is signed in while every request answers 401.
+        request.session.clear()
+        authenticated = False
     setup_needed = not password_is_set(db)
     out = {
         "setup_needed": setup_needed,
@@ -133,7 +191,6 @@ def auth_status(request: Request, db: Session = Depends(get_db)):
         from app.models.transactions import Transaction
         from app.services.settings_service import get_setting_raw
 
-        out["company_name"] = get_setting_raw(db, "company_name") or ""
         out["has_data"] = db.query(Transaction.id).first() is not None
     if authenticated and request.session.get("username"):
         out["user"] = {
@@ -179,12 +236,20 @@ def setup(
             )
 
     # Persist any non-blank settings the user provided. set_password() will
-    # commit at the end, so all writes land in a single transaction.
+    # commit at the end, so all writes land in a single transaction. The
+    # values Settings checks (a default tax rate from 0 to 100) are checked
+    # here too, before anything is written.
     payload_dict = payload.model_dump()
+    to_store = {}
     for key in _SETUP_SETTINGS_KEYS:
         value = payload_dict.get(key)
         if value is not None and value != "":
-            set_setting(db, key, value)
+            try:
+                to_store[key] = clean_setting_value(key, value)
+            except SettingValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from None
+    for key, value in to_store.items():
+        set_setting(db, key, value)
 
     set_password(db, payload.password)
     # Materialize the operator as the admin user row right away (Server
@@ -200,6 +265,8 @@ def setup(
     # is defence in depth and intent-revealing.
     request.session.clear()
     request.session["authenticated"] = True
+    remember_this_start(request.session)
+    remember_this_company(request.session)
     _stash_user(request, admin)
     return {"status": "ok", "authenticated": True}
 
@@ -254,6 +321,8 @@ def login(
     # Same rotation rationale as /setup.
     request.session.clear()
     request.session["authenticated"] = True
+    remember_this_start(request.session)
+    remember_this_company(request.session)
     _stash_user(request, user)
     return {"status": "ok", "authenticated": True}
 

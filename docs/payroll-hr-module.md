@@ -148,11 +148,11 @@ the header and a tamper-evident audit hash in the footer. The SPA's
 | Method + Path | Returns |
 |---------------|---------|
 | `POST /api/payroll/forms/w2/{emp_id}?year=YYYY` | W-2 boxes 1-6 + employee/employer identifiers (JSON) |
-| `POST /api/payroll/forms/w2/{emp_id}/pdf?year=YYYY` | W-2 PDF + `document_audits` row |
+| `GET, POST /api/payroll/forms/w2/{emp_id}/pdf?year=YYYY` | W-2 PDF + `document_audits` row |
 | `POST /api/payroll/forms/w3/{year}` | W-3 aggregate across all active employees (JSON) |
-| `POST /api/payroll/forms/w3/{year}/pdf` | W-3 PDF |
+| `GET, POST /api/payroll/forms/w3/{year}/pdf` | W-3 PDF |
 | `POST /api/payroll/forms/940/{year}` | Form 940 FUTA — first $7K/employee at 0.6% (JSON) |
-| `POST /api/payroll/forms/940/{year}/pdf` | Form 940 PDF |
+| `GET, POST /api/payroll/forms/940/{year}/pdf` | Form 940 PDF |
 | `POST /api/payroll/forms/941/{year}/{quarter}` | Quarterly FICA aggregation (JSON) |
 | `POST /api/payroll/forms/941/{year}/{quarter}/pdf` | Form 941 PDF |
 | `POST /api/payroll/forms/sui/{year}/{quarter}?state=XX` | Quarterly SUI wage report, per-employee detail (JSON) |

@@ -41,6 +41,25 @@ def list_bill_payments(
     return results
 
 
+@router.get("/{bill_payment_id}", response_model=BillPaymentResponse)
+def get_bill_payment(bill_payment_id: int, db: Session = Depends(get_db)):
+    """One bill payment and the bills it paid. The bank register links a
+    bill payment here (#/bill-payments/{id}); the link said "Page not
+    found"."""
+    p = (
+        db.query(BillPayment)
+        .options(joinedload(BillPayment.vendor), selectinload(BillPayment.allocations))
+        .filter(BillPayment.id == bill_payment_id)
+        .first()
+    )
+    if not p:
+        raise HTTPException(status_code=404, detail="Bill payment not found")
+    resp = BillPaymentResponse.model_validate(p)
+    if p.vendor:
+        resp.vendor_name = p.vendor.name
+    return resp
+
+
 @router.post("", response_model=BillPaymentResponse, status_code=201)
 def create_bill_payment(data: BillPaymentCreate, db: Session = Depends(get_db)):
     check_closing_date(db, data.date)
@@ -227,6 +246,12 @@ def void_bill_payment(bill_payment_id: int, db: Session = Depends(get_db)):
     if payment.is_voided:
         raise HTTPException(status_code=400, detail="Bill payment already voided")
     check_closing_date(db, payment.date)
+    # The bill's view offers Void on each payment now. A check that cleared
+    # in a completed reconciliation stays put, as every other void refuses.
+    if payment.transaction is not None:
+        from app.services.bank_posting import assert_not_reconciled
+
+        assert_not_reconciled(payment.transaction)
 
     if payment.transaction_id:
         from app.models.transactions import TransactionLine
@@ -256,6 +281,11 @@ def void_bill_payment(bill_payment_id: int, db: Session = Depends(get_db)):
                 source_type="bill_payment_void",
                 source_id=payment.id,
             )
+        if payment.transaction is not None:
+            from app.services.bank_posting import release_statement_links
+
+            # A statement line matched to this check goes back to review.
+            release_statement_links(db, payment.transaction)
 
     # Reverse allocations. Lock each bill row so a concurrent create or
     # second void can't race the read-modify-write of amount_paid /

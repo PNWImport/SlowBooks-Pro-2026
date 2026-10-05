@@ -7,6 +7,7 @@ import re
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
@@ -15,7 +16,6 @@ from app.routes.invoices.helpers import _due_date_from_terms
 from app.models.bills import Bill, BillLine, BillStatus
 from app.models.contacts import Vendor
 from app.models.items import Item
-from app.models.accounts import Account
 from app.schemas.bills import BillCreate, BillResponse
 from app.services.accounting import (
     _q,
@@ -25,6 +25,12 @@ from app.services.accounting import (
     reversing_lines,
 )
 from app.services.closing_date import check_closing_date
+from app.services.request_utils import content_disposition
+from app.services.purchase_posting import (
+    expense_account_for,
+    spread,
+    unit_cost_with_tax,
+)
 
 router = APIRouter(prefix="/api/bills", tags=["bills"])
 
@@ -33,10 +39,15 @@ router = APIRouter(prefix="/api/bills", tags=["bills"])
 def list_bills(
     vendor_id: int = None,
     status: str = None,
+    open_only: bool = False,
     skip: int = 0,
     limit: int = 500,
     db: Session = Depends(get_db),
 ):
+    """Newest first, a page at a time (500 by default, at most 1,000).
+    open_only: the bills that can still be paid or credited (unpaid or
+    partial, with a balance due), filtered here so an old unpaid bill is
+    never lost behind the newest page (issue #191)."""
     skip, limit = clamp_pagination(skip, limit)
     # Eager-load vendor + lines so a 500-row list doesn't fire 1001
     # follow-up SELECTs through BillResponse.model_validate.
@@ -48,7 +59,12 @@ def list_bills(
         q = q.filter(Bill.vendor_id == vendor_id)
     if status:
         q = q.filter(Bill.status == status)
-    bills = q.order_by(Bill.date.desc()).offset(skip).limit(limit).all()
+    if open_only:
+        q = q.filter(
+            Bill.status.in_((BillStatus.UNPAID, BillStatus.PARTIAL)),
+            Bill.balance_due > 0,
+        )
+    bills = q.order_by(Bill.date.desc(), Bill.id.desc()).offset(skip).limit(limit).all()
     results = []
     for b in bills:
         resp = BillResponse.model_validate(b)
@@ -67,6 +83,48 @@ def get_bill(bill_id: int, db: Session = Depends(get_db)):
     if bill.vendor:
         resp.vendor_name = bill.vendor.name
     return resp
+
+
+def _bill_html(db: Session, bill_id: int) -> tuple[Bill, str]:
+    from app.services.pdf_service import _render
+    from app.services.settings_service import get_all_settings
+
+    bill = db.query(Bill).filter(Bill.id == bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    return bill, _render("bill_pdf.html", get_all_settings(db), bill=bill)
+
+
+@router.get("/{bill_id}/pdf")
+def bill_pdf(bill_id: int, db: Session = Depends(get_db)):
+    """The bill as a PDF. Save PDF on the bill's view opened this URL long
+    before it existed, and got a JSON "Not Found" (skytech W-M8)."""
+    from app.services.pdf_service import render_pdf
+
+    bill, html_str = _bill_html(db, bill_id)
+    return Response(
+        content=render_pdf(html_str),
+        media_type="application/pdf",
+        headers={
+            # The bill number is the vendor's own invoice number — anything
+            # can be in it, and it lands in a header.
+            "Content-Disposition": content_disposition(
+                f"Bill_{bill.bill_number or 'bill'}.pdf"
+            )
+        },
+    )
+
+
+@router.get("/{bill_id}/print-preview")
+def bill_print_preview(bill_id: int, db: Session = Depends(get_db)):
+    """The bill as a page that opens the print dialog."""
+    _, html_str = _bill_html(db, bill_id)
+    return HTMLResponse(
+        content=html_str.replace(
+            "</body>",
+            "<script>window.onload=function(){window.print();}</script></body>",
+        )
+    )
 
 
 def _default_bill_number(db: Session, vendor: Vendor, date) -> str:
@@ -128,6 +186,14 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
         due_date = _due_date_from_terms(data.date, data.terms)
 
     subtotal, tax_amount, total = compute_line_totals(data.lines, data.tax_rate)
+    if total <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "A bill must be for more than zero. Enter the quantity and "
+                "rate the vendor charged on at least one line."
+            ),
+        )
 
     from app.services.currency import convert_lines, resolve_rate
 
@@ -140,7 +206,7 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
         vendor_id=data.vendor_id,
         date=data.date,
         due_date=due_date,
-        terms=data.terms,
+        terms=terms,
         ref_number=data.ref_number,
         po_id=data.po_id,
         subtotal=subtotal,
@@ -155,11 +221,9 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
     db.add(bill)
     db.flush()
 
-    # Default expense account for lines without explicit account
-    default_expense_id = (
-        db.query(Account).filter(Account.account_number == "6000").first()
-    )
-    default_expense_id = default_expense_id.id if default_expense_id else None
+    # A missing Accounts Payable account is the first thing to say (#119),
+    # ahead of anything about one line.
+    ap_id = get_ap_account_id(db)
 
     # Phase 11: track which lines are inventory receipts so we can write
     # InventoryMovement rows after the JE posts.
@@ -170,11 +234,18 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
 
     inv_receipts = []  # [(item, quantity, unit_cost), ...]
 
+    # Round per line so stored BillLine.amount matches compute_line_totals
+    # and the JE debit lands on the same cents as the rounded AP credit.
+    amounts = [
+        _q(Decimal(str(ln.quantity)) * Decimal(str(ln.rate))) for ln in data.lines
+    ]
+    # Tax on a purchase is part of what the lines cost: each line's debit
+    # carries its share, and nothing is posted to Sales Tax Payable.
+    tax_shares = spread(tax_amount, amounts)
+
     journal_lines = []
     for i, line_data in enumerate(data.lines):
-        # Round per line so stored BillLine.amount matches compute_line_totals
-        # and the JE debit lands on the same cents as the rounded AP credit.
-        amt = _q(Decimal(str(line_data.quantity)) * Decimal(str(line_data.rate)))
+        amt = amounts[i]
         item = None
         if line_data.item_id:
             item = db.query(Item).filter(Item.id == line_data.item_id).first()
@@ -203,17 +274,27 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
                     (
                         item,
                         Decimal(str(line_data.quantity)),
-                        Decimal(str(line_data.rate)),  # unit cost from the bill
+                        # unit cost from the bill, with the line's tax share
+                        unit_cost_with_tax(
+                            amt, tax_shares[i], line_data.quantity, line_data.rate
+                        ),
                     )
                 )
+        elif amt > 0 or line_data.account_id:
+            posting_acct = expense_account_for(
+                db,
+                line_no=i + 1,
+                description=line_data.description,
+                account_id=line_data.account_id,
+                item=item,
+                vendor=vendor,
+            )
         else:
-            posting_acct = line_data.account_id
-            if not posting_acct and item and item.expense_account_id:
-                posting_acct = item.expense_account_id
-            if not posting_acct and vendor.default_expense_account_id:
-                posting_acct = vendor.default_expense_account_id
-            if not posting_acct:
-                posting_acct = default_expense_id
+            # A description-only line (no amount) posts nothing; keep the
+            # account it would have used when there is one.
+            posting_acct = (item.expense_account_id if item else None) or (
+                vendor.default_expense_account_id
+            )
 
         db.add(
             BillLine(
@@ -237,7 +318,7 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
             journal_lines.append(
                 {
                     "account_id": posting_acct,
-                    "debit": amt,
+                    "debit": amt + tax_shares[i],
                     "credit": Decimal("0"),
                     "description": line_data.description or "",
                     "job_id": line_data.job_id,
@@ -253,21 +334,7 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
                 }
             )
 
-    # Tax line
-    if tax_amount > 0:
-        tax_acct = db.query(Account).filter(Account.account_number == "2200").first()
-        if tax_acct:
-            journal_lines.append(
-                {
-                    "account_id": tax_acct.id,
-                    "debit": tax_amount,
-                    "credit": Decimal("0"),
-                    "description": "Sales tax on bill",
-                }
-            )
-
     # Credit AP
-    ap_id = get_ap_account_id(db)
     if ap_id and journal_lines:
         journal_lines.append(
             {

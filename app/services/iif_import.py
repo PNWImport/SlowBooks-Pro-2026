@@ -16,6 +16,7 @@ import logging
 from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.accounts import Account, AccountType
@@ -27,8 +28,15 @@ from app.models.payments import Payment, PaymentAllocation
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.bills import Bill, BillLine, BillStatus
 from app.models.transactions import Transaction
+from app.services.csv_export import strip_formula_guard
 from app.services.iif_common import IIF_TO_ACCOUNT_TYPE, IIF_TO_ITEM_TYPE
-from app.services.jobs_service import resolve_customer_and_job, split_customer_job
+from app.services.jobs_service import (
+    find_customer,
+    find_job,
+    resolve_customer_and_job,
+    split_customer_job,
+)
+from app.services.name_case import normalize_name
 from app.services.accounting import (
     _q,
     create_journal_entry,
@@ -127,6 +135,65 @@ def parse_iif(content: str) -> dict:
     return result
 
 
+def _unquote_iif(raw: str) -> str:
+    """Drop the double quotes IIF wraps around any field containing a comma.
+
+    QuickBooks quotes such fields on export (``"ACME, Inc."``); the quotes are
+    delimiters, not part of the value, so they must not reach the database.
+    Only a matched surrounding pair is removed, so a name that legitimately
+    ends in a quote character survives. Inside the pair a quote mark is
+    written twice (``"The ""Best"" Co"``), and comes back as one.
+    """
+    value = raw.strip()
+    if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+        return value[1:-1].replace('""', '"').strip()
+    return value
+
+
+# Where a file names a customer, vendor or account: the list rows' own NAME,
+# and every place a transaction or an item points at one. Items keep the
+# names they were typed with (they are often part numbers), so an item's
+# own NAME and a line's INVITEM are not here.
+_RETITLED_FIELDS = {
+    "ACCNT": ("NAME",),
+    "CUST": ("NAME",),
+    "VEND": ("NAME",),
+    "INVITEM": ("ACCNT",),
+}
+_RETITLED_TXN_FIELDS = ("NAME", "ACCNT")
+
+
+def retitle_all_caps(parsed: dict) -> list[tuple[str, str]]:
+    """Rewrite the ALL-CAPS names in a parsed file as normal capitalization.
+
+    Asked for with the import's "Change ALL-CAPS names" box (#195,
+    @TheLocalW). Every place a name appears is rewritten the same way, so a
+    bill for "ACME TOOLING, INC." still finds the vendor row that became
+    "ACME Tooling, Inc.". Returns each distinct change once: the accounts',
+    customers' and vendors' own rows first, then what the transactions add.
+    """
+    changes: dict[str, str] = {}
+
+    def fix(row: dict, field: str) -> None:
+        value = row.get(field)
+        if not value:
+            return
+        new = normalize_name(value)
+        if new and new != value:
+            row[field] = new
+            changes.setdefault(value, new)
+
+    for section, fields in _RETITLED_FIELDS.items():
+        for row in parsed.get(section, []):
+            for field in fields:
+                fix(row, field)
+    for block in parsed.get("TRNS", []):
+        for row in [block["trns"], *block["spl"]]:
+            for field in _RETITLED_TXN_FIELDS:
+                fix(row, field)
+    return list(changes.items())
+
+
 def _fields_to_dict(header: list, fields: list) -> dict:
     """Map positional fields to named dict using header row."""
     d = {}
@@ -134,10 +201,34 @@ def _fields_to_dict(header: list, fields: list) -> dict:
         if name.startswith("!"):
             name = name[1:]  # strip ! from first field if present
         if i < len(fields):
-            d[name] = fields[i].strip()
+            d[name] = strip_formula_guard(_unquote_iif(fields[i]))
         else:
             d[name] = ""
     return d
+
+
+def _named(db: Session, model, name: str):
+    """The row called ``name``: exact first, then in any case.
+
+    QuickBooks keeps one name per customer, vendor or account whatever its
+    case, and an import with "Change ALL-CAPS names" stores BOB JONES as Bob
+    Jones. A later file, or an earlier import, that spells the name the other
+    way means the same record; matching exactly made a second one, and a bill
+    for "ACME TOOLING, INC." could not find the vendor imported as "ACME
+    Tooling, Inc." (#195). ``lower()`` equality, not ``ilike``: a ``%`` or
+    ``_`` in a name is a character, not a wildcard.
+    """
+    if not name:
+        return None
+    row = db.query(model).filter(model.name == name).first()
+    if row is None:
+        row = (
+            db.query(model)
+            .filter(func.lower(model.name) == name.lower())
+            .order_by(model.id)
+            .first()
+        )
+    return row
 
 
 def _parse_iif_date(s: str) -> date:
@@ -219,7 +310,39 @@ def _find_account(db: Session, name: str) -> Account:
         if acct:
             return acct
 
+    # 4. "Parent:Child". The list import keeps a sub-account under its own
+    # name with its parent linked, and a transaction names the whole path, so
+    # a bill to "Automobile Expense:Gasoline" was refused as not found. The
+    # sub-account whose parents match the path, in any case; else the only
+    # account with that name if it has no parent (the file's list may not
+    # have carried one). One under a different parent is not it: posting an
+    # Automobile:Gas bill to Utilities:Gas would be wrong in silence.
+    if ":" in name:
+        parts = [part.strip() for part in name.split(":") if part.strip()]
+        leaf, parents = parts[-1], parts[:-1]
+        candidates = (
+            db.query(Account)
+            .filter(func.lower(Account.name) == leaf.lower())
+            .order_by(Account.id)
+            .all()
+        )
+        for acct in candidates:
+            if _under(acct, parents):
+                return acct
+        if len(candidates) == 1 and candidates[0].parent_id is None:
+            return candidates[0]
+
     return None
+
+
+def _under(acct: Account, parents: list) -> bool:
+    """Whether ``acct`` sits under exactly this chain of parent names."""
+    node = acct.parent
+    for want in reversed(parents):
+        if node is None or node.name.lower() != want.lower():
+            return False
+        node = node.parent
+    return True
 
 
 # ============================================================================
@@ -340,7 +463,7 @@ def import_accounts(db: Session, rows: list) -> dict:
                 parts = full_name.split(":")
                 name = parts[-1].strip()
                 parent_name = parts[-2].strip()
-                parent = db.query(Account).filter(Account.name == parent_name).first()
+                parent = _named(db, Account, parent_name)
                 if parent:
                     parent_id = parent.id
             else:
@@ -356,6 +479,9 @@ def import_accounts(db: Session, rows: list) -> dict:
                     (Account.name == name) | (Account.account_number == acct_num)
                 )
             existing = dup_q.first()
+            if existing is None:
+                # the same name in another case is the same account (_named)
+                existing = _named(db, Account, name)
 
             # Parse OBAMOUNT (QB convention: positive = debit-side).
             # Applied to either the newly-created account or an existing
@@ -524,7 +650,7 @@ def import_customers(db: Session, rows: list) -> dict:
                 sp.rollback()
                 continue
 
-            existing = db.query(Customer).filter(Customer.name == name).first()
+            existing = _named(db, Customer, name)
             if existing:
                 sp.rollback()
                 continue
@@ -534,6 +660,11 @@ def import_customers(db: Session, rows: list) -> dict:
             # but a partial export may not) and the job under it.
             parent_name, job_name = split_customer_job(name)
             if job_name:
+                parent = find_customer(db, parent_name)
+                if parent and find_job(db, parent.id, job_name):
+                    # already here: a re-import counted it as imported again
+                    sp.rollback()
+                    continue
                 _customer, _job = resolve_customer_and_job(db, name)
                 sp.commit()
                 imported += 1
@@ -587,7 +718,7 @@ def import_vendors(db: Session, rows: list) -> dict:
                 sp.rollback()
                 continue
 
-            existing = db.query(Vendor).filter(Vendor.name == name).first()
+            existing = _named(db, Vendor, name)
             if existing:
                 sp.rollback()
                 continue
@@ -713,6 +844,11 @@ def import_transactions(db: Session, blocks: list) -> dict:
                         warnings.append(
                             f"Invoice {doc}: imported but journal entry could not be created (account mismatch)"
                         )
+                else:
+                    # None = this invoice number is already here. Only bills,
+                    # deposits and sales receipts were counted, so a
+                    # re-import reported "Duplicates skipped 1" for three.
+                    counts["duplicates_skipped"] += 1
             elif trns_type == "PAYMENT":
                 result = _import_payment(db, trns, spls)
                 if result:
@@ -721,6 +857,8 @@ def import_transactions(db: Session, blocks: list) -> dict:
                         warnings.append(
                             f"Payment block {i+1}: imported but journal entry could not be created (account mismatch)"
                         )
+                else:
+                    counts["duplicates_skipped"] += 1
             elif trns_type in ("CASH SALE", "CASHSALE", "SALES RECEIPT"):
                 if not trns.get("NAME", "").strip():
                     warnings.append(
@@ -741,6 +879,8 @@ def import_transactions(db: Session, blocks: list) -> dict:
                 result = _import_estimate(db, trns, spls)
                 if result:
                     counts["estimates"] += 1
+                else:
+                    counts["duplicates_skipped"] += 1
             elif trns_type == "BILL":
                 result = _import_bill(db, trns, spls)
                 if result:
@@ -1098,7 +1238,10 @@ def _import_invoice(db: Session, trns: dict, spls: list) -> Invoice:
         # creating a Customer(name="") plants a record that is invisible in
         # list views and unsearchable — the API refuses blank names since
         # 6c82e9a, so the importer must not sneak them in the back door.
-        return None
+        # Said, not dropped: None means "already imported" to the caller.
+        raise DataProblem(
+            f"INVOICE {doc_num or '(no number)'}: missing customer NAME on TRNS line"
+        )
     # QuickBooks' NAME is the "Customer:Job" path — the job part becomes a
     # Job under the customer (created on first sight), and the invoice is
     # tagged to it so job costing survives the migration.
@@ -1415,7 +1558,10 @@ def _import_cash_sale(db: Session, trns: dict, spls: list) -> Invoice:
             db.query(Invoice)
             .join(Customer, Invoice.customer_id == Customer.id)
             .filter(
-                Customer.name == cust_name,
+                or_(
+                    Customer.name == cust_name,
+                    func.lower(Customer.name) == cust_name.lower(),
+                ),
                 Invoice.date == sale_date,
                 Invoice.total == total,
                 Invoice.is_sales_receipt.is_(True),
@@ -1513,11 +1659,11 @@ def _import_estimate(db: Session, trns: dict, spls: list) -> Estimate:
 
     cust_name = trns.get("NAME", "").strip()[:200]
     if not cust_name:
-        # A TRNS row with no NAME cannot anchor an AR document, and auto-
-        # creating a Customer(name="") plants a record that is invisible in
-        # list views and unsearchable — the API refuses blank names since
-        # 6c82e9a, so the importer must not sneak them in the back door.
-        return None
+        # A TRNS row with no NAME cannot anchor an AR document (see
+        # _import_invoice); said, not dropped.
+        raise DataProblem(
+            f"ESTIMATE {doc_num or '(no number)'}: missing customer NAME on TRNS line"
+        )
     customer, job = resolve_customer_and_job(db, cust_name)
     assert customer is not None  # nonblank name + create=True above
 
@@ -1631,6 +1777,8 @@ def validate_iif(content: str) -> dict:
         "record_counts": {},
         "warnings": [],
         "errors": [],
+        "caps_names": 0,
+        "caps_name_examples": [],
     }
 
     try:
@@ -1738,6 +1886,13 @@ def validate_iif(content: str) -> dict:
                 f"(TRNS={trns_amt}, SPL total={spl_total})"
             )
 
+    # What "Change ALL-CAPS names" would do to this file, shown before the
+    # person decides; the file itself is left as it is.
+    changes = retitle_all_caps(parsed)
+    report["caps_names"] = len(changes)
+    report["caps_name_examples"] = [
+        {"name": old, "becomes": new} for old, new in changes[:6]
+    ]
     return report
 
 
@@ -1746,12 +1901,15 @@ def validate_iif(content: str) -> dict:
 # ============================================================================
 
 
-def import_all(db: Session, content: str) -> dict:
+def import_all(db: Session, content: str, retitle_names: bool = False) -> dict:
     """Import an entire IIF file into Slowbooks.
 
     Processes in dependency order: classes -> accounts -> customers ->
     vendors -> items -> transactions.
     Returns counts of imported records and any errors.
+
+    ``retitle_names``: the person importing asked for ALL-CAPS customer,
+    vendor and account names in normal capitalization (retitle_all_caps).
     """
     result = {
         "classes": 0,
@@ -1766,11 +1924,14 @@ def import_all(db: Session, content: str) -> dict:
         "estimates": 0,
         "bills": 0,
         "deposits": 0,
+        "names_changed": 0,
         "errors": [],
         "warnings": [],
     }
 
     parsed = parse_iif(content)
+    if retitle_names:
+        result["names_changed"] = len(retitle_all_caps(parsed))
 
     # Import lists first (order matters for FK resolution)
 

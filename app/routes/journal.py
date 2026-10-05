@@ -27,7 +27,7 @@ def _line_dict(line, acct) -> dict:
         "id": line.id,
         "account_id": line.account_id,
         "account_name": acct.name if acct else "",
-        "account_number": acct.account_number if acct else "",
+        "account_number": (acct.account_number or "") if acct else "",
         "debit": float(line.debit),
         "credit": float(line.credit),
         "description": line.description or "",
@@ -54,6 +54,14 @@ def list_journal_entries(
         q = q.filter(Transaction.source_type == "manual")
     entries = q.order_by(Transaction.date.desc()).offset(skip).limit(limit).all()
     accounts = {a.id: a for a in db.query(Account).all()}
+    from app.services.qbo_documents import REVERSALS
+
+    voided = {
+        source_id
+        for (source_id,) in db.query(Transaction.source_id).filter(
+            Transaction.source_type.in_(REVERSALS), Transaction.source_id.isnot(None)
+        )
+    }
     results = []
     for txn in entries:
         lines_data = []
@@ -67,8 +75,9 @@ def list_journal_entries(
                 reference=txn.reference or "",
                 source_type=txn.source_type or "",
                 lines=lines_data,
-                total_debit=sum(line["debit"] for line in lines_data),
-                total_credit=sum(line["credit"] for line in lines_data),
+                total_debit=float(sum(line.debit for line in txn.lines)),
+                total_credit=float(sum(line.credit for line in txn.lines)),
+                voided=txn.id in voided,
             )
         )
     return results
@@ -79,6 +88,8 @@ def get_journal_entry(entry_id: int, db: Session = Depends(get_db)):
     txn = db.query(Transaction).filter(Transaction.id == entry_id).first()
     if not txn:
         raise HTTPException(status_code=404, detail="Journal entry not found")
+    from app.services.qbo_documents import reversed_already
+
     accounts = {a.id: a for a in db.query(Account).all()}
     lines_data = []
     for line in txn.lines:
@@ -90,8 +101,9 @@ def get_journal_entry(entry_id: int, db: Session = Depends(get_db)):
         reference=txn.reference or "",
         source_type=txn.source_type or "",
         lines=lines_data,
-        total_debit=sum(line["debit"] for line in lines_data),
-        total_credit=sum(line["credit"] for line in lines_data),
+        total_debit=float(sum(line.debit for line in txn.lines)),
+        total_credit=float(sum(line.credit for line in txn.lines)),
+        voided=reversed_already(db, txn),
     )
 
 
@@ -185,7 +197,9 @@ def void_journal_entry(entry_id: int, db: Session = Depends(get_db)):
             txn.date,
             f"VOID: {txn.description or ''}",
             reverse_lines,
-            source_type="manual_void",
+            # A QuickBooks Online import posting is reversed under its own
+            # name, so a later import knows it was voided here.
+            source_type=f"{txn.source_type}_void" if from_qbo else "manual_void",
             source_id=txn.id,
             reference=txn.reference,
             class_id=txn.class_id,

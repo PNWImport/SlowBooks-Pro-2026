@@ -1,8 +1,8 @@
 from datetime import date as dt_date, datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PlainSerializer, field_validator, model_validator
 
 from app.models.invoices import InvoiceStatus
 from app.schemas.common import Money, StrictModel, TaxRate, validate_non_negative_line
@@ -24,7 +24,10 @@ class InvoiceLineCreate(StrictModel):
 
     @model_validator(mode="after")
     def _check_non_negative(self):
-        validate_non_negative_line(self.quantity, self.rate)
+        # A negative price is a discount; whether this line may carry one
+        # depends on its item and on the invoice it is on, which the route
+        # decides (routes/invoices/helpers.py, refuse_negative_lines).
+        validate_non_negative_line(self.quantity, None)
         return self
 
 
@@ -33,7 +36,7 @@ class InvoiceLineResponse(BaseModel):
     item_id: Optional[int]
     description: Optional[str]
     quantity: Decimal
-    rate: Decimal
+    rate: RateOut
     amount: Decimal
     class_name: Optional[str]
     job_id: Optional[int] = None
@@ -72,6 +75,9 @@ class InvoiceCreate(StrictModel):
     is_pledge: bool = False
     fair_value_amount: Optional[Money] = None
     fair_value_description: Optional[str] = Field(None, max_length=200)
+    # An invoice that adds up to $0.00 (no-charge warranty work) is saved
+    # only when this says so; otherwise it is refused with 409 "zero_total".
+    allow_zero_total: bool = False
 
     @field_validator("lines")
     @classmethod
@@ -98,6 +104,15 @@ class InvoiceUpdate(StrictModel):
     fair_value_amount: Optional[Money] = None
     fair_value_description: Optional[str] = Field(None, max_length=200)
     lines: Optional[list[InvoiceLineCreate]] = None
+    # As on create: an edit that leaves the invoice at $0.00 needs this.
+    allow_zero_total: bool = False
+
+
+class ZeroTotalConfirmation(StrictModel):
+    """The optional body of Duplicate and of an estimate's Convert: a copy
+    that adds up to $0.00 is made only with ``allow_zero_total: true``."""
+
+    allow_zero_total: bool = False
 
 
 class InvoiceResponse(BaseModel):
@@ -120,7 +135,7 @@ class InvoiceResponse(BaseModel):
     ship_state: Optional[str]
     ship_zip: Optional[str]
     subtotal: Decimal
-    tax_rate: Decimal
+    tax_rate: TaxRateOut
     tax_amount: Decimal
     total: Decimal
     amount_paid: Decimal

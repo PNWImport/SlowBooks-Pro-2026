@@ -1,4 +1,5 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -18,6 +19,9 @@ from app.services.closing_date import check_closing_date
 
 from app.routes.invoices._router import router
 from app.routes.invoices.helpers import (
+    confirm_zero_total,
+    opening_status,
+    refuse_due_before_date,
     resolve_line_taxable,
     _due_date_from_terms,
     _compute_totals,
@@ -33,10 +37,16 @@ def list_invoices(
     status: str = None,
     customer_id: int = None,
     is_sales_receipt: bool = None,
+    open_only: bool = False,
     skip: int = 0,
     limit: int = 500,
     db: Session = Depends(get_db),
 ):
+    """Newest first, a page at a time (500 by default, at most 1,000).
+    open_only: the invoices money can still be applied to (draft, sent or
+    partial, with a balance due) — what Receive Payment, Batch Payments
+    and the credit screens offer. Filtered here, so an old open invoice is
+    never lost behind the newest page of paid ones (issue #191)."""
     skip, limit = clamp_pagination(skip, limit)
     # Eager-load customer (used for customer_name) and lines (in the
     # response model). Without these, returning 500 invoices triggered
@@ -48,11 +58,23 @@ def list_invoices(
     )
     if status:
         q = q.filter(Invoice.status == status)
+    if open_only:
+        q = q.filter(
+            Invoice.status.in_(
+                (InvoiceStatus.DRAFT, InvoiceStatus.SENT, InvoiceStatus.PARTIAL)
+            ),
+            Invoice.balance_due > 0,
+        )
     if customer_id:
         q = q.filter(Invoice.customer_id == customer_id)
     if is_sales_receipt is not None:
         q = q.filter(Invoice.is_sales_receipt == is_sales_receipt)
-    invoices = q.order_by(Invoice.date.desc()).offset(skip).limit(limit).all()
+    invoices = (
+        q.order_by(Invoice.date.desc(), Invoice.id.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
     results = []
     for inv in invoices:
         resp = InvoiceResponse.model_validate(inv)
@@ -95,8 +117,15 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
 
     # Parse terms for due date (explicit due_date wins; else derive from terms)
     due_date = data.due_date or _due_date_from_terms(data.date, data.terms)
+    refuse_due_before_date(data.date, due_date)
+    refuse_negative_lines(db, data.lines)
     resolve_line_taxable(db, data.lines, customer)
     subtotal, tax_amount, total = _compute_totals(data.lines, data.tax_rate)
+    confirm_zero_total(
+        total,
+        data.allow_zero_total,
+        document_label(SimpleNamespace(is_pledge=data.is_pledge), words).lower(),
+    )
     _check_fair_value(data.fair_value_amount, total)
 
     # Capture every customer field we need post-flush, because we may have to
@@ -135,6 +164,7 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
             currency=doc_currency,
             exchange_rate=doc_rate,
             customer_id=cust_id,
+            status=opening_status(total),
             date=data.date,
             due_date=due_date,
             terms=data.terms,
@@ -152,6 +182,7 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
             fair_value_description=data.fair_value_description,
             **cust_fields,
         )
+        face = document_label(invoice, words)
         db.add(invoice)
         try:
             db.flush()

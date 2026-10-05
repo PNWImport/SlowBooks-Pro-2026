@@ -3,6 +3,7 @@
 # self-service portal access, and the per-employee HR document vault.
 # ============================================================================
 
+import re
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -33,9 +34,6 @@ from app.models.payroll import Employee
 from app.routes._roles import is_admin
 from app.routes.attachments import (
     _sanitize_filename,
-    _resolve_within,
-    STATIC_BASE,
-    UPLOAD_BASE,
     ALLOWED_EXTENSIONS,
     ALLOWED_MIME_TYPES,
 )
@@ -49,9 +47,11 @@ from app.schemas.payroll import (
     BankAccountResponse,
     YTDResponse,
 )
+from app.services import file_store
 from app.services.encryption import encrypt
 from app.services.nacha_export import validate_routing_number
 from app.services.onboarding import seed_onboarding_tasks
+from app.services.state_tax import is_supported as state_is_supported
 from app.services.upload_limits import read_limited
 
 # Portal tokens get a 1-year hard expiry on top of the 90-day idle window
@@ -61,7 +61,9 @@ _PORTAL_TOKEN_LIFETIME = timedelta(days=365)
 
 
 def _mint_portal_token(emp: Employee) -> None:
-    """Assign a fresh portal token plus its idle and hard expiry timestamps."""
+    """Assign a fresh portal token plus its idle and hard expiry timestamps.
+    The token is kept as a digest and an encrypted copy, never as issued
+    (see Employee.portal_token)."""
     now = datetime.now(timezone.utc)
     emp.portal_token = secrets.token_urlsafe(24)
     emp.portal_token_last_used = now
@@ -137,9 +139,59 @@ def get_employee(request: Request, emp_id: int, db: Session = Depends(get_db)):
     return _employee_view(emp, request)
 
 
+# US territories: real work locations with no engine of their own (no state
+# income tax is withheld there), unlike a typo.
+_TERRITORIES = {"PR", "GU", "VI", "AS", "MP"}
+
+
+def _clean_employee_fields(fields: dict) -> dict:
+    """Refuse, in words, the values payroll cannot use, and tidy the rest.
+
+    SSN last 4 "abcd", a pay rate of -5 and a work state of "Illinois" were
+    all saved (2.17.3, skytech W-L4). The work state is how payroll picks
+    the withholding engine; a name instead of a code matched none and no
+    state income tax was withheld. Blanks from the form mean "none"."""
+    if "ssn_last_four" in fields:
+        ssn = (fields["ssn_last_four"] or "").strip()
+        if ssn and not re.fullmatch(r"\d{4}", ssn):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "SSN last 4 must be four digits: the last four of the "
+                    "employee's Social Security number, like 1234."
+                ),
+            )
+        fields["ssn_last_four"] = ssn or None
+    if fields.get("pay_rate") is not None and fields["pay_rate"] < 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Pay rate can't be negative. Enter the hourly rate, or the "
+                "yearly salary for a salaried employee."
+            ),
+        )
+    for key, label in (
+        ("work_state", "Work state"),
+        ("residence_state", "Residence state"),
+    ):
+        if key not in fields:
+            continue
+        code = (fields[key] or "").strip().upper()
+        if code and not (state_is_supported(code) or code in _TERRITORIES):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{label} must be a two-letter state code, like IL. "
+                    f'"{fields[key]}" is not one.'
+                ),
+            )
+        fields[key] = code or None
+    return fields
+
+
 @router.post("", response_model=EmployeeResponse, status_code=201)
 def create_employee(data: EmployeeCreate, db: Session = Depends(get_db)):
-    emp = Employee(**data.model_dump())
+    emp = Employee(**_clean_employee_fields(data.model_dump()))
     # Every new hire gets a self-service portal token and an onboarding checklist.
     _mint_portal_token(emp)
     db.add(emp)
@@ -155,7 +207,7 @@ def update_employee(emp_id: int, data: EmployeeUpdate, db: Session = Depends(get
     emp = db.query(Employee).filter(Employee.id == emp_id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
-    for key, val in data.model_dump(exclude_unset=True).items():
+    for key, val in _clean_employee_fields(data.model_dump(exclude_unset=True)).items():
         setattr(emp, key, val)
     db.commit()
     db.refresh(emp)
@@ -178,16 +230,28 @@ def get_portal_token(request: Request, emp_id: int, db: Session = Depends(get_db
     emp = db.query(Employee).filter(Employee.id == emp_id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
-    if not emp.portal_token:
+    if not emp.portal_token_hash:
         _mint_portal_token(emp)
         db.commit()
-    return {
+    token = emp.portal_token
+    answer = {
         "employee_id": emp.id,
-        "portal_token": emp.portal_token,
-        "portal_url": _portal_url(request, emp.portal_token),
+        "portal_token": token,
+        "portal_url": _portal_url(request, token) if token else None,
         "expires_at": _iso_utc(emp.portal_token_expires_at),
         "last_used_at": _iso_utc(emp.portal_token_last_used),
     }
+    if not token:
+        # A link whose encrypted copy this install's payroll key can't open:
+        # it still works, and the next time the employee uses it the copy is
+        # kept again (routes/portal.py). Never re-minted here: that would
+        # break the link the employee has.
+        answer["note"] = (
+            "This link can't be shown here: it was saved under a payroll key "
+            "this install no longer has. The employee's link still works; "
+            "Rotate Token makes a new one to send."
+        )
+    return answer
 
 
 @router.get("/{emp_id}/everify")
@@ -414,6 +478,25 @@ def remove_bank_account(emp_id: int, ba_id: int, db: Session = Depends(get_db)):
 
 
 # --- HR document vault -----------------------------------------------------
+# Each document's bytes are kept in the company's own database. They used to
+# be written to uploads/attachments/employee/<employee id>/<name> in a folder
+# every company on a desktop install shared: company B's employee #1 W-4.pdf
+# replaced company A's employee #1 W-4.pdf, an updated W-4.pdf replaced the
+# original within one company, and deleting a document left the file (with
+# its SSN) on disk (2.18.0 gate, skytech).
+
+
+def _employee_document(db: Session, emp_id: int, doc_id: int) -> Attachment:
+    doc = (
+        db.query(Attachment)
+        .filter(Attachment.id == doc_id, Attachment.employee_id == emp_id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
+
+
 @router.get("/{emp_id}/documents", response_model=list[EmployeeDocumentResponse])
 def list_employee_documents(emp_id: int, db: Session = Depends(get_db)):
     emp = db.query(Employee).filter(Employee.id == emp_id).first()
@@ -422,7 +505,7 @@ def list_employee_documents(emp_id: int, db: Session = Depends(get_db)):
     return (
         db.query(Attachment)
         .filter(Attachment.employee_id == emp_id)
-        .order_by(Attachment.uploaded_at.desc())
+        .order_by(Attachment.uploaded_at.desc(), Attachment.id.desc())
         .all()
     )
 
@@ -451,27 +534,22 @@ async def upload_employee_document(
             status_code=400, detail=f"MIME type '{file.content_type}' not allowed"
         )
 
-    content = await read_limited(file, label="Import file")
+    content = await read_limited(file, label="The document")
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 50MB)")
 
-    # "employee" is a static literal and emp_id is an int — safe path segments.
-    upload_dir = _resolve_within(UPLOAD_BASE, "employee", str(emp_id))
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    file_path = _resolve_within(upload_dir, safe_filename)
-    file_path.write_bytes(content)
-
-    doc = Attachment(
+    # Its own row, always: an updated W-4.pdf is a second document, and the
+    # first is kept (payroll records keep every W-4 an employee filed).
+    doc = file_store.add_attachment(
+        db,
         entity_type="employee",
         entity_id=emp_id,
         employee_id=emp_id,
         doc_category=(doc_category or "general")[:50],
         filename=safe_filename,
-        file_path=str(file_path.relative_to(STATIC_BASE)),
-        mime_type=file.content_type,
-        file_size=len(content),
+        content_type=file.content_type,
+        data=content,
     )
-    db.add(doc)
     db.commit()
     db.refresh(doc)
     return doc
@@ -479,33 +557,15 @@ async def upload_employee_document(
 
 @router.get("/{emp_id}/documents/{doc_id}")
 def download_employee_document(emp_id: int, doc_id: int, db: Session = Depends(get_db)):
-    doc = (
-        db.query(Attachment)
-        .filter(Attachment.id == doc_id, Attachment.employee_id == emp_id)
-        .first()
-    )
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    full_path = _resolve_within(STATIC_BASE, doc.file_path)
-    if not full_path.exists():
-        raise HTTPException(status_code=404, detail="File missing from storage")
-    return FileResponse(
-        str(full_path),
-        filename=doc.filename,
-        media_type=doc.mime_type or "application/octet-stream",
-    )
+    doc = _employee_document(db, emp_id, doc_id)
+    return file_store.attachment_response(db, doc, file_store.MISSING_DOCUMENT)
 
 
 @router.delete("/{emp_id}/documents/{doc_id}")
 def delete_employee_document(emp_id: int, doc_id: int, db: Session = Depends(get_db)):
-    doc = (
-        db.query(Attachment)
-        .filter(Attachment.id == doc_id, Attachment.employee_id == emp_id)
-        .first()
-    )
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    db.delete(doc)
+    doc = _employee_document(db, emp_id, doc_id)
+    # The document's bytes go with it: a deleted W-4 is gone, not kept.
+    file_store.delete_attachment(db, doc)
     db.commit()
     return {"status": "deleted", "id": doc_id}
 

@@ -44,7 +44,10 @@ class Transaction(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     lines = relationship(
-        "TransactionLine", back_populates="transaction", cascade="all, delete-orphan"
+        "TransactionLine",
+        back_populates="transaction",
+        cascade="all, delete-orphan",
+        foreign_keys="TransactionLine.transaction_id",
     )
 
 
@@ -93,5 +96,7 @@ class TransactionLine(Base):
     cleared = Column(Boolean, nullable=False, default=False)
     reconciliation_id = Column(Integer, ForeignKey("reconciliations.id"), nullable=True)
 
-    transaction = relationship("Transaction", back_populates="lines")
+    transaction = relationship(
+        "Transaction", back_populates="lines", foreign_keys=[transaction_id]
+    )
     account = relationship("Account", back_populates="transaction_lines")

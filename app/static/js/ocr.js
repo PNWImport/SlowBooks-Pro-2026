@@ -41,7 +41,7 @@ const ScanHelper = {
 
     scanRowHtml() {
         return `
-        <div id="scan-row" style="display:flex; align-items:center; gap:10px; margin-bottom:14px;
+        <div id="scan-row" data-write style="display:flex; align-items:center; gap:10px; margin-bottom:14px;
              padding:10px 12px; border:1px dashed var(--gray-300); border-radius:6px; background:var(--primary-light);">
             <button type="button" id="scan-btn" class="btn btn-secondary" onclick="ScanHelper.pick()">📄 Scan Receipt</button>
             <input type="file" id="scan-file" accept="image/png,image/jpeg,image/webp,application/pdf" style="display:none;">
@@ -96,10 +96,7 @@ const ScanHelper = {
             let resp;
             try { resp = await fetch('/api/ocr/receipt', { method: 'POST', body: fd }); }
             catch (err) { throw new Error("SlowBooks isn't responding (network error) — if this keeps happening, close and relaunch SlowBooks Pro."); }
-            if (!resp.ok) {
-                const d = await resp.json().catch(() => ({}));
-                throw new Error(d.detail || `Scan failed (HTTP ${resp.status})`);
-            }
+            if (!resp.ok) throw new Error(await API.responseError(resp, 'Scan failed'));
             const result = await resp.json();
             if (!result.ocr_available) {
                 if (statusEl) statusEl.textContent = result.message || 'Scanning unavailable.';
@@ -120,7 +117,7 @@ const ScanHelper = {
                 statusEl.style.color = result.partial ? '#b45309' : 'var(--text-success)';
             }
         } catch (err) {
-            if (statusEl) { statusEl.textContent = err.message; statusEl.style.color = '#c0392b'; }
+            if (statusEl) { statusEl.textContent = err.message; statusEl.style.color = 'var(--text-danger)'; }
         } finally {
             if (btn) btn.disabled = false;
         }
@@ -175,7 +172,9 @@ const ScanHelper = {
      * the rate is amount / subtotal — refused when the amount is as big as
      * the subtotal (the box caught the total, or several numbers) or the
      * rate lands past 50%, so one wrong drag can't write 1204.17% into the
-     * form (VH308 lap, 2026-09-02).
+     * form (VH308 lap, 2026-09-02). The percent keeps four places, as a
+     * rate does: $88.75 on $1,000.00 is 8.875%, where 8.88% would save
+     * $88.80 against the receipt's $88.75.
      * Returns { pct } or { error }.
      */
     taxPercent(value, subtotal, raw) {
@@ -184,7 +183,7 @@ const ScanHelper = {
         if (!(num > 0)) return { error: `Tax read "${value}" isn't a number — not applied.` };
         if (text.includes('%') || String(value).includes('%')) {
             if (num > 50) return { error: `Tax rate ${num}% is not plausible — not applied.` };
-            return { pct: num };
+            return { pct: +num.toFixed(4) };
         }
         const sub = parseFloat(subtotal);
         if (!(sub > 0)) return { error: `Tax ${num.toFixed(2)} read, but there's no subtotal yet — read the Total or Subtotal first.` };
@@ -193,6 +192,6 @@ const ScanHelper = {
         }
         const pct = (num / sub) * 100;
         if (pct > 50) return { error: `Tax ${num.toFixed(2)} on ${sub.toFixed(2)} would be ${pct.toFixed(2)}% — not applied. Draw the box around just the tax amount.` };
-        return { pct: Math.round(pct * 100) / 100 };
+        return { pct: +pct.toFixed(4) };
     },
 };

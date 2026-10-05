@@ -31,12 +31,15 @@ def _get_item(db: Session, item_id: Optional[int]) -> Optional[Item]:
     return db.query(Item).filter(Item.id == item_id).first()
 
 
-def post_sale_for_invoice(db: Session, invoice, txn_date=None) -> None:
+def post_sale_for_invoice(
+    db: Session, invoice, txn_date=None, post_journal: bool = True
+) -> None:
     """Iterate an invoice's lines and record_sale for every inventory item.
 
     Safe to call on any invoice — non-inventory items are silently skipped.
     Uses invoice.date as the transaction date so the COGS posting lands in
-    the same accounting period as the sale.
+    the same accounting period as the sale. `post_journal=False` moves the
+    stock without the COGS entry (record_sale).
     """
     date_to_use = txn_date or invoice.date
     ref = getattr(invoice, "invoice_number", None) or f"inv#{invoice.id}"
@@ -55,6 +58,7 @@ def post_sale_for_invoice(db: Session, invoice, txn_date=None) -> None:
                 source_id=invoice.id,
                 memo=f"{document_label(invoice, terms)} {ref}",
                 txn_date=date_to_use,
+                post_journal=post_journal,
             )
 
 
@@ -150,6 +154,7 @@ def reconcile_invoice_inventory_delta(
     invoice,
     old_line_snapshot: list[dict[str, Any]],
     txn_date=None,
+    post_journal: bool = True,
 ) -> None:
     """After an invoice edit that replaced all InvoiceLines, compare the
     old snapshot against the new lines and post compensating movements:
@@ -202,6 +207,7 @@ def reconcile_invoice_inventory_delta(
                 source_id=invoice.id,
                 memo=f"Edit +{delta}",
                 txn_date=date_to_use,
+                post_journal=post_journal,
             )
         elif delta < 0:
             # Qty reduced — reverse the difference
@@ -214,6 +220,7 @@ def reconcile_invoice_inventory_delta(
                 original_source_type="invoice",
                 original_source_id=invoice.id,
                 txn_date=date_to_use,
+                post_journal=post_journal,
             )
 
 

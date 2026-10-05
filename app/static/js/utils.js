@@ -1,6 +1,6 @@
 /**
- * Shared formatting + DOM helpers. Negative currency prints
- * parentheses instead of a minus sign — classic accountant move.
+ * Shared formatting + DOM helpers. Negative currency prints with the
+ * minus before the dollar sign ("-$10.00"), as the printed documents do.
  */
 
 function $(sel, parent = document) { return parent.querySelector(sel); }
@@ -8,6 +8,32 @@ function $$(sel, parent = document) { return [...parent.querySelectorAll(sel)]; 
 
 function formatCurrency(amount) {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
+}
+
+// A file's size for a person: "18 bytes", "4.2 KB", "1.3 MB". Everything
+// was shown in KB to one decimal, so an 18-byte attachment read "0.0 KB"
+// (2.17.3 exploratory test, W-L7).
+function formatFileSize(bytes) {
+    const n = Math.max(0, Number(bytes) || 0);
+    if (n < 1024) return `${n} ${n === 1 ? 'byte' : 'bytes'}`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// The note beside an attachment or document the upgrade to 2.18.0 copied in
+// from the folder every company shared before (nothing there said whose a
+// file was, so it may be another company's), or found missing from it.
+// `verb` is what the person does to put it right: 'attach' or 'upload'.
+function storedFileNote(file, verb = 'attach') {
+    if (!file) return '';
+    let text = '';
+    if (file.missing) {
+        text = `Missing: this file was not in the shared folder when these books were upgraded. Delete this entry and ${verb} the file again.`;
+    } else if (file.from_shared_folder) {
+        text = `Copied from the folder earlier versions shared between companies. If it isn't the right file, delete it and ${verb} the right one.`;
+    }
+    // flex-basis: a line of its own under the file's name in a flex row
+    return text ? `<div class="stored-file-note" style="flex-basis:100%; font-size:10px; color:var(--text-muted);">${escapeHtml(text)}</div>` : '';
 }
 
 function formatDate(dateStr) {
@@ -24,13 +50,46 @@ function todayISO() {
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
 
+// How long a toast stays: long enough to read. Three seconds for a few
+// words, more for a longer message, at least six for an error, never more
+// than fifteen. Every toast went after three seconds, so a two-line
+// refusal (the closing-date lock) was gone before it was read (2.18.0
+// gate, macbase1 NEW-13). Hovering holds a toast; a click dismisses it.
+function toastMs(message, type) {
+    const length = String(message == null ? '' : message).length;
+    const ms = 3000 + Math.max(0, length - 40) * 60;
+    return Math.min(15000, Math.max(type === 'error' ? 6000 : 3000, ms));
+}
+
 function toast(message, type = 'success') {
     const container = $('#toast-container');
     const el = document.createElement('div');
     el.className = `toast toast-${type}`;
     el.textContent = message;
     container.appendChild(el);
-    setTimeout(() => el.remove(), 3000);
+    let timer = setTimeout(() => el.remove(), toastMs(message, type));
+    el.addEventListener('mouseenter', () => clearTimeout(timer));
+    el.addEventListener('mouseleave', () => { timer = setTimeout(() => el.remove(), 2000); });
+    el.addEventListener('click', () => el.remove());
+}
+
+// Chart colours for the current theme, from the --chart-* colours the
+// stylesheets set per theme. A chart's lines, bars and legend keys are
+// graphics, which need 3:1 on the card (WCAG 1.4.11): the bright colours
+// read well on the dark card but were too faint on the light one (#00c48f
+// was 2.26:1, #facc15 1.53). A legend key in HTML uses var(--chart-*)
+// itself, so it follows a theme switch at once; a canvas reads this when
+// it draws, and the pages redraw on slowbooks:themechange.
+const CHART_FALLBACK = {
+    green: '#0a9a6c', red: '#e5484d', orange: '#d9730d', amber: '#cc6a0a', crimson: '#d63240',
+    blue: '#4c6ef5', purple: '#8b5cf6', pink: '#c026d3', sky: '#0b8bc4', yellow: '#b08900',
+};
+function chartColor(name) {
+    let value = '';
+    try {
+        value = getComputedStyle(document.documentElement).getPropertyValue('--chart-' + name).trim();
+    } catch (e) { /* no stylesheet (a probe) */ }
+    return value || CHART_FALLBACK[name] || name;
 }
 
 // A toast that carries one action (e.g. "Saved to … [Show in folder]").
@@ -70,6 +129,10 @@ function openModal(title, html, opts) {
     _modalOpener = document.activeElement;
     $('#modal-title').textContent = title;
     $('#modal-body').innerHTML = html;
+    // A read-only sign-in sees the form locked, not a 403 after filling it
+    // in (app.js App.lockForms).
+    if (window.App && typeof window.App.lockForms === 'function') window.App.lockForms($('#modal-body'));
+    if (window.App && typeof window.App.hideWriteControls === 'function') window.App.hideWriteControls($('#modal-body'));
     $('#modal-overlay').classList.remove('hidden');
     const modal = $('#modal');
     modal.classList.toggle('modal--wide', !!(opts && opts.wide));
@@ -112,6 +175,19 @@ function disableSubmitButtons() {
 }
 function enableSubmitButtons() {
     document.querySelectorAll('#modal .btn-primary').forEach(b => { b.disabled = false; if(b.dataset.origText) b.textContent = b.dataset.origText; });
+}
+
+// The accounts an account picker offers for a new entry: active ones of the
+// given types, and — for a business — not the nonprofit-only ones (net
+// assets, 4400 In-Kind Contributions; the API marks them nonprofit_only).
+// keepId: the account the record already uses, listed whatever it is so a
+// save never silently drops it.
+function pickerAccounts(accounts, types, keepId) {
+    const nonprofit = typeof Terms !== 'undefined' && Terms.isNonprofit();
+    return (accounts || []).filter(a => (keepId && a.id == keepId) || (
+        types.includes(a.account_type)
+        && a.is_active !== false
+        && !(a.nonprofit_only && !nonprofit)));
 }
 
 function closeSearchDropdown() {
@@ -177,6 +253,42 @@ function _listTableHtml(state) {
         <thead><tr>${ths}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table>`;
 }
 
+// Every row a list endpoint has, a page at a time. For lists that must be
+// complete — the open invoices a payment can go to — never just the newest
+// page (issue #191). It asks until a page comes back empty, so a server that
+// sends fewer than asked for (payroll sends at most 500) is read to the end.
+async function fetchAllPages(path, pageSize = 1000) {
+    const sep = path.includes('?') ? '&' : '?';
+    let all = [];
+    let skip = 0;
+    for (let n = 0; n < 1000; n++) { // a million rows; never an endless loop
+        const url = path + sep + 'skip=' + skip + '&limit=' + pageSize;
+        const page = await API.get(url);
+        if (!page.length) break;
+        all = all.concat(page);
+        skip += page.length;
+    }
+    return all;
+}
+
+// A list page's rows: the newest `cap`, with a note offering Show all, or
+// every row once the page's Show all was clicked (page._showAll).
+async function listRows(page, path, showAllCall, noun, cap = 500) {
+    const all = !!page._showAll;
+    page._showAll = false;
+    const sep = path.includes('?') ? '&' : '?';
+    const raw = all ? await fetchAllPages(path) : await API.get(path + sep + 'limit=' + (cap + 1));
+    return { rows: all ? raw : raw.slice(0, cap), note: all ? '' : listCapNote(raw, cap, showAllCall, noun) };
+}
+
+// A list page shows the newest `cap` rows and says so, with a way to see
+// them all; `rows` came back from a request for cap + 1.
+function listCapNote(rows, cap, showAllCall, noun) {
+    if (rows.length <= cap) return '';
+    return `<p class="list-cap-note" style="margin:0 0 8px; font-size:12px; color:var(--text-muted);">
+        Showing the newest ${cap} ${noun}. <button type="button" class="btn btn-sm btn-secondary" onclick="${showAllCall}">Show all</button></p>`;
+}
+
 function renderListPage({ title, headerHtml = '', filter = null, empty, columns, items, row, sort = null }) {
     let html = `
         <div class="page-header">
@@ -189,7 +301,7 @@ function renderListPage({ title, headerHtml = '', filter = null, empty, columns,
             .join('');
         html += `
             <div class="toolbar">
-                <select id="${filter.id}" onchange="filterRows('${filter.id}', '${filter.rowSelector}')">
+                <select id="${filter.id}" aria-label="Status" onchange="filterRows('${filter.id}', '${filter.rowSelector}')">
                     <option value="">All Statuses</option>
                     ${opts}
                 </select>
@@ -524,13 +636,26 @@ function currencyFormGroupsHtml(selected, rate) {
             <input name="exchange_rate" type="number" step="0.00000001" value="${rate || 1}"></div>`;
 }
 
+// The fetched rate fills the field only while nobody has typed in it since
+// the currency was chosen: a rate typed while the feed answers is the
+// operator's, and the document books at it. An answer for a currency that
+// has since been changed is dropped too.
 async function prefillFxRate(select) {
     const form = select.closest('form');
     const rateInput = form?.querySelector('[name=exchange_rate]');
     if (!rateInput) return;
+    if (!rateInput.dataset.fxWatched) {
+        rateInput.dataset.fxWatched = '1';
+        rateInput.addEventListener('input', () => { rateInput.dataset.fxTyped = '1'; });
+    }
+    const asked = String((Number(rateInput.dataset.fxAsked) || 0) + 1);
+    rateInput.dataset.fxAsked = asked;
+    delete rateInput.dataset.fxTyped;
+    const currency = select.value;
     try {
-        const data = await API.get(`/fx/rate?from_currency=${select.value}`);
-        if (data.rate) rateInput.value = data.rate;
+        const data = await API.get(`/fx/rate?from_currency=${encodeURIComponent(currency)}`);
+        const untouched = rateInput.dataset.fxAsked === asked && !rateInput.dataset.fxTyped;
+        if (data.rate && untouched && select.value === currency) rateInput.value = data.rate;
     } catch (e) { /* operator enters the rate manually */ }
 }
 

@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from app.schemas.common import StrictModel
 
 
@@ -51,4 +51,15 @@ class EmployeeDocumentResponse(BaseModel):
     mime_type: Optional[str] = None
     file_size: Optional[int] = None
     uploaded_at: Optional[datetime] = None
+    # Copied in by the upgrade to 2.18.0 from the folder every company used
+    # to share (it may be another company's), or not there to copy.
+    from_shared_folder: bool = False
+    missing: bool = False
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def _no_size_without_bytes(self):
+        # the size the row kept is of a file that isn't here
+        if self.missing:
+            self.file_size = None
+        return self

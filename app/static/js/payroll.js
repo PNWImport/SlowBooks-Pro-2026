@@ -3,14 +3,16 @@
  * Feature 17: Process payroll with withholding calculations
  */
 const PayrollPage = {
+    showAll() { PayrollPage._showAll = true; App.navigate(location.hash); },
+
     async render() {
-        const runs = await API.get('/payroll');
+        const { rows: runs, note: capNote } = await listRows(PayrollPage, '/payroll', 'PayrollPage.showAll()', 'pay runs', 200);
         let html = `
             <div class="page-header">
                 <h2>Payroll</h2>
                 <button class="btn btn-secondary" onclick="PayrollPage.showRetroPayForm()">Retro Pay</button>
                 <button class="btn btn-primary" onclick="PayrollPage.showRunForm()">+ New Pay Run</button>
-            </div>
+            </div>${capNote}
             <div style="background:#fef3c7;border:1px solid #fbbf24;padding:6px 10px;margin-bottom:12px;font-size:10px;color:#92400e;">
                 <strong>Disclaimer:</strong> Tax calculations are approximate. Verify with a tax professional before filing.
             </div>`;
@@ -49,12 +51,12 @@ const PayrollPage = {
 
         let empRows = emps.map(e => `
             <tr data-emp-row="${e.id}">
-                <td><input type="checkbox" class="pr-check" data-emp="${e.id}" checked></td>
+                <td><input type="checkbox" class="pr-check" data-emp="${e.id}" checked aria-label="Pay ${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)}"></td>
                 <td>${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)}</td>
                 <td>${e.pay_type}</td>
                 <td class="amount">${formatCurrency(e.pay_rate)}${e.pay_type==='hourly'?'/hr':'/yr'}</td>
                 <td><input type="number" step="0.5" class="pr-hours" data-emp="${e.id}" value="${e.pay_type==='hourly'?'80':'0'}" style="width:60px;"></td>
-                <td class="pr-te-summary" data-emp="${e.id}" style="font-size:12px;color:#666;">—</td>
+                <td class="pr-te-summary" data-emp="${e.id}" style="font-size:12px;color:var(--text-muted);">—</td>
             </tr>`).join('');
 
         openModal('New Pay Run', `
@@ -76,6 +78,7 @@ const PayrollPage = {
                     <thead><tr><th scope="col" style="width:30px;"></th><th scope="col">Employee</th><th scope="col">Type</th><th scope="col" class="amount">Rate</th><th scope="col">Hours</th><th scope="col">Time Entries</th></tr></thead>
                     <tbody>${empRows}</tbody>
                 </table></div>
+                <div id="pr-error" role="alert" style="color:var(--danger);font-size:12px;margin-top:8px;"></div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Calculate Payroll</button>
@@ -95,12 +98,17 @@ const PayrollPage = {
                 const empId = parseInt(cell.dataset.emp);
                 const row = byEmp[empId];
                 if (row) {
-                    cell.textContent = `${row.total.toFixed(1)} hrs (${row.entry_count} entries)`;
-                    cell.style.color = '#003366';
+                    // Time still waiting for approval is not paid by this
+                    // run: say so before the run is calculated.
+                    const waiting = row.pending_count
+                        ? ` · ${row.pending_count} not approved (${row.pending_hours.toFixed(1)} hrs, not paid)`
+                        : '';
+                    cell.textContent = `${row.total.toFixed(1)} hrs (${row.entry_count} entries)${waiting}`;
+                    cell.style.color = row.pending_count ? 'var(--text-danger)' : 'var(--qb-navy)';
                     cell.style.fontWeight = '600';
                 } else {
                     cell.textContent = '—';
-                    cell.style.color = '#999';
+                    cell.style.color = 'var(--text-muted)';
                     cell.style.fontWeight = 'normal';
                 }
             });
@@ -111,7 +119,7 @@ const PayrollPage = {
         const useTE = $('#pr-use-time-entries').checked;
         $$('.pr-hours').forEach(inp => {
             inp.disabled = useTE;
-            inp.style.background = useTE ? '#f0f0f0' : '';
+            inp.style.background = useTE ? 'var(--gray-100)' : '';
         });
         if (useTE) PayrollPage._refreshTimeEntryPreview();
     },
@@ -131,7 +139,7 @@ const PayrollPage = {
         if (stubs.length === 0) { toast('Select employees', 'error'); return; }
 
         try {
-            await API.post('/payroll', {
+            const run = await API.post('/payroll', {
                 period_start: form.period_start.value,
                 period_end: form.period_end.value,
                 pay_date: form.pay_date.value,
@@ -140,7 +148,20 @@ const PayrollPage = {
             toast('Pay run created');
             closeModal();
             App.navigate('#/payroll');
-        } catch (err) { toast(err.message, 'error'); }
+            // Time left unapproved in the period was not paid; a toast is
+            // gone before it can be read, so this waits to be closed.
+            if (run.warnings && run.warnings.length) {
+                openModal('Pay run created: some time was not paid', `
+                    <ul>${run.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul>
+                    <div class="form-actions"><button class="btn btn-primary" onclick="closeModal()">OK</button></div>`);
+            }
+        } catch (err) {
+            // A refused run names every employee it could not pay; keep that
+            // on the open form, where the fix (untick, or approve time) is.
+            const box = $('#pr-error');
+            if (box) box.textContent = err.message;
+            toast(err.message, 'error');
+        }
     },
 
     async view(id) {
@@ -150,27 +171,41 @@ const PayrollPage = {
             if (!b.length) return '—';
             return b.map(x => `${escapeHtml(x.code)} ${formatCurrency(x.employee_amount)}${x.employer_amount ? ` <span style="color:var(--gray-400)">(+${formatCurrency(x.employer_amount)} ER)</span>` : ''}`).join('<br>');
         };
+        // Every amount between Gross and Net has a column, so a row adds up:
+        // "Other" is what is withheld besides income tax, SS and Medicare
+        // (Oregon's transit tax, disability and family-leave premiums) plus
+        // garnishments; reimbursements get a column when the run has any.
+        const anyReimb = run.stubs.some(s => s.reimbursements);
+        // Each Stub PDF names its employee, and the Employee column stays in
+        // view while the table scrolls sideways: the dialog opened scrolled
+        // to the first Stub PDF, with no name in sight (2.18.0 gate, macbase1
+        // NEW-3).
+        const who = (s) => s.employee_name || `Employee ${s.employee_id}`;
         let rows = run.stubs.map(s => `
             <tr>
-                <td>${escapeHtml(s.employee_name || `Employee ${s.employee_id}`)}</td>
+                <td>${escapeHtml(who(s))}</td>
                 <td class="amount">${s.hours}</td>
                 <td class="amount">${formatCurrency(s.gross_pay)}</td>
                 <td class="amount">${formatCurrency(s.federal_tax)}</td>
                 <td class="amount">${formatCurrency(s.state_tax)}</td>
                 <td class="amount">${formatCurrency(s.ss_tax)}</td>
                 <td class="amount">${formatCurrency(s.medicare_tax)}</td>
+                <td class="amount" title="${escapeHtml(`State taxes besides income tax ${formatCurrency(s.state_other_employee || 0)} · Garnishments ${formatCurrency(s.garnishments || 0)}`)}">${formatCurrency((s.state_other_employee || 0) + (s.garnishments || 0))}</td>
                 <td style="font-size:12px;">${benefitCell(s)}</td>
                 <td class="amount">${formatCurrency((s.pretax_deductions || 0) + (s.posttax_deductions || 0))}</td>
+                ${anyReimb ? `<td class="amount">${formatCurrency(s.reimbursements || 0)}</td>` : ''}
                 <td class="amount" style="font-weight:700;">${formatCurrency(s.net_pay)}</td>
+                <td class="actions"><button class="btn btn-sm btn-secondary" aria-label="${escapeHtml(`Stub PDF — ${who(s)}`)}" title="Printable pay stub (PDF)" onclick="window.open('/api/payroll/${run.id}/paystub/${s.id}','_blank')">Stub PDF — ${escapeHtml(who(s))}</button></td>
             </tr>`).join('');
 
         openModal(`Pay Run: ${run.period_start} to ${run.period_end}`, `
-            <div class="table-container"><table>
+            <div class="table-container table-container--scroll"><table class="pay-run-table">
                 <thead><tr><th scope="col">Employee</th><th scope="col" class="amount">Hours</th><th scope="col" class="amount">Gross</th>
                 <th scope="col" class="amount">Fed</th><th scope="col" class="amount">State</th><th scope="col" class="amount">SS</th>
-                <th scope="col" class="amount">Med</th><th scope="col">Benefits (EE, +ER)</th><th scope="col" class="amount">Deductions</th><th scope="col" class="amount">Net</th></tr></thead>
+                <th scope="col" class="amount">Med</th><th scope="col" class="amount">Other</th><th scope="col">Benefits (EE, +ER)</th><th scope="col" class="amount">Deductions</th>${anyReimb ? '<th scope="col" class="amount">+ Reimb.</th>' : ''}<th scope="col" class="amount">Net</th><th scope="col">Stub</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table></div>
+            <p style="font-size:11px;color:var(--gray-500);margin:4px 0 8px;">Other: state taxes withheld besides income tax (disability, family leave, transit) and garnishments. Gross − Fed − State − SS − Med − Other − Deductions${anyReimb ? ' + Reimb.' : ''} = Net.</p>
             <div class="invoice-totals">
                 <div class="total-row"><span class="label">Total Gross</span><span class="value">${formatCurrency(run.total_gross)}</span></div>
                 <div class="total-row"><span class="label">Total Taxes</span><span class="value">${formatCurrency(run.total_taxes)}</span></div>
@@ -181,11 +216,18 @@ const PayrollPage = {
             </div>
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
-            </div>`);
+            </div>`, { wide: true });
     },
 
     async process(id) {
         if (!confirm('Process this pay run? This will create journal entries.')) return;
+        // Net pay leaves the bank account (1000) when the run is processed;
+        // ask first if that would overdraw it, as expenses and Pay Bills do
+        // (macbase1: payroll took Checking to -$2,986.90 without a word).
+        try {
+            const run = await API.get(`/payroll/${id}`);
+            if (!(await Overdraft.confirm(null, Number(run.total_net) || 0, '1000', 'Process'))) return;
+        } catch (e) { /* a failed lookup never blocks processing */ }
         try {
             await API.post(`/payroll/${id}/process`);
             toast('Payroll processed');

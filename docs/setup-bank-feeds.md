@@ -29,14 +29,27 @@ Synced transactions land in the same review flow as OFX/CSV imports:
 - **Duplicates are skipped automatically** (dedup on the bridge's stable
   transaction id, same mechanism as OFX FITIDs) — syncing twice never
   double-imports.
-- **Bank rules apply on arrival** — anything your rules match is
-  auto-categorized, the rest waits in the register as unmatched.
+- **Matches are found on arrival** — a line whose amount the ledger already
+  has (same side, within five days) is linked to that posting and cleared.
+- **Bank rules apply on arrival** — anything your rules match gets a suggested
+  category. Nothing posts by itself: the account's *To review* list is where
+  you **Add** a line (posts it with the category), **Match** it, or **Exclude**
+  it; *Add all categorised* posts the rule-suggested ones in one click.
 - Pending transactions are ignored until they post (their ids aren't
   stable before that).
 
 The first sync reaches back roughly three months; every later sync re-checks a 7-day
 overlap window before your last sync so late-posting transactions are
 never missed.
+
+**Older history.** **Fetch older history…** reaches back 3, 6 or 12 months
+(the API takes `POST /api/simplefin/sync {"history_months": N}`, up to 24).
+How much there is depends on your SimpleFIN provider: the SimpleFIN Bridge
+keeps about 90 days, while others, such as BankSync, keep up to a year. The
+Bridge refuses a request spanning more than 90 days, so SlowBooks asks for
+the range in slices of 85 days, oldest first; transactions already imported
+are skipped, and the rest wait in *To review* like any other line, where
+anything from before your books began can be excluded.
 
 ## Trying it without a bank
 

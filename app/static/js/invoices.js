@@ -3,18 +3,179 @@
  * texture and all. We use an HTML table instead of a custom grid;
  * auto-fill on item selection lives in itemSelected() below.
  */
+
+/**
+ * Line arithmetic shared by every sales form — invoice, sales receipt,
+ * estimate, credit memo and recurring schedule. A line rounds to the cent
+ * the way the server stores it (accounting._q, half up), tax is taken on
+ * the rounded taxable lines, and the total is their sum, so the figure a
+ * form shows is the figure that posts. The credit memo and recurring forms
+ * had no arithmetic at all: picking an item filled no price, nothing showed
+ * a total, and $0.00 documents were saved (2.17.3 exploratory, W-M1 / F14).
+ */
+const SalesLines = {
+    // Half up to the cent. Shifting by exponent avoids binary drift:
+    // 1.005 * 100 is 100.49999... in floating point, Number('1.005e2') is 100.5.
+    cents(x) {
+        const n = Number(x) || 0;
+        const a = Math.abs(n);
+        const shifted = Number(`${a}e2`);
+        const r = Number.isFinite(shifted) ? Math.round(shifted) : Math.round(a * 100);
+        return (n < 0 ? -1 : 1) * Number(`${r}e-2`);
+    },
+
+    // Fill a line from the item picked in its .line-item select: description,
+    // price and the item's tax flag. Returns the item, or null for "--".
+    fillFromItem(row, items) {
+        const itemId = row.querySelector('.line-item')?.value;
+        const item = (items || []).find(i => i.id == itemId);
+        if (!item) return null;
+        const desc = row.querySelector('.line-desc');
+        if (desc) desc.value = item.description || item.name;
+        const rate = row.querySelector('.line-rate');
+        if (rate) {
+            rate.value = item.rate;
+            // A Discount item's price is entered negative (-10.00); any other
+            // item gets back the floor its box had.
+            if (item.is_discount && rate.dataset) {
+                if (rate.dataset.floor === undefined) rate.dataset.floor = rate.getAttribute('min') || '';
+                rate.removeAttribute('min');
+                rate.placeholder = '-10.00';
+            } else if (rate.dataset && rate.dataset.floor !== undefined) {
+                if (rate.dataset.floor) rate.setAttribute('min', rate.dataset.floor);
+                delete rate.dataset.floor;
+                rate.placeholder = '';
+            }
+        }
+        const tax = row.querySelector('.line-taxable');
+        if (tax) {
+            // An exempt customer's boxes are held off (TaxExempt); remember
+            // the item's flag for when the form switches back.
+            if (tax.disabled) tax.dataset.was = item.is_taxable !== false ? '1' : '0';
+            else tax.checked = item.is_taxable !== false;
+        }
+        return item;
+    },
+
+    // Recompute every row of `tbody` and return {subtotal, tax, total}. A
+    // row without a Tax box counts as taxable, as it does on the server.
+    totals(tbody, taxPct, currency) {
+        let subtotal = 0, taxable = 0;
+        (tbody ? [...tbody.querySelectorAll('tr')] : []).forEach(row => {
+            const qty = parseFloat(row.querySelector('.line-qty')?.value) || 0;
+            const rate = parseFloat(row.querySelector('.line-rate')?.value) || 0;
+            const amount = SalesLines.cents(qty * rate);
+            subtotal += amount;
+            if (row.querySelector('.line-taxable')?.checked !== false) taxable += amount;
+            const cell = row.querySelector('.line-amount');
+            if (cell) cell.textContent = SalesLines.money(amount, currency);
+        });
+        subtotal = SalesLines.cents(subtotal);
+        const tax = SalesLines.tax(SalesLines.cents(taxable), taxPct);
+        return { subtotal, tax, total: SalesLines.cents(subtotal + tax) };
+    },
+
+    // Tax on an amount at a percent typed on a form, to the cent, half up:
+    // the figure the server stores. It is worked in whole cents and
+    // ten-thousandths of a percent (a rate keeps four places), because a
+    // binary fraction can put a half cent on the wrong side: $175,800.00
+    // at 1.0875% is $1,911.825, so $1,911.83, and floating point showed
+    // $1,911.82; a purchase order showed $8.41 for 8.25% of $102.00.
+    tax(amount, taxPct) {
+        const cents = Math.round((Number(amount) || 0) * 100);
+        const units = SalesLines.percentUnits(taxPct);
+        const product = Math.abs(cents * units) + 500000;
+        if (!Number.isSafeInteger(product)) {
+            return SalesLines.cents(SalesLines.cents(amount) * (parseFloat(taxPct) || 0) / 100);
+        }
+        const whole = (product - product % 1000000) / 1000000;
+        return ((cents < 0) !== (units < 0) && whole ? -whole : whole) / 100;
+    },
+
+    // A typed percent in ten-thousandths ("8.875" is 88750), read from its
+    // digits rather than through a binary fraction. A fifth place rounds
+    // half up, as the server rounds the rate it is sent.
+    percentUnits(taxPct) {
+        const text = String(taxPct ?? '').trim();
+        const m = /^(\d*)(?:\.(\d*))?$/.exec(text);
+        if (!m || !(m[1] || m[2])) return Math.round((parseFloat(text) || 0) * 10000);
+        const places = ((m[2] || '') + '00000').slice(0, 5);
+        return Number(m[1] || 0) * 10000 + Number(places.slice(0, 4)) + (places[4] >= '5' ? 1 : 0);
+    },
+
+    // Write totals into the form's Subtotal / Tax / Total cells (by id).
+    show(t, ids, currency) {
+        const put = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = SalesLines.money(v, currency); };
+        put(ids[0], t.subtotal); put(ids[1], t.tax); put(ids[2], t.total);
+    },
+
+    // Money as the document prints it: dollars in the home currency; a
+    // foreign document carries its ISO code ("EUR 850.00"), so a euro
+    // invoice never reads as $850.00 (W-M2). Matches the PDF's filter.
+    money(amount, currency, places = 2) {
+        const home = ((typeof App !== 'undefined' && App.settings && App.settings.home_currency) || 'USD').toUpperCase();
+        const code = String(currency || '').trim().toUpperCase();
+        const n = Number(amount) || 0;
+        if (!code || code === home) {
+            if (places === 2) return formatCurrency(amount);
+            return new Intl.NumberFormat('en-US', { style: 'currency', currency: home, minimumFractionDigits: 2, maximumFractionDigits: places }).format(n);
+        }
+        const digits = n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: places });
+        return `${code} ${digits}`;
+    },
+
+    // A unit price: two places, or up to four when it has them ($0.045).
+    rate(value, currency) { return SalesLines.money(value, currency, 4); },
+
+    // A document's tax rate (a fraction) as the percent it prints: at least
+    // two places, up to the four a rate keeps ("8.875", "8.25", "7.00"), as
+    // the PDFs print it (pdf_service's tax_percent filter).
+    taxPercent(fraction) {
+        return ((parseFloat(fraction) || 0) * 100).toFixed(4).replace(/0{1,2}$/, '');
+    },
+
+    // Send a sales document. One that adds up to $0.00 comes back refused
+    // (409, code "zero_total") unless the person says it is meant to be:
+    // no-charge warranty work is a real invoice, a form that filled in no
+    // price was the accident (2.17.3 exploratory, W-M1 / F14). Ask the
+    // server's question ("This invoice adds up to $0.00. Save it anyway?")
+    // and on yes send it once more with allow_zero_total. `send(allow)`
+    // makes the request; resolves to its answer, or null for no.
+    async sendAllowingZero(send) {
+        try {
+            return await send(false);
+        } catch (err) {
+            if (!(err && err.status === 409 && err.detail && err.detail.code === 'zero_total')) throw err;
+            if (!confirm(err.detail.question || err.message)) return null;
+            return send(true);
+        }
+    },
+};
+window.SalesLines = SalesLines;
+
 const InvoicesPage = {
     // The document's literal face, as the PDF prints it: a flagged pledge is a
     // PLEDGE, everything else an INVOICE regardless of company vocabulary.
     docLabel(inv) { return inv.is_pledge ? 'Pledge' : 'Invoice'; }, // literal face
 
+    showAll() {
+        InvoicesPage._showAll = true;
+        App.navigate(location.hash || '#/invoices');
+    },
+
     async render() {
         // Sales receipts are invoices under the hood; they get their own
         // page, so keep them out of this list.
-        const invoices = await API.get('/invoices?is_sales_receipt=false');
+        // The newest 500, and a way to see the rest (issue #191).
+        const all = InvoicesPage._showAll;
+        InvoicesPage._showAll = false;
+        const rows = all ? await fetchAllPages('/invoices?is_sales_receipt=false')
+            : await API.get('/invoices?is_sales_receipt=false&limit=501');
+        const invoices = all ? rows : rows.slice(0, 500);
         return renderListPage({
             title: T('Invoices'),
-            headerHtml: `<button class="btn btn-primary" onclick="InvoicesPage.showForm()">+ ${T('New Invoice')}</button>`,
+            headerHtml: `<button class="btn btn-primary" onclick="InvoicesPage.showForm()">+ ${T('New Invoice')}</button>`
+                + (all ? '' : listCapNote(rows, 500, 'InvoicesPage.showAll()', Terms.text('invoices'))),
             filter: {
                 id: 'inv-status-filter',
                 rowSelector: '.inv-row',
@@ -31,8 +192,8 @@ const InvoicesPage = {
                     <td>${formatDate(inv.date)}</td>
                     <td>${formatDate(inv.due_date)}</td>
                     <td>${statusBadge(inv.status)}</td>
-                    <td class="amount">${formatCurrency(inv.total)}</td>
-                    <td class="amount">${formatCurrency(inv.balance_due)}</td>
+                    <td class="amount">${SalesLines.money(inv.total, inv.currency)}</td>
+                    <td class="amount">${SalesLines.money(inv.balance_due, inv.currency)}</td>
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="InvoicesPage.view(${inv.id})">View</button>
                         <button class="btn btn-sm btn-secondary" onclick="InvoicesPage.showForm(${inv.id})">Edit</button>
@@ -75,13 +236,18 @@ const InvoicesPage = {
     },
 
     async view(id) {
-        const inv = await API.get(`/invoices/${id}`);
+        const [inv, settings] = await Promise.all([
+            API.get(`/invoices/${id}`),
+            API.get('/settings'),
+        ]);
+        const money = (v) => SalesLines.money(v, inv.currency);
         let linesHtml = inv.lines.map(l =>
             `<tr><td>${escapeHtml(l.description || '')}</td><td class="amount">${l.quantity}</td>
-             <td class="amount">${formatCurrency(l.rate)}</td><td class="amount">${formatCurrency(l.amount)}</td></tr>`
+             <td class="amount">${SalesLines.rate(l.rate, inv.currency)}</td><td class="amount">${money(l.amount)}</td></tr>`
         ).join('');
 
         openModal(`${T('Invoice')} #${inv.invoice_number}`, `
+            ${InvoicesPage.logoOptionHtml(settings)}
             <div style="margin-bottom:12px;">
                 <strong>${T('Customer')}:</strong> ${escapeHtml(inv.customer_name || '')}<br>
                 <strong>Date:</strong> ${formatDate(inv.date)}<br>
@@ -94,24 +260,25 @@ const InvoicesPage = {
                 <tbody>${linesHtml}</tbody>
             </table></div>
             <div class="invoice-totals">
-                <div class="total-row"><span class="label">Subtotal</span><span class="value">${formatCurrency(inv.subtotal)}</span></div>
-                <div class="total-row"><span class="label">Tax</span><span class="value">${formatCurrency(inv.tax_amount)}</span></div>
-                <div class="total-row grand-total"><span class="label">Total</span><span class="value">${formatCurrency(inv.total)}</span></div>
-                <div class="total-row"><span class="label">Paid</span><span class="value">${formatCurrency(inv.amount_paid)}</span></div>
-                <div class="total-row grand-total"><span class="label">Balance Due</span><span class="value">${formatCurrency(inv.balance_due)}</span></div>
+                <div class="total-row"><span class="label">Subtotal</span><span class="value">${money(inv.subtotal)}</span></div>
+                <div class="total-row"><span class="label">Tax</span><span class="value">${money(inv.tax_amount)}</span></div>
+                <div class="total-row grand-total"><span class="label">Total</span><span class="value">${money(inv.total)}</span></div>
+                <div class="total-row"><span class="label">Paid</span><span class="value">${money(inv.amount_paid)}</span></div>
+                <div class="total-row grand-total"><span class="label">Balance Due</span><span class="value">${money(inv.balance_due)}</span></div>
             </div>
             ${inv.notes ? `<p style="margin-top:12px;color:var(--gray-500);">${escapeHtml(inv.notes)}</p>` : ''}
+            <div id="inv-credit-note"></div>
             <div style="margin-top:16px; border-top:1px solid var(--gray-200); padding-top:12px;">
                 <h3 style="font-size:13px; margin-bottom:8px;">Attachments</h3>
                 <div id="inv-attachments-list" style="margin-bottom:8px; font-size:11px;">Loading...</div>
-                <input type="file" id="inv-attach-file" style="font-size:11px;">
+                <input type="file" id="inv-attach-file" aria-label="File to attach" style="font-size:11px;">
                 <button class="btn btn-sm btn-secondary" onclick="InvoicesPage.uploadAttachment(${inv.id})" style="margin-left:4px;">Upload</button>
             </div>
             <div class="form-actions">
-                <button class="btn btn-secondary" onclick="window.open('/api/invoices/${inv.id}/pdf','_blank')">Save PDF</button>
-                <button class="btn btn-secondary" onclick="window.open('/api/invoices/${inv.id}/print-preview','_blank')">Print</button>
+                <button class="btn btn-secondary" data-invoice-logo-action onclick="window.open('/api/invoices/${inv.id}/pdf','_blank')">Save PDF</button>
+                <button class="btn btn-secondary" data-invoice-logo-action onclick="window.open('/api/invoices/${inv.id}/print-preview','_blank')">Print</button>
                 <button class="btn btn-secondary" onclick="InvoicesPage.duplicate(${inv.id})">Duplicate</button>
-                <button class="btn btn-secondary" onclick="InvoicesPage.emailInvoice(${inv.id})">Email ${T('Invoice')}</button>
+                <button class="btn btn-secondary" data-invoice-logo-action onclick="InvoicesPage.emailInvoice(${inv.id})">Email ${T('Invoice')}</button>
                 <button class="btn btn-secondary" onclick="InvoicesPage.copyPaymentLink(${inv.id})">Copy Payment Link</button>
                 ${inv.checkout_provider && inv.status !== 'paid' && inv.status !== 'void' ? `<button class="btn btn-secondary" onclick="InvoicesPage.checkPaymentStatus(${inv.id}, '${inv.checkout_provider}')">Check Payment Status</button>` : ''}
                 ${inv.status === 'draft' ? `<button class="btn btn-primary" onclick="InvoicesPage.markSent(${inv.id})">Mark Sent</button>` : ''}
@@ -119,6 +286,165 @@ const InvoicesPage = {
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
         InvoicesPage.loadAttachments('invoice', inv.id);
+        InvoicesPage.loadCreditNote(inv);
+    },
+
+    // Credit the customer already holds — the unapplied part of a payment,
+    // a credit memo — can be applied to this invoice from here. The apply
+    // existed (Receive Payments, the payment, the customer page), but the
+    // invoice, where the balance is looked at, had no way to it (found
+    // integrating the 2.17.3 exploratory fixes). Only credit in the
+    // invoice's own currency can pay it.
+    _usableCredits(inv, credits) {
+        if (!credits || !Array.isArray(credits.credits)) return [];
+        const code = String(inv.currency || credits.home_currency || '').toUpperCase();
+        return credits.credits.filter(c =>
+            String(c.currency || '').toUpperCase() === code && (parseFloat(c.available) || 0) > 0);
+    },
+
+    async loadCreditNote(inv) {
+        const el = $('#inv-credit-note');
+        if (!el || inv.status === 'void' || !((parseFloat(inv.balance_due) || 0) > 0)) return;
+        let credits;
+        try { credits = await API.get(`/customers/${inv.customer_id}/credits`); } catch (e) { return; }
+        const usable = InvoicesPage._usableCredits(inv, credits);
+        if (!usable.length) return;
+        const held = usable.reduce((sum, c) => sum + PaymentsPage._cents(c.available), 0) / 100;
+        el.innerHTML = `<div style="margin:12px 0; padding:8px 10px; border-radius:4px; background:#fff4d6; color:#7a5500;">
+                ${escapeHtml(Terms.text(`This customer has ${SalesLines.money(held, inv.currency)} in credit not applied to an invoice yet.`))}
+                <button type="button" class="btn btn-sm btn-primary" style="margin-left:8px;" onclick="InvoicesPage.showApplyCredit(${inv.id})">Apply Credit</button>
+            </div>`;
+    },
+
+    // Each usable credit with an amount to take from it, filled oldest first
+    // up to what the invoice still owes; any of it can be changed.
+    async showApplyCredit(invoiceId) {
+        let inv, credits;
+        try {
+            inv = await API.get(`/invoices/${invoiceId}`);
+            credits = await API.get(`/customers/${inv.customer_id}/credits`);
+        } catch (err) { toast(err.message, 'error'); return; }
+        const usable = InvoicesPage._usableCredits(inv, credits);
+        const cents = PaymentsPage._cents;
+        const money = (v) => SalesLines.money(v, inv.currency);
+        const due = cents(inv.balance_due);
+        InvoicesPage._applying = { due, currency: inv.currency };
+        let left = due;
+        const rows = usable.map(c => {
+            const take = Math.max(0, Math.min(left, cents(c.available)));
+            left -= take;
+            const label = PaymentsPage._creditLabel(c);
+            return `<tr>
+                <td>${escapeHtml(label)}</td>
+                <td class="amount">${money(c.available)}</td>
+                <td><input class="credit-take" data-kind="${escapeHtml(c.kind)}" data-id="${c.id}" data-max="${c.available}"
+                    type="number" step="0.01" min="0" max="${c.available}" value="${take > 0 ? (take / 100).toFixed(2) : ''}"
+                    aria-label="Apply from ${escapeHtml(label)}" oninput="InvoicesPage._applyCreditStatus()" style="width:100px;"></td>
+            </tr>`;
+        }).join('');
+        openModal(`Apply Credit to ${T('Invoice')} #${inv.invoice_number}`, `
+            <form onsubmit="InvoicesPage.saveApplyCredit(event, ${inv.id})">
+                <p style="margin-bottom:8px;">${escapeHtml(inv.customer_name || '')} owes <strong>${money(inv.balance_due)}</strong> on this ${T('invoice')}.</p>
+                ${usable.length ? `<div class="table-container"><table><thead><tr>
+                    <th scope="col">Credit</th><th scope="col" class="amount">Available</th><th scope="col" class="amount">Apply</th>
+                </tr></thead><tbody>${rows}</tbody></table></div>
+                <div id="apply-credit-status" style="margin-top:8px; font-size:13px;"></div>`
+                : `<p style="color:var(--gray-400);">${Terms.text('This customer has no credit in this currency to apply.')}</p>`}
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="InvoicesPage.view(${inv.id})">Cancel</button>
+                    ${usable.length ? '<button type="submit" class="btn btn-primary">Apply Credit</button>' : ''}
+                </div>
+            </form>`);
+        InvoicesPage._applyCreditStatus();
+    },
+
+    // What the amounts come to against what the invoice owes, as they are typed.
+    _applyCreditStatus() {
+        const el = $('#apply-credit-status');
+        const state = InvoicesPage._applying;
+        if (!el || !state) return;
+        const money = (c) => SalesLines.money(c / 100, state.currency);
+        let used = 0, over = false;
+        $$('.credit-take').forEach(input => {
+            const c = PaymentsPage._cents(input.value);
+            used += c;
+            if (c > PaymentsPage._cents(input.dataset.max)) over = true;
+        });
+        const bad = over || used > state.due;
+        el.style.color = bad ? 'var(--text-danger)' : 'var(--gray-600)';
+        el.textContent = over
+            ? 'One of the amounts is more than that credit has left.'
+            : used > state.due
+                ? `That is ${money(used - state.due)} more than the ${T('invoice')} owes.`
+                : `Applying ${money(used)}; ${money(state.due - used)} still due.`;
+    },
+
+    async saveApplyCredit(e, invoiceId) {
+        e.preventDefault();
+        const picks = [];
+        $$('.credit-take').forEach(input => {
+            const c = PaymentsPage._cents(input.value);
+            if (c > 0) picks.push({ kind: input.dataset.kind, id: parseInt(input.dataset.id), amount: c / 100 });
+        });
+        if (!picks.length) { toast('Enter an amount to apply', 'error'); return; }
+        try {
+            for (const p of picks) {
+                await PaymentsPage.applyCredit(p.kind, p.id, [{ invoice_id: invoiceId, amount: p.amount }]);
+            }
+            toast('Credit applied');
+            closeModal();
+            App.navigate(location.hash);
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    logoOptionHtml(settings) {
+        if (!settings.company_logo_path) return '';
+        const enabled = settings.invoice_show_logo !== 'false';
+        // A company setting: the server takes Settings changes from an
+        // administrator only, so another sign-in sees it locked, and why.
+        // Marked data-admin as well, for a view opened before the role is
+        // known (App.adminPass locks it then).
+        const canChange = !App.role || App.role === 'admin';
+        return `<div class="invoice-logo-option">
+            <img class="invoice-logo-preview" src="${escapeHtml(settings.company_logo_path)}" alt="Company logo" ${enabled ? '' : 'hidden'}>
+            <div>
+                <label for="inv-show-logo">
+                    <input id="inv-show-logo" type="checkbox" data-admin ${enabled ? 'checked' : ''} ${canChange ? '' : 'disabled'} onchange="InvoicesPage.setLogoOption(this)">
+                    Show company logo on invoices
+                </label>
+                <div class="invoice-logo-help">${canChange
+                    ? 'Applies to all invoices: PDF, Print, and emailed attachments. Changes save immediately.'
+                    : 'Applies to all invoices. Only an administrator can change this, in Settings.'}</div>
+                <div class="invoice-logo-status" role="status" aria-live="polite"></div>
+            </div>
+        </div>`;
+    },
+
+    async setLogoOption(input) {
+        const enabled = input.checked;
+        const option = input.closest('.invoice-logo-option');
+        const preview = option.querySelector('.invoice-logo-preview');
+        const status = option.querySelector('.invoice-logo-status');
+        // Keep document actions from using the previous preference while saving.
+        const actions = Array.from(input.closest('#modal-body').querySelectorAll('[data-invoice-logo-action]'))
+            .map(button => ({ button, disabled: button.disabled }));
+        input.disabled = true;
+        actions.forEach(({ button }) => { button.disabled = true; });
+        status.classList.remove('invoice-logo-error');
+        status.textContent = 'Saving logo option…';
+        try {
+            await API.put('/settings', { invoice_show_logo: String(enabled) });
+            App.settings.invoice_show_logo = String(enabled);
+            preview.hidden = !enabled;
+            status.textContent = 'Saved for all invoices.';
+        } catch (err) {
+            input.checked = !enabled;
+            status.classList.add('invoice-logo-error');
+            status.textContent = `Could not save logo option: ${err.message}`;
+        } finally {
+            input.disabled = false;
+            actions.forEach(({ button, disabled }) => { button.disabled = disabled; });
+        }
     },
 
     async void(id) {
@@ -142,7 +468,9 @@ const InvoicesPage = {
 
     async duplicate(id) {
         try {
-            const inv = await API.post(`/invoices/${id}/duplicate`);
+            const inv = await SalesLines.sendAllowingZero(allow =>
+                API.post(`/invoices/${id}/duplicate`, allow ? { allow_zero_total: true } : undefined));
+            if (!inv) return;
             toast(`Duplicated as ${T('Invoice')} #${inv.invoice_number}`);
             closeModal();
             App.navigate('#/invoices');
@@ -181,7 +509,11 @@ const InvoicesPage = {
 
     async emailInvoice(id) {
         const inv = await API.get(`/invoices/${id}`);
-        const email = inv.customer_email || '';
+        // The invoice has no address of its own; send to the customer's. It
+        // read a field the invoice never had, so the box was always empty (W-L3).
+        let email = '';
+        try { email = (await API.get(`/customers/${inv.customer_id}`)).email || ''; }
+        catch (e) { /* the user types it */ }
         openModal(Terms.text('Email Invoice'), `
             <form onsubmit="InvoicesPage.sendEmail(event, ${id})">
                 <div class="form-grid">
@@ -266,6 +598,13 @@ const InvoicesPage = {
             lines: [],
         };
         if (id) inv = await API.get(`/invoices/${id}`);
+        // A tax amount with no rate behind it (QuickBooks Online's, when its
+        // tax lines don't make one rate) stays as it is when the invoice is
+        // saved, as the server keeps it, until a rate is entered.
+        InvoicesPage._keptTax = id && !(parseFloat(inv.tax_rate) > 0) && parseFloat(inv.tax_amount) > 0
+            ? parseFloat(inv.tax_amount) : null;
+        // what the invoice owed before this edit, for the credit-limit check
+        InvoicesPage._editing = id ? { total: parseFloat(inv.total) || 0, paid: parseFloat(inv.amount_paid) || 0 } : null;
         const classGroup = await classFormGroupHtml(inv.class_id);
         const jobGroup = await jobFormGroupHtml(inv.job_id, 'inv-customer-select');
         // Nonprofit: a pledge prints as one; program fees and rentals stay invoices
@@ -280,12 +619,13 @@ const InvoicesPage = {
 
         openModal(Terms.text(id ? 'Edit Invoice' : 'New Invoice'), `
             <form id="invoice-form" onsubmit="InvoicesPage.save(event, ${id})">
+                ${InvoicesPage.logoOptionHtml(settings)}
                 <div class="form-grid">
                     <div class="form-group"><label>${T('Customer')} *</label>
                         <select name="customer_id" id="inv-customer-select" required onchange="InvoicesPage.customerSelected(this.value)"><option value="">Select...</option><option value="__new__">+ ${T('New Customer')}</option>${custOpts}</select>
                         <div id="inv-new-customer-form" style="display:none; margin-top:8px; padding:8px; border:1px solid var(--gray-300); border-radius:4px; background:var(--primary-light);">
                             <div style="font-weight:700; font-size:11px; margin-bottom:6px;">Quick Add ${T('Customer')}</div>
-                            <input id="inv-new-cust-name" placeholder="Name *" style="width:100%; margin-bottom:4px; padding:4px 8px; border:1px solid var(--gray-300); border-radius:4px;">
+                            <input id="inv-new-cust-name" placeholder="Name *" aria-label="${T('Customer')} name" aria-required="true" style="width:100%; margin-bottom:4px; padding:4px 8px; border:1px solid var(--gray-300); border-radius:4px;">
                             <input id="inv-new-cust-email" placeholder="Email" style="width:100%; margin-bottom:4px; padding:4px 8px; border:1px solid var(--gray-300); border-radius:4px;">
                             <input id="inv-new-cust-phone" placeholder="Phone" style="width:100%; margin-bottom:4px; padding:4px 8px; border:1px solid var(--gray-300); border-radius:4px;">
                             <div style="display:flex; gap:6px;">
@@ -310,8 +650,9 @@ const InvoicesPage = {
                     ${classGroup}${jobGroup}${pledgeGroup}
                     ${currencyFormGroupsHtml(inv.currency, inv.exchange_rate)}
                     <div class="form-group"><label>Tax Rate (%)</label>
-                        <input name="tax_rate" type="number" step="0.01" value="${(inv.tax_rate * 100) || 0}"
-                            oninput="InvoicesPage.recalc()"></div>
+                        <input name="tax_rate" type="number" step="0.0001" value="${+((inv.tax_rate || 0) * 100).toFixed(4)}"
+                            oninput="InvoicesPage.recalc()">
+                        ${InvoicesPage._keptTax != null ? `<div class="hint" id="inv-kept-tax">Tax stays at ${formatCurrency(InvoicesPage._keptTax)}, the amount it came in with. Enter a rate to work it out instead, or untick Tax on the lines for none.</div>` : ''}</div>
                 </div>
                 <h3 style="margin:16px 0 8px; font-size:14px; color:var(--gray-600);">Line Items</h3>
                 <table class="line-items-table">
@@ -333,10 +674,12 @@ const InvoicesPage = {
                     <textarea name="notes">${escapeHtml(inv.notes || '')}</textarea></div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary">${id ? 'Update' : 'Create'} ${T('Invoice')}</button>
+                    <button type="submit" class="btn btn-primary" data-invoice-logo-action>${id ? 'Update' : 'Create'} ${T('Invoice')}</button>
                 </div>
             </form>`);
         if (!id && inv.customer_id) InvoicesPage.customerSelected(inv.customer_id);
+        // the totals carry the document's currency; follow a change of it
+        $('#invoice-form [name="currency"]')?.addEventListener('change', () => InvoicesPage.recalc());
         InvoicesPage.recalc();
         // Populate due_date for fresh invoices that don't already have one.
         if (!inv.due_date) InvoicesPage._recomputeDueDate();
@@ -385,6 +728,9 @@ const InvoicesPage = {
         $('#inv-customer-select').value = '';
     },
 
+    // A line with a negative price is a discount a QuickBooks Online invoice
+    // came in with (a discount item, or a negative line of its own): its
+    // price box takes a negative number, so the invoice saves as it is.
     lineRowHtml(idx, line, items) {
         const itemOpts = items.map(i => `<option value="${i.id}" ${line.item_id==i.id?'selected':''}>${escapeHtml(i.name)}</option>`).join('');
         // The form has no job / class / cost-code cells, but a line may carry
@@ -396,7 +742,7 @@ const InvoicesPage = {
                 <option value="">--</option>${itemOpts}</select></td>
             <td><input class="line-desc" value="${escapeHtml(line.description || '')}"></td>
             <td><input class="line-qty" type="number" step="0.01" value="${line.quantity || 1}" oninput="InvoicesPage.recalc()"></td>
-            <td><input class="line-rate" type="number" step="0.01" value="${line.rate || 0}" oninput="InvoicesPage.recalc()"></td>
+            <td><input class="line-rate" type="number" step="0.0001" ${Number(line.rate) < 0 || items.some(i => i.is_discount && i.id == line.item_id) ? '' : 'min="0" '}value="${Number(line.rate) || 0}" oninput="InvoicesPage.recalc()"></td>
             <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" ${line.is_taxable === false ? '' : 'checked'} onchange="InvoicesPage.recalc()"></td>
             <td class="col-amount line-amount">${formatCurrency((line.quantity||1) * (line.rate||0))}</td>
             <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="InvoicesPage.removeLine(${idx})">X</button></td>
@@ -418,15 +764,7 @@ const InvoicesPage = {
 
     itemSelected(idx) {
         const row = $(`[data-line="${idx}"]`);
-        const itemId = row.querySelector('.line-item').value;
-        const item = InvoicesPage._items.find(i => i.id == itemId);
-        if (item) {
-            row.querySelector('.line-desc').value = item.description || item.name;
-            row.querySelector('.line-rate').value = item.rate;
-            const tax = row.querySelector('.line-taxable');
-            if (tax) tax.checked = item.is_taxable !== false;
-            InvoicesPage.recalc();
-        }
+        if (row && SalesLines.fillFromItem(row, InvoicesPage._items)) InvoicesPage.recalc();
     },
 
     recalc() {
@@ -510,12 +848,48 @@ const InvoicesPage = {
             lines,
         };
 
+        // Past the customer's credit limit? Say so, and let the user decide.
+        const total = InvoicesPage.recalc().total;
+        const before = InvoicesPage._editing;
+        if (!before || total > before.total) {
+            const customer = InvoicesPage._customers.find(c => c.id == data.customer_id);
+            const owed = (total - (before ? before.paid : 0)) * (data.exchange_rate || 1);
+            if (!(await InvoicesPage.creditLimitOk(customer, owed, id))) return;
+        }
+
         try {
-            if (id) { await API.put(`/invoices/${id}`, data); toast(Terms.text('Invoice updated')); }
-            else { await API.post('/invoices', data); toast(Terms.text('Invoice created')); }
+            const saved = await SalesLines.sendAllowingZero(allow => {
+                const body = allow ? { ...data, allow_zero_total: true } : data;
+                return id ? API.put(`/invoices/${id}`, body) : API.post('/invoices', body);
+            });
+            if (!saved) return; // $0.00 and the user said no: the form stays open
+            toast(Terms.text(id ? 'Invoice updated' : 'Invoice created'));
             closeModal();
             App.navigate(location.hash);
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // The customer's credit limit, as a warning the user can pass: an invoice
+    // that takes them past it asks first. A $512.13 invoice went to a
+    // customer with a $500 limit without a word (2.17.3 exploratory, S-b).
+    // What they owe is their open invoices' balances in home dollars, the
+    // invoice being edited left out (its new amount is `owed`). Returns true
+    // to go ahead; a failure to look is not a reason to stop.
+    async creditLimitOk(customer, owed, editingId = null) {
+        const limit = parseFloat(customer && customer.credit_limit);
+        if (!customer || !(limit > 0)) return true;
+        let open = 0;
+        try {
+            const invoices = await fetchAllPages(`/invoices?customer_id=${encodeURIComponent(customer.id)}&open_only=true`);
+            invoices.forEach(i => {
+                if (i.status === 'void' || (editingId && String(i.id) === String(editingId))) return;
+                open += (parseFloat(i.balance_due) || 0) * (parseFloat(i.exchange_rate) || 1);
+            });
+        } catch (e) { return true; }
+        const after = SalesLines.cents(open + (Number(owed) || 0));
+        if (after <= limit) return true;
+        return confirm(`${customer.name}'s credit limit is ${formatCurrency(limit)}. `
+            + `With this ${T('invoice')} they would owe ${formatCurrency(after)}. Save it anyway?`);
     },
 
     async loadAttachments(entityType, entityId) {
@@ -527,10 +901,11 @@ const InvoicesPage = {
                 el.innerHTML = '<span style="color:var(--text-muted);">No attachments</span>';
             } else {
                 el.innerHTML = attachments.map(a =>
-                    `<div style="display:flex; align-items:center; gap:8px; padding:2px 0;">
-                        <a href="/api/attachments/download/${a.id}" target="_blank">${escapeHtml(a.filename)}</a>
-                        <span style="color:var(--gray-400);">(${(a.file_size/1024).toFixed(1)} KB)</span>
+                    `<div style="display:flex; flex-wrap:wrap; align-items:center; gap:0 8px; padding:2px 0;">
+                        ${a.missing ? `<span>${escapeHtml(a.filename)}</span>` : `<a href="/api/attachments/download/${a.id}" target="_blank">${escapeHtml(a.filename)}</a>`}
+                        ${a.file_size == null ? '' : `<span style="color:var(--gray-400);">(${formatFileSize(a.file_size)})</span>`}
                         <button aria-label="Delete attachment" class="btn btn-sm btn-danger" onclick="InvoicesPage.deleteAttachment(${a.id},'${entityType}',${entityId})" style="padding:0 4px; font-size:10px;">X</button>
+                        ${storedFileNote(a)}
                     </div>`
                 ).join('');
             }
@@ -544,7 +919,7 @@ const InvoicesPage = {
         formData.append('file', fileInput.files[0]);
         try {
             const resp = await fetch(`/api/attachments/invoice/${entityId}`, { method: 'POST', body: formData });
-            if (!resp.ok) { const d = await resp.json(); throw new Error(d.detail || 'Upload failed'); }
+            if (!resp.ok) throw new Error(await API.responseError(resp, 'Upload failed'));
             toast('Attachment uploaded');
             fileInput.value = '';
             InvoicesPage.loadAttachments('invoice', entityId);

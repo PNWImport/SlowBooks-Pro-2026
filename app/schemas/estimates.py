@@ -32,7 +32,7 @@ class EstimateLineResponse(BaseModel):
     item_id: Optional[int]
     description: Optional[str]
     quantity: Decimal
-    rate: Decimal
+    rate: RateOut
     amount: Decimal
     cost_code_id: Optional[int] = None
     unit_cost: Optional[Decimal] = None
@@ -82,7 +82,7 @@ class EstimateResponse(BaseModel):
     date: dt_date
     expiration_date: Optional[dt_date]
     subtotal: Decimal
-    tax_rate: Decimal
+    tax_rate: TaxRateOut
     tax_amount: Decimal
     total: Decimal
     notes: Optional[str]

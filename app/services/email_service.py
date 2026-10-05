@@ -88,7 +88,11 @@ def send_email(
 
     if attachment_bytes and attachment_name:
         part = MIMEApplication(attachment_bytes, Name=attachment_name)
-        part["Content-Disposition"] = f'attachment; filename="{attachment_name}"'
+        # add_header encodes a name with accents or other letters the RFC
+        # 2231 way (filename*=utf-8''…). Setting the header as one string
+        # sent "Statement_Łódź Signs.pdf" as an encoded-word covering the
+        # whole value, which mail programs don't read as an attachment name.
+        part.add_header("Content-Disposition", "attachment", filename=attachment_name)
         msg.attach(part)
 
     server = None
@@ -275,14 +279,45 @@ def invoice_email_label(invoice, company_settings: dict) -> str:
     """What the attached document is called in the email: Invoice, Pledge,
     Sales Receipt or Donation Receipt — the same literal face the PDF
     prints (donor_documents.invoice_doc_kind), never the vocabulary swap."""
-    from app.services.donor_documents import invoice_doc_kind
+    from app.services.donor_documents import document_label
     from app.services.terminology import terms_for
 
-    kind = invoice_doc_kind(invoice, terms_for(company_settings))
+    return document_label(invoice, terms_for(company_settings))
+
+
+def invoice_email_context(invoice, company_settings: dict, pay_url: str = None) -> dict:
+    """What a saved `invoice_email` template can reference.
+
+    Kept in one place so the preview and the send cannot drift — the reason
+    they could before is that there was no shared renderer at all.
+    """
+    from app.services.settings_service import redact_secrets
+    from app.services.terminology import terms_for
+
+    terms = terms_for(company_settings)
     return {
-        "SalesReceipt": "Sales Receipt",
-        "DonationReceipt": "Donation Receipt",
-    }.get(kind, kind)
+        "invoice": invoice,
+        "inv": invoice,  # the file template's name for it
+        # GHSA-c3v4-f43f-4wqm. The `invoice_email` template is operator-
+        # editable and, since #140, actually rendered — so `{{ company }}`
+        # would dump every decrypted credential into an email addressed to
+        # whoever the sender chooses. Redacted at the point the context is
+        # built, so no caller can forget.
+        "company": redact_secrets(company_settings),
+        "customer_name": (
+            invoice.customer.name if invoice.customer else terms("Customer")
+        ),
+        # Omitted rather than None when no provider is enabled. `{{ pay_url }}`
+        # used to render the literal text "None" into a customer's email, and
+        # `resolved_to_nothing` could not flag it because None is a real
+        # value. Undefined renders as empty, is reported, and `{% if pay_url %}`
+        # — which the shipped default uses — is still correctly falsy.
+        # @skytech, 2.12.1 gate: the one gap the feature is shaped to catch
+        # and structurally could not.
+        **({"pay_url": pay_url} if pay_url else {}),
+        "doc_label": invoice_email_label(invoice, company_settings),
+        "terms": terms,
+    }
 
 
 def invoice_email_context(invoice, company_settings: dict, pay_url: str = None) -> dict:

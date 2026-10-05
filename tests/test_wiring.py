@@ -264,18 +264,30 @@ def test_collector_finds_something():
 # - Legacy paths superseded by newer endpoints (kept for backwards compat)
 _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("POST", "/api/stripe/webhook"),  # legacy alias for provider webhook
+    # A garnishment order is ended, never deleted; DELETE stays so an API
+    # client is told why (405) and where to go (POST .../end).
+    ("DELETE", "/api/deductions/garnishments/{order_id}"),
     # Provider payment routes without SPA callers: webhooks fire from the
     # provider's servers; create-checkout-session is called from the
     # public /pay/{token} page (a Jinja template, outside the JS scan).
     ("POST", "/api/payments/{provider_name}/webhook"),
     ("POST", "/api/payments/{provider_name}/create-checkout-session"),
     ("GET", "/api/qbo/callback"),
-    ("POST", "/api/deductions/types/seed-standard"),
+    # The synchronous QBO imports: the page starts a background run
+    # (POST /api/qbo/import-runs, #192). These stay for API clients, share
+    # its one-import-per-company guard, and are listed in docs/setup-qbo.md.
+    ("POST", "/api/qbo/import"),
+    ("POST", "/api/qbo/import/{entity}"),
+    # The logo image. Its address IS the company_logo_path setting, which
+    # the Settings page and the invoice view put in an <img src> as a value,
+    # not a literal the JS scan can see.
+    ("GET", "/api/uploads/logo/{file_id}"),
     ("POST", "/api/payroll/gross-up"),
     ("POST", "/api/payroll/{run_id}/nacha"),
     ("POST", "/api/time-entries/classify"),
     # Legacy: superseded by /api/payroll/forms/* — kept until next major release.
-    # Migration tracker in docs/todo.md.
+    # Migration tracker in docs/todo.md. (The 1099 summary, the 1099-NEC and
+    # the 1096 have screen callers now, on the Tax Forms page.)
     ("GET", "/api/tax-forms/w2"),
     ("GET", "/api/tax-forms/w2/{employee_id}"),
     ("GET", "/api/tax-forms/w2/{employee_id}/pdf"),
@@ -283,9 +295,6 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("GET", "/api/tax-forms/940/pdf"),
     ("GET", "/api/tax-forms/941"),
     ("GET", "/api/tax-forms/941/pdf"),
-    ("GET", "/api/tax-forms/1099"),
-    ("GET", "/api/tax-forms/1099/{vendor_id}/pdf"),
-    ("GET", "/api/tax-forms/1096/pdf"),
     ("GET", "/api/tax-forms/sui"),
     ("GET", "/api/tax-forms/liability"),
     ("GET", "/api/tax-forms/fica-tip-credit"),
@@ -324,12 +333,6 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("GET", "/api/analytics/expenses"),
     ("GET", "/api/analytics/cash-flow"),
     ("GET", "/api/analytics/profitability"),
-    # Singular paystub fetch — SPA renders paystubs via the bulk list +
-    # PDF endpoints. This route exists for direct linking / API consumers.
-    ("GET", "/api/payroll/{run_id}/paystub/{stub_id}"),
-    # Backup restore — dangerous; deliberately not exposed in the SPA.
-    # Run via CLI: `python -m app.services.backup restore <file>`.
-    ("POST", "/api/backups/restore"),
     # Employee self-service "submit timecard" — meant to be called from
     # the employee portal, not the admin TimeEntriesPage (which uses
     # /approve and /reject). Portal time-entry UI is future work.
@@ -379,4 +382,47 @@ def test_no_orphan_backend_routes(app_routes):
         "Backend routes with no JS caller (add a caller, mark them as "
         "intentional in _INTENTIONAL_BACKEND_ONLY, or delete them):\n"
         + "\n".join(orphans)
+    )
+
+
+def _names_route(call_segs: list[str], route_segs: list[str]) -> bool:
+    """Does this JS call name this route? Stricter than _route_matches: a
+    `*` from `${...}` counts only where the route takes a parameter, so
+    `/api/payroll/${id}` names /api/payroll/{run_id} but not
+    /api/payroll/gross-up."""
+    if len(call_segs) != len(route_segs):
+        return False
+    return all(
+        (route.startswith("{") and route.endswith("}")) or call == route
+        for call, route in zip(call_segs, route_segs)
+    )
+
+
+def test_the_backend_only_list_names_only_routes_without_callers(app_routes):
+    """An entry in _INTENTIONAL_BACKEND_ONLY exempts its route from the
+    orphan check. Once a screen calls the route (the 1099 forms, the
+    paystub, Print Check) or the route is gone, the entry only hides it:
+    each one must be a real route that nothing on screen calls."""
+    registered = {(m, "/".join(segs)) for m, segs in app_routes}
+    calls = list(_collect_api_calls())
+    gone, called = [], []
+    for method, path in sorted(_INTENTIONAL_BACKEND_ONLY):
+        if (method, path) not in registered:
+            gone.append(f"  {method:6} {path}")
+            continue
+        segs = path.split("/")
+        callers = sorted(
+            {
+                f"{file}:{line}"
+                for file, line, jm, jpath in calls
+                if jm in (method, "*") and _names_route(jpath.split("/"), segs)
+            }
+        )
+        if callers:
+            called.append(f"  {method:6} {path}  <- {', '.join(callers)}")
+    assert not (gone or called), (
+        "Take these off _INTENTIONAL_BACKEND_ONLY.\nNot a route:\n"
+        + "\n".join(gone)
+        + "\nCalled from the screen:\n"
+        + "\n".join(called)
     )

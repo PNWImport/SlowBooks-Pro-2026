@@ -7,6 +7,18 @@ from pathlib import Path
 
 import pytest
 
+
+import pytest as _pytest  # noqa: E402
+
+# These exercise macOS packaging tools (dylib rpaths, xcrun, stapler,
+# hdiutil). They pass on Linux only because the code paths short-circuit;
+# on Windows they fail for reasons that say nothing about the product.
+# A Windows CI job cannot go green without this guard (issue #121).
+_pytestmark_reason = "macOS packaging tooling"
+pytestmark = _pytest.mark.skipif(
+    __import__("sys").platform == "win32", reason=_pytestmark_reason
+)
+
 MACOS_DIR = Path(__file__).resolve().parent.parent / "packaging" / "macos"
 sys.path.insert(0, str(MACOS_DIR))
 SPEC = importlib.util.spec_from_file_location(

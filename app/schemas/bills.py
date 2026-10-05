@@ -41,7 +41,7 @@ class BillLineResponse(BaseModel):
     is_billable: bool = False
     description: Optional[str] = None
     quantity: Decimal = Decimal("0")
-    rate: Decimal = Decimal("0")
+    rate: RateOut = Decimal("0")
     amount: Decimal = Decimal("0")
     line_order: int = 0
     model_config = {"from_attributes": True}
@@ -99,7 +99,7 @@ class BillResponse(BaseModel):
     terms: Optional[str] = None
     ref_number: Optional[str] = None
     subtotal: Decimal = Decimal("0")
-    tax_rate: Decimal = Decimal("0")
+    tax_rate: TaxRateOut = Decimal("0")
     tax_amount: Decimal = Decimal("0")
     total: Decimal = Decimal("0")
     amount_paid: Decimal = Decimal("0")
@@ -134,6 +134,12 @@ class BillPaymentCreate(StrictModel):
     allocations: list[BillPaymentAllocationCreate] = []
 
 
+class BillPaymentAllocationResponse(BaseModel):
+    bill_id: int
+    amount: Decimal = Decimal("0")
+    model_config = {"from_attributes": True}
+
+
 class BillPaymentResponse(BaseModel):
     id: int
     vendor_id: int
@@ -149,4 +155,7 @@ class BillPaymentResponse(BaseModel):
     exchange_rate: Optional[Decimal] = None
     is_voided: bool = False
     created_at: Optional[datetime] = None
+    # Which bills this payment paid, and how much of each — the bill's view
+    # lists its payments from here so one can be voided on screen.
+    allocations: list[BillPaymentAllocationResponse] = []
     model_config = {"from_attributes": True}

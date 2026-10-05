@@ -26,7 +26,7 @@ const MigrationPage = {
             <div class="card" style="max-width:640px;">
                 <div class="form-group" style="max-width:260px;">
                     <label>Coming from</label>
-                    <select id="migration-source" onchange="MigrationPage.reset()">${opts}</select>
+                    <select id="migration-source" data-write onchange="MigrationPage.reset()">${opts}</select>
                 </div>
                 <p style="font-size:12px; margin:8px 0;">
                     Export and upload together: the <strong>chart of accounts</strong>
@@ -35,8 +35,8 @@ const MigrationPage = {
                     offers one (recommended — enables balance verification). Files are
                     recognized by name; CSV and tab-separated exports both work.
                 </p>
-                <input type="file" id="migration-files" multiple accept=".csv,.txt" onchange="MigrationPage.reset()">
-                <div class="form-actions" style="margin-top:12px;">
+                <input type="file" id="migration-files" aria-label="Files to import" multiple accept=".csv,.txt" onchange="MigrationPage.reset()">
+                <div class="form-actions" style="margin-top:12px;" data-write>
                     <button class="btn btn-primary" onclick="MigrationPage.dryRun()">Dry Run</button>
                     <button class="btn btn-danger" id="migration-import-btn" disabled onclick="MigrationPage.doImport()">Import</button>
                 </div>
@@ -62,7 +62,7 @@ const MigrationPage = {
 
     _renderResult(data, imported) {
         const errs = data.errors.map(e => `<li style="color:var(--danger);">${escapeHtml(e)}</li>`).join('');
-        const warns = data.warnings.map(w => `<li style="color:var(--warning, #a8761f);">${escapeHtml(w)}</li>`).join('');
+        const warns = data.warnings.map(w => `<li style="color:var(--text-warning);">${escapeHtml(w)}</li>`).join('');
         const head = imported
             ? (data.ok ? `<strong>Imported ${data.imported_accounts} accounts and ${data.imported_journals} journals.</strong>`
                        : '<strong style="color:var(--danger);">Import refused — fix the dry-run errors below.</strong>')
@@ -77,8 +77,8 @@ const MigrationPage = {
         const source = $('#migration-source').value;
         try {
             const resp = await fetch(`/api/migration/${source}/dry-run`, { method: 'POST', body: fd });
+            if (!resp.ok) throw new Error(await API.responseError(resp, 'Dry run failed'));
             const data = await resp.json();
-            if (!resp.ok) throw new Error(data.detail || 'Dry run failed');
             MigrationPage._dryRunOk = data.ok;
             $('#migration-import-btn').disabled = !data.ok;
             MigrationPage._renderResult(data, false);
@@ -92,8 +92,8 @@ const MigrationPage = {
         const source = $('#migration-source').value;
         try {
             const resp = await fetch(`/api/migration/${source}/import`, { method: 'POST', body: fd });
+            if (!resp.ok) throw new Error(await API.responseError(resp, 'Import failed'));
             const data = await resp.json();
-            if (!resp.ok) throw new Error(data.detail || 'Import failed');
             MigrationPage._renderResult(data, true);
             if (data.ok) toast(`Imported ${data.imported_accounts} accounts, ${data.imported_journals} journals`);
         } catch (err) { toast(err.message, 'error'); }

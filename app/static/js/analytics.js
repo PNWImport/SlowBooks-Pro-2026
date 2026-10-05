@@ -22,6 +22,16 @@
  */
 
 const AnalyticsPage = {
+  // What the figures count. Revenue here is invoices dated in the period
+  // and paid in full, not the Profit & Loss's accrual income: September's
+  // "Revenue $742.20" sat beside a $10.0M P&L for the same month with
+  // nothing to say why (2.17.3 exploratory test, W-L12). Say it on screen.
+  REVENUE_BASIS:
+    "Invoices and sales receipts dated in this period and paid in full. The Profit & Loss counts every invoice when it is issued, paid or not.",
+  EXPENSE_BASIS: "Bills dated in this period and paid in full.",
+  BASIS_NOTE:
+    "Revenue and expenses here count paid invoices and paid bills dated in the period — a paid basis. The Profit & Loss report counts every invoice and bill when it is dated (accrual), so the two can differ.",
+
   // Persistent state — survives route navigation so users return to their
   // last-selected period.
   state: {
@@ -104,7 +114,7 @@ const AnalyticsPage = {
                     <button class="btn btn-secondary btn-sm" id="analytics-refresh" title="Refresh (R)">&#x21bb; Refresh</button>
                     <button class="btn btn-secondary btn-sm" id="analytics-csv" title="Export CSV">Export CSV</button>
                     <button class="btn btn-secondary btn-sm" id="analytics-pdf" title="Export PDF">Export PDF</button>
-                    <button class="btn btn-primary btn-sm"   id="analytics-ai-run" title="Generate AI insights">&#10024; AI Insights</button>
+                    <button class="btn btn-primary btn-sm"   id="analytics-ai-run" data-write title="Generate AI insights">&#10024; AI Insights</button>
                 </div>
             </div>
 
@@ -115,11 +125,13 @@ const AnalyticsPage = {
             ${this._aiActionsHtml()}
 
             <div class="analytics-kpi-grid">
-                <div class="analytics-kpi"><div class="analytics-kpi-label">Revenue</div><div class="analytics-kpi-value kpi-green">${formatCurrency(totalRevenue)}</div></div>
-                <div class="analytics-kpi"><div class="analytics-kpi-label">Expenses</div><div class="analytics-kpi-value kpi-red">${formatCurrency(totalExpenses)}</div></div>
+                <div class="analytics-kpi" title="${escapeHtml(Terms.text(this.REVENUE_BASIS))}"><div class="analytics-kpi-label">${Terms.text('Revenue (paid invoices)')}</div><div class="analytics-kpi-value kpi-green">${formatCurrency(totalRevenue)}</div></div>
+                <div class="analytics-kpi" title="${escapeHtml(this.EXPENSE_BASIS)}"><div class="analytics-kpi-label">Expenses (paid bills)</div><div class="analytics-kpi-value kpi-red">${formatCurrency(totalExpenses)}</div></div>
                 <div class="analytics-kpi" title="${Terms.text('Days Sales Outstanding — average number of days between invoicing a customer and collecting the payment.')} Lower is better. Computed as (open A/R balance ÷ last-30-day paid revenue) × 30."><div class="analytics-kpi-label">DSO (Days)</div><div class="analytics-kpi-value kpi-blue">${dso.toFixed(1)}</div></div>
                 <div class="analytics-kpi"><div class="analytics-kpi-label">Margin %</div><div class="analytics-kpi-value kpi-purple">${margin.toFixed(1)}%</div></div>
             </div>
+
+            <div class="analytics-meta">${escapeHtml(Terms.text(this.BASIS_NOTE))}</div>
 
             <div class="analytics-section-title">Revenue Trend &mdash; Last 12 Months</div>
             <div class="analytics-card"><div class="chart-wrap"><canvas id="chart-revenue-trend"></canvas></div></div>
@@ -364,13 +376,13 @@ const AnalyticsPage = {
         "chart-ar-aging",
         this.state.data.ar_aging,
         T("A/R Aging").replace(/ Aging$/, ""),
-        "#00c48f",
+        chartColor("green"),
       );
       this._renderAgingChart(
         "chart-ap-aging",
         this.state.data.ap_aging,
         "A/P",
-        "#ff6b6b",
+        chartColor("red"),
       );
       this._renderCashForecastChart();
     }
@@ -436,7 +448,7 @@ const AnalyticsPage = {
           {
             label: "Monthly Paid Revenue",
             data: values,
-            borderColor: "#00c48f",
+            borderColor: chartColor("green"),
             backgroundColor: "rgba(0,196,143,0.15)",
             fill: true,
             tension: 0.3,
@@ -480,14 +492,14 @@ const AnalyticsPage = {
     const theme = this._chartDefaults();
 
     const palette = [
-      "#ff6b6b",
-      "#5b7fff",
-      "#ffa94d",
-      "#a855f7",
-      "#00c48f",
-      "#e879f9",
-      "#38bdf8",
-      "#facc15",
+      chartColor("red"),
+      chartColor("blue"),
+      chartColor("orange"),
+      chartColor("purple"),
+      chartColor("green"),
+      chartColor("pink"),
+      chartColor("sky"),
+      chartColor("yellow"),
     ];
 
     this.state.charts.expenses = new Chart(ctx, {
@@ -529,10 +541,10 @@ const AnalyticsPage = {
 
     const theme = this._chartDefaults();
     const bucketColors = {
-      current: "#00c48f",
-      30: "#ffa94d",
-      60: "#ff922b",
-      90: "#ff4757",
+      current: chartColor("green"),
+      30: chartColor("orange"),
+      60: chartColor("amber"),
+      90: chartColor("crimson"),
     };
     const bucketLabels = {
       current: "Current",
@@ -605,7 +617,7 @@ const AnalyticsPage = {
             type: "line",
             label: "Collections (cumulative)",
             data: collections,
-            borderColor: "#00c48f",
+            borderColor: chartColor("green"),
             backgroundColor: "rgba(0,196,143,0.15)",
             fill: false,
             tension: 0.3,
@@ -615,7 +627,7 @@ const AnalyticsPage = {
             type: "line",
             label: "Payments (cumulative)",
             data: payments,
-            borderColor: "#ff6b6b",
+            borderColor: chartColor("red"),
             backgroundColor: "rgba(255,107,107,0.15)",
             fill: false,
             tension: 0.3,
@@ -683,7 +695,7 @@ const AnalyticsPage = {
             `;
     }
     return `
-            <div class="analytics-card ai-insights-card">
+            <div class="analytics-card ai-insights-card" data-write>
                 <div class="analytics-section-title ai-insights-title">
                     <span>&#10024; AI Insights</span>
                 </div>
@@ -823,7 +835,7 @@ const AnalyticsPage = {
             </optgroup>`,
         )
         .join("");
-      dropdown = `<select id="ai-actions-select" ${busy ? "disabled" : ""}>
+      dropdown = `<select id="ai-actions-select" aria-label="Analysis" ${busy ? "disabled" : ""}>
             <option value="" disabled${selected ? "" : " selected"}>Choose an analysis…</option>
             ${opts}
         </select>`;
@@ -854,7 +866,7 @@ const AnalyticsPage = {
     }
 
     return `
-        <div class="analytics-card ai-actions-card">
+        <div class="analytics-card ai-actions-card" data-write>
             <div class="analytics-section-title ai-actions-title">
                 <span>&#129504; AI Analysis</span>
                 ${result ? '<button class="btn btn-secondary btn-sm" id="ai-actions-clear" style="margin-left:auto">Clear</button>' : ""}

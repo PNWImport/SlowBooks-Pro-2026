@@ -68,7 +68,7 @@ const IIFPage = {
                 </div>
 
                 <!-- Import Section -->
-                <div class="iif-section">
+                <div class="iif-section" data-write>
                     <h3>&#9650; Import from IIF</h3>
                     <p style="font-size:11px; color:var(--text-secondary); margin-bottom:12px;">
                         Upload .iif files exported from QuickBooks 2003 Pro
@@ -101,7 +101,7 @@ const IIFPage = {
                 </div>
 
                 <!-- QuickBooks Report CSV import -->
-                <div class="iif-section">
+                <div class="iif-section" data-write>
                     <h3>&#9635; Import from Report CSV</h3>
                     <p style="font-size:11px; color:var(--text-secondary); margin-bottom:12px;">
                         QuickBooks Desktop can't export transactions to IIF — export a detail
@@ -112,13 +112,27 @@ const IIFPage = {
                         entries on your bank account). Keep the report's default columns.
                         Safe to re-upload — duplicates are skipped.
                     </p>
-                    <input type="file" id="qbcsv-file-input" accept=".csv" style="font-size:11px; margin-bottom:8px;">
+                    <input type="file" id="qbcsv-file-input" aria-label="QuickBooks report CSV file" accept=".csv" style="font-size:11px; margin-bottom:8px;">
                     <div>
                         <button class="btn btn-primary" onclick="IIFPage.importQbReportCsv()">Import Report CSV</button>
                     </div>
                     <div id="qbcsv-import-result" style="margin-top:12px;"></div>
                 </div>
             </div>`;
+    },
+
+    // What an import says when it's done (#197). One that came back with
+    // errors said "Imported 0 records" in green and "Import complete", and the
+    // red box below was the only sign of them.
+    _reportImport(total, errors) {
+        const records = `Imported ${total} record${total === 1 ? '' : 's'}`;
+        if (errors > 0) {
+            toast(`${records}, ${errors} error${errors === 1 ? '' : 's'}: see the list below`, 'error');
+            App.setStatus('QuickBooks Interop — Import finished with errors');
+        } else {
+            toast(records);
+            App.setStatus('QuickBooks Interop — Import complete');
+        }
     },
 
     async importQbReportCsv() {
@@ -129,8 +143,8 @@ const IIFPage = {
         try {
             App.setStatus('Importing QuickBooks report CSV...');
             const res = await fetch('/api/csv/import/qb-report', { method: 'POST', body: formData });
+            if (!res.ok) throw new Error(await API.responseError(res, 'Import failed'));
             const result = await res.json();
-            if (!res.ok) throw new Error(result.detail || 'Import failed');
 
             const kindLabel = { sales_receipts: 'Sales Receipts', deposits: 'Deposits', checks: 'Checks' };
             let html = '<div class="iif-results"><h4>Results</h4>';
@@ -158,8 +172,7 @@ const IIFPage = {
             }
             $('#qbcsv-import-result').innerHTML = html;
             const total = (result.sales_receipts || 0) + (result.deposits || 0) + (result.checks || 0);
-            toast(`Imported ${total} record${total === 1 ? '' : 's'}`);
-            App.setStatus('QuickBooks Interop — Import complete');
+            IIFPage._reportImport(total, (result.errors || []).length);
         } catch (err) {
             toast(err.message, 'error');
             App.setStatus('Import failed');
@@ -189,11 +202,12 @@ const IIFPage = {
     async _download(url, fallbackName) {
         try {
             App.setStatus('Exporting IIF...');
-            const res = await fetch(url);
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({ detail: res.statusText }));
-                throw new Error(err.detail || 'Export failed');
-            }
+            // Asked for inline: the desktop app's web view takes an
+            // "attachment" answer to a page's own fetch() for a download and
+            // never hands it back ("Failed to fetch"). This page saves the
+            // file itself either way.
+            const res = await fetch(url, { headers: { 'X-Slowbooks-Desktop': '1' } });
+            if (!res.ok) throw new Error(await API.responseError(res, 'Export failed'));
 
             // Get filename from Content-Disposition header if available
             const disposition = res.headers.get('Content-Disposition');
@@ -204,13 +218,17 @@ const IIFPage = {
             }
 
             const blob = await res.blob();
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = filename;
-            a.click();
-            URL.revokeObjectURL(a.href);
-
-            toast(`Exported ${filename}`);
+            // The desktop app saves it to Documents/SlowBooks Pro/Reports and
+            // says where, as Save CSV does; a browser downloads it.
+            const desktop = window.SlowbooksDesktop;
+            if (!(desktop && await desktop.saveFile(blob, filename))) {
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = filename;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+                toast(`Exported ${filename}`);
+            }
             App.setStatus('QuickBooks Interop — Ready');
         } catch (err) {
             toast(err.message, 'error');
@@ -257,9 +275,7 @@ const IIFPage = {
         IIFPage._selectedFile = file;
         IIFPage._validated = false;
 
-        const size = file.size < 1024 ? `${file.size} B` :
-                     file.size < 1048576 ? `${(file.size / 1024).toFixed(1)} KB` :
-                     `${(file.size / 1048576).toFixed(1)} MB`;
+        const size = formatFileSize(file.size);
 
         const info = $('#iif-file-info');
         info.style.display = '';
@@ -293,10 +309,7 @@ const IIFPage = {
         try {
             App.setStatus('Validating IIF file...');
             const res = await fetch('/api/iif/validate', { method: 'POST', body: formData });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({ detail: res.statusText }));
-                throw new Error(err.detail || 'Validation failed');
-            }
+            if (!res.ok) throw new Error(await API.responseError(res, 'Validation failed'));
 
             const report = await res.json();
             IIFPage._showValidationReport(report);
@@ -353,6 +366,23 @@ const IIFPage = {
             html += '</div>';
         }
 
+        // ALL-CAPS names (#195): a box, off unless ticked, and a few of this
+        // file's own names as the box would import them, so the choice is
+        // made on the names that will change.
+        if (report.valid && report.caps_names > 0) {
+            const n = report.caps_names;
+            const examples = (report.caps_name_examples || []).map(x =>
+                `<li>${escapeHtml(x.name)} &rarr; ${escapeHtml(x.becomes)}</li>`).join('');
+            html += `<div class="iif-retitle">
+                <label><input type="checkbox" id="iif-retitle-names">
+                    Change ${n} ALL-CAPS name${n === 1 ? '' : 's'} to normal capitalization</label>
+                <ul>${examples}</ul>
+                <p>Customer, vendor and account names; item names are kept as typed, and
+                    names already in your books are not changed. A name that should stay
+                    in capitals may not, so look over the examples first.</p>
+            </div>`;
+        }
+
         $('#iif-validation-result').innerHTML = html;
     },
 
@@ -366,14 +396,12 @@ const IIFPage = {
 
         const formData = new FormData();
         formData.append('file', IIFPage._selectedFile);
+        formData.append('retitle_names', $('#iif-retitle-names')?.checked ? 'true' : 'false');
 
         try {
             App.setStatus('Importing IIF file...');
             const res = await fetch('/api/iif/import', { method: 'POST', body: formData });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({ detail: res.statusText }));
-                throw new Error(err.detail || 'Import failed');
-            }
+            if (!res.ok) throw new Error(await API.responseError(res, 'Import failed'));
 
             const result = await res.json();
             IIFPage._showImportResult(result);
@@ -384,8 +412,7 @@ const IIFPage = {
                           (result.sales_receipts || 0) +
                           (result.estimates || 0) + (result.bills || 0) +
                           (result.deposits || 0);
-            toast(`Imported ${total} records`);
-            App.setStatus('QuickBooks Interop — Import complete');
+            IIFPage._reportImport(total, (result.errors || []).length);
         } catch (err) {
             toast(err.message, 'error');
             App.setStatus('Import failed');
@@ -405,7 +432,6 @@ const IIFPage = {
             ['Estimates', result.estimates],
             ['Bills', result.bills],
             ['Deposits', result.deposits],
-            ['Duplicates skipped', result.duplicates_skipped],
         ];
 
         let html = '<div class="iif-results"><h4>Import Results</h4>';
@@ -416,6 +442,20 @@ const IIFPage = {
                     <span class="result-count">${count} imported</span>
                 </div>`;
             }
+        }
+        // Not "imported": a record already here that the file named again
+        // (both QA agents, 2.18.1 gate: "Duplicates skipped: 1 imported")
+        if (result.duplicates_skipped > 0) {
+            html += `<div class="result-row">
+                <span>Already here, skipped</span>
+                <span class="result-count">${result.duplicates_skipped}</span>
+            </div>`;
+        }
+        if (result.names_changed > 0) {
+            html += `<div class="result-row">
+                <span>ALL-CAPS names changed to normal capitalization</span>
+                <span class="result-count">${result.names_changed}</span>
+            </div>`;
         }
         html += '</div>';
 

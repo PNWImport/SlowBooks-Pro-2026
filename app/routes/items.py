@@ -20,6 +20,42 @@ from app.services.inventory_service import record_adjustment, current_valuation
 router = APIRouter(prefix="/api/items", tags=["items"])
 
 
+def item_name_key(name) -> str:
+    """An item name as the duplicate check compares it: trimmed, runs of
+    spaces as one, capitals ignored ("design  hour" is "Design Hour")."""
+    return " ".join(str(name or "").split()).casefold()
+
+
+def find_active_item_named(db: Session, name, exclude_id=None):
+    """The active item that already carries this name — compared trimmed
+    and without regard to capitals — or None. Compared in Python rather
+    than SQL: SQLite's lower() folds only ASCII, so "Übergröße" and
+    "ÜBERGRÖSSE" would have passed as different names."""
+    key = item_name_key(name)
+    if not key:
+        return None
+    q = db.query(Item).filter(Item.is_active.is_(True))
+    if exclude_id is not None:
+        q = q.filter(Item.id != exclude_id)
+    return next((it for it in q.all() if item_name_key(it.name) == key), None)
+
+
+def _refuse_duplicate_name(db: Session, name, exclude_id=None) -> None:
+    """Two active items with one name show twice in every picker, and
+    nothing on the screen says which is which (2.17.3 exploratory test,
+    W-M16). Refuse, and say what to do instead."""
+    clash = find_active_item_named(db, name, exclude_id)
+    if clash:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f'There is already an item named "{clash.name}". Use that '
+                "item, give this one a different name, or make the other "
+                "one inactive first."
+            ),
+        )
+
+
 @router.get("", response_model=list[ItemResponse])
 def list_items(
     active_only: bool = False,
@@ -34,7 +70,21 @@ def list_items(
         q = q.filter(Item.item_type == item_type)
     if search:
         q = q.filter(Item.name.ilike(f"%{search}%"))
-    return q.order_by(Item.name).all()
+    return _flag_discounts(db, q.order_by(Item.name).all())
+
+
+def _flag_discounts(db: Session, items):
+    """Item responses, a Discount item marked so the forms let its line
+    take a negative price."""
+    from app.services.qbo_common import discount_item_ids
+
+    discounts = discount_item_ids(db)
+    out = []
+    for item in items:
+        resp = ItemResponse.model_validate(item)
+        resp.is_discount = item.id in discounts
+        out.append(resp)
+    return out
 
 
 @router.get("/low-stock", response_model=list[LowStockResponse])
@@ -92,7 +142,7 @@ def inventory_valuation(db: Session = Depends(get_db)):
 
 @router.get("/{item_id}", response_model=ItemResponse)
 def get_item(item_id: int, db: Session = Depends(get_db)):
-    return get_or_404(db, Item, item_id)
+    return _flag_discounts(db, [get_or_404(db, Item, item_id)])[0]
 
 
 @router.get("/{item_id}/movements", response_model=list[InventoryMovementResponse])
@@ -145,6 +195,7 @@ def adjust_inventory(
 
 @router.post("", response_model=ItemResponse, status_code=201)
 def create_item(data: ItemCreate, db: Session = Depends(get_db)):
+    _refuse_duplicate_name(db, data.name)
     item = Item(**data.model_dump())
     db.add(item)
     db.commit()
@@ -160,6 +211,17 @@ def update_item(item_id: int, data: ItemUpdate, db: Session = Depends(get_db)):
     # owned by the inventory ledger. Use /adjust instead.
     update_data.pop("quantity_on_hand", None)
     update_data.pop("avg_cost", None)
+    if "name" in update_data and update_data["name"] is None:
+        update_data.pop("name")  # an item always has a name
+    # A rename, or bringing an inactive item back, must not make a second
+    # active item of the same name. An edit that leaves the name alone is
+    # not refused, so two duplicates made before this check can still be
+    # edited — and one of them made inactive.
+    new_name = update_data.get("name", item.name)
+    renaming = item_name_key(new_name) != item_name_key(item.name)
+    reactivating = update_data.get("is_active") is True and not item.is_active
+    if update_data.get("is_active", item.is_active) and (renaming or reactivating):
+        _refuse_duplicate_name(db, new_name, item.id)
     for key, val in update_data.items():
         setattr(item, key, val)
     db.commit()

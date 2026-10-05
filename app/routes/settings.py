@@ -1,3 +1,5 @@
+import logging
+
 # ============================================================================
 # Settings — QuickBooks 2003 had a 12-tab preferences dialog; we condensed
 # everything into a single key-value store because nobody needs 12 tabs.
@@ -44,6 +46,8 @@ _redact_secrets = redact_secrets
 ENUM_SETTINGS = {
     "company_type": frozenset({"business", "nonprofit"}),
     "ocr_engine": frozenset({"auto", "tesseract"}),
+    "ask_password_on_start": frozenset({"true", "false"}),
+    "invoice_show_logo": frozenset({"true", "false"}),
 }
 
 
@@ -54,6 +58,8 @@ class SettingsUpdate(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
@@ -63,12 +69,24 @@ def get_settings(db: Session = Depends(get_db)):
 
     Units to know before copying a value onto a document:
     `default_tax_rate` is a PERCENT string as the user types it ("8.9" =
-    8.9%); a document's `tax_rate` (invoices, bills, estimates, credit
-    memos, sales receipts, purchase orders, recurring templates) is a
-    FRACTION (0.089). Divide by 100 before posting; the API rejects a
-    document `tax_rate` above 1.
+    8.9%, up to four decimal places: "8.875"); a document's `tax_rate`
+    (invoices, bills, estimates, credit memos, sales receipts, purchase
+    orders, recurring templates) is a FRACTION (0.089), kept to six places.
+    Divide by 100 before posting; the API rejects a document `tax_rate`
+    above 1.
     """
     return _redact_secrets(get_all_settings(db))
+
+
+@router.get("/unreadable-secrets")
+def get_unreadable_secrets(db: Session = Depends(get_db)):
+    """Settings saved encrypted under a key this install no longer has.
+
+    They read as not set, so what uses them stops (email, a payment
+    provider, a bank feed) instead of every page failing; Settings names
+    them to be entered again. Recreating a Docker container before 2.18
+    lost its settings key this way."""
+    return {"keys": unreadable_secret_keys(db)}
 
 
 def _guard_closing_period(request: Request, db: Session, fields: dict):
@@ -158,6 +176,10 @@ def update_settings(
                     "tells the two apart."
                 ),
             )
+    # Check every value before writing any: one refused field must not leave
+    # the others half-saved, and the person sees every problem at once.
+    cleaned = {}
+    problems = []
     for key, value in data.model_dump().items():
         if key not in DEFAULT_SETTINGS:
             continue
@@ -169,7 +191,17 @@ def update_settings(
             )
         if key in SECRET_KEYS and value == SECRET_PLACEHOLDER:
             continue
-        set_setting(db, key, str(value) if value is not None else "")
+        try:
+            cleaned[key] = clean_setting_value(key, value)
+        except SettingValueError as exc:
+            problems.append(str(exc))
+    if problems:
+        raise HTTPException(
+            status_code=422,
+            detail=" ".join(problems) + " Nothing was saved.",
+        )
+    for key, value in cleaned.items():
+        set_setting(db, key, value)
     db.commit()
     if "company_name" in incoming:
         from app.services.company_service import sync_manifest_name

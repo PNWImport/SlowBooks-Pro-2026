@@ -305,6 +305,13 @@ def create_journal_entry(
     return txn
 
 
+# The control-account resolvers RAISE when the account is missing; they never
+# return None (issue #119). A caller that treated None as "skip the journal
+# entry" produced a document that looked saved and never reached the books —
+# with a trial balance that still balanced, so nothing downstream noticed.
+# See app/services/control_accounts.py for the registry and the reasoning.
+
+
 def get_ar_account_id(db: Session) -> int:
     """Resolve control account 1100; raise rather than skip a posting."""
     return control_accounts.resolve(db, "1100")

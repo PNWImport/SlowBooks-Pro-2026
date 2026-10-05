@@ -4,11 +4,13 @@
  * item, then marks the estimate CONVERTED.
  */
 const EstimatesPage = {
+    showAll() { EstimatesPage._showAll = true; App.navigate(location.hash); },
+
     async render() {
-        const estimates = await API.get('/estimates');
+        const { rows: estimates, note: capNote } = await listRows(EstimatesPage, '/estimates', 'EstimatesPage.showAll()', 'estimates');
         return renderListPage({
             title: 'Estimates',
-            headerHtml: `<button class="btn btn-primary" onclick="EstimatesPage.showForm()">+ New Estimate</button>`,
+            headerHtml: `<button class="btn btn-primary" onclick="EstimatesPage.showForm()">+ New Estimate</button>` + capNote,
             empty: `<p>No estimates yet.</p>
                 <button class="btn btn-primary" onclick="EstimatesPage.showForm()" style="margin-top:10px;">+ Create your first estimate</button>`,
             columns: ['#', T('Customer'), 'Date', 'Expires', 'Status',
@@ -34,7 +36,7 @@ const EstimatesPage = {
         const est = await API.get(`/estimates/${id}`);
         let linesHtml = est.lines.map(l =>
             `<tr><td>${escapeHtml(l.description || '')}</td><td class="amount">${l.quantity}</td>
-             <td class="amount">${formatCurrency(l.rate)}</td><td class="amount">${formatCurrency(l.amount)}</td></tr>`
+             <td class="amount">${SalesLines.rate(l.rate)}</td><td class="amount">${formatCurrency(l.amount)}</td></tr>`
         ).join('');
 
         openModal(`Estimate #${est.estimate_number}`, `
@@ -65,7 +67,16 @@ const EstimatesPage = {
     async convert(id) {
         if (!confirm('Convert this estimate to an invoice?')) return;
         try {
-            const inv = await API.post(`/estimates/${id}/convert`);
+            // the new invoice may take the customer past their credit limit
+            const est = await API.get(`/estimates/${id}`);
+            const customer = await API.get(`/customers/${est.customer_id}`);
+            if (!(await InvoicesPage.creditLimitOk(customer, parseFloat(est.total) || 0))) return;
+        } catch (err) { /* the server still decides the conversion */ }
+        try {
+            // an estimate for $0.00 asks before it becomes a $0.00 invoice
+            const inv = await SalesLines.sendAllowingZero(allow =>
+                API.post(`/estimates/${id}/convert`, allow ? { allow_zero_total: true } : undefined));
+            if (!inv) return;
             toast(`Created ${T('Invoice')} #${inv.invoice_number}`);
             closeModal();
             App.navigate('#/invoices');
@@ -144,7 +155,7 @@ const EstimatesPage = {
                         <select name="customer_id" id="est-customer-select" required onchange="EstimatesPage.customerSelected(this.value)"><option value="">Select...</option><option value="__new__">+ ${T('New Customer')}</option>${custOpts}</select>
                         <div id="est-new-customer-form" style="display:none; margin-top:8px; padding:8px; border:1px solid var(--gray-300); border-radius:4px; background:var(--primary-light);">
                             <div style="font-weight:700; font-size:11px; margin-bottom:6px;">Quick Add ${T('Customer')}</div>
-                            <input id="est-new-cust-name" placeholder="Name *" style="width:100%; margin-bottom:4px; padding:4px 8px; border:1px solid var(--gray-300); border-radius:4px;">
+                            <input id="est-new-cust-name" placeholder="Name *" aria-label="${T('Customer')} name" aria-required="true" style="width:100%; margin-bottom:4px; padding:4px 8px; border:1px solid var(--gray-300); border-radius:4px;">
                             <input id="est-new-cust-email" placeholder="Email" style="width:100%; margin-bottom:4px; padding:4px 8px; border:1px solid var(--gray-300); border-radius:4px;">
                             <input id="est-new-cust-phone" placeholder="Phone" style="width:100%; margin-bottom:4px; padding:4px 8px; border:1px solid var(--gray-300); border-radius:4px;">
                             <div style="display:flex; gap:6px;">
@@ -157,7 +168,7 @@ const EstimatesPage = {
                     <div class="form-group"><label>Expiration Date</label>
                         <input name="expiration_date" type="date" value="${est.expiration_date || ''}"></div>
                     <div class="form-group"><label>Tax Rate (%)</label>
-                        <input name="tax_rate" type="number" step="0.01" value="${(est.tax_rate * 100) || 0}"
+                        <input name="tax_rate" type="number" step="0.0001" value="${+((est.tax_rate || 0) * 100).toFixed(4)}"
                             oninput="EstimatesPage.recalc()"></div>
                     ${classGroup}${jobGroup}
                 </div>
@@ -218,8 +229,7 @@ const EstimatesPage = {
 
     itemSelected(idx) {
         const row = $(`[data-eline="${idx}"]`);
-        const itemId = row.querySelector('.line-item').value;
-        const item = EstimatesPage._items.find(i => i.id == itemId);
+        const item = row && SalesLines.fillFromItem(row, EstimatesPage._items);
         if (item) {
             row.querySelector('.line-desc').value = item.description || item.name;
             row.querySelector('.line-rate').value = item.rate;

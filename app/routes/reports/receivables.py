@@ -1,3 +1,4 @@
+import html
 import logging
 from html import escape
 from datetime import date, timedelta
@@ -7,7 +8,8 @@ from typing import Optional
 from fastapi import Depends, HTTPException, Query
 from fastapi.responses import Response
 from app.schemas.common import StrictModel
-from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
 from app.models.invoices import Invoice, InvoiceStatus
@@ -18,6 +20,7 @@ from app.services.pdf_service import (
     generate_collection_letter_pdf,
 )
 from app.services.settings_service import get_all_settings as get_settings
+from app.services.request_utils import content_disposition
 from app.routes.reports._router import router
 
 logger = logging.getLogger(__name__)
@@ -29,10 +32,36 @@ class CollectionLetterRequest(StrictModel):
     send_email: bool = False
 
 
+def _aging_row(customer_names: dict, cid: int) -> dict:
+    return {
+        "customer_name": customer_names.get(cid, "Unknown"),
+        "customer_id": cid,
+        "current": Decimal(0),
+        "over_30": Decimal(0),
+        "over_60": Decimal(0),
+        "over_90": Decimal(0),
+        "total": Decimal(0),
+        "unapplied_credits": Decimal(0),
+    }
+
+
 @router.get("/ar-aging")
 def ar_aging(as_of_date: date = Query(default=None), db: Session = Depends(get_db)):
-    if not as_of_date:
-        as_of_date = date.today()
+    """What each customer owes, by age, in home currency — and net of the
+    credits they hold, so the total is what account 1100 says.
+
+    Two gaps made the total disagree with the balance sheet (explore
+    2.17.3, W-H9 / F17): a foreign-currency invoice counted at its document
+    amount (EUR 850) instead of what it was booked at (USD 935), and money
+    a customer paid that was not applied to an invoice was left out
+    entirely (unapplied_credits read 0 for everyone)."""
+    return ar_aging_report(db, as_of_date or date.today())
+
+
+def ar_aging_report(db: Session, as_of_date: date) -> dict:
+    """The A/R Aging report's figures (see ar_aging). The analytics page's
+    aging chart reads these too, so the two cannot disagree."""
+    from app.services.contact_balances import home_amount, unapplied_payments
 
     invoices = (
         db.query(Invoice)
@@ -64,7 +93,8 @@ def ar_aging(as_of_date: date = Query(default=None), db: Session = Depends(get_d
             }
 
         days = (as_of_date - inv.due_date).days if inv.due_date else 0
-        bal = inv.balance_due
+        # At the rate it was booked at, as the ledger carries it.
+        bal = home_amount(inv.balance_due, inv.exchange_rate)
         if days <= 0:
             aging[cid]["current"] += bal
         elif days <= 30:
@@ -132,7 +162,15 @@ def income_by_customer(
     end_date: date = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """Income by Customer report."""
+    """Income by Customer: invoices dated in the period, in home currency.
+
+    Sales is the pre-tax subtotal — sales tax is money collected for the
+    state, not income — with the tax beside it (explore 2.17.3, W-L11).
+    Paid includes money the customer paid in the period that is not
+    applied to an invoice yet, and Balance is net of it, so
+    Sales + Tax − Paid = Balance (W-H9: $612.30 shown paid of $682.30)."""
+    from app.services.contact_balances import home_amount, unapplied_payments
+
     if not start_date:
         start_date = date(date.today().year, 1, 1)
     if not end_date:
@@ -140,28 +178,26 @@ def income_by_customer(
 
     invoices = (
         db.query(Invoice)
+        .options(joinedload(Invoice.customer))
         .filter(Invoice.date >= start_date, Invoice.date <= end_date)
         .filter(Invoice.status != InvoiceStatus.VOID)
         .all()
     )
 
     by_customer = {}
-    for inv in invoices:
-        cid = inv.customer_id
+
+    def row(cid, name):
         if cid not in by_customer:
-            cname = inv.customer.name if inv.customer else "Unknown"
             by_customer[cid] = {
                 "customer_id": cid,
-                "customer_name": cname,
+                "customer_name": name,
                 "invoice_count": 0,
                 "total_sales": Decimal(0),
+                "total_tax": Decimal(0),
                 "total_paid": Decimal(0),
                 "total_balance": Decimal(0),
             }
-        by_customer[cid]["invoice_count"] += 1
-        by_customer[cid]["total_sales"] += inv.total
-        by_customer[cid]["total_paid"] += inv.amount_paid
-        by_customer[cid]["total_balance"] += inv.balance_due
+        return by_customer[cid]
 
     items = sorted(by_customer.values(), key=lambda x: x["total_sales"], reverse=True)
     grand_sales = sum((i["total_sales"] for i in items), Decimal("0"))
@@ -216,20 +252,26 @@ def customer_statement_pdf(
 
     company = get_settings(db)
     pdf_bytes = generate_statement_pdf(
-        customer, invoices, payments, company, as_of_date
+        customer, statement_activity(db, customer, as_of_date), company, as_of_date
     )
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f"inline; filename=Statement_{customer.name}.pdf"
+            "Content-Disposition": content_disposition(f"Statement_{customer.name}.pdf")
         },
     )
 
 
 @router.post("/batch-email-statements")
 def batch_email_statements(db: Session = Depends(get_db)):
-    """Email statements to all customers with overdue invoices."""
+    """Email a statement to every customer with an overdue invoice.
+
+    Reports what actually went out. send_email() returns False rather than
+    raising when SMTP is not set up or the server refuses; this counted
+    every attempt as sent, so with no mail server at all A/R Aging said
+    "Sent 2 statements" (explore 2.17.3, W-H7). A draft was never sent to
+    the customer, so it is not overdue and does not trigger a statement."""
     from app.services.email_service import send_email
 
     settings = get_settings(db)
@@ -237,34 +279,38 @@ def batch_email_statements(db: Session = Depends(get_db)):
 
     overdue_invoices = (
         db.query(Invoice)
-        .filter(
-            Invoice.status.in_(
-                [InvoiceStatus.DRAFT, InvoiceStatus.SENT, InvoiceStatus.PARTIAL]
-            )
-        )
+        .filter(Invoice.status.in_([InvoiceStatus.SENT, InvoiceStatus.PARTIAL]))
         .filter(Invoice.balance_due > 0)
         .filter(Invoice.due_date < as_of_date)
         .all()
     )
-
-    # Group by customer
-    by_customer = {}
-    for inv in overdue_invoices:
-        by_customer.setdefault(inv.customer_id, []).append(inv)
+    customer_ids = sorted({inv.customer_id for inv in overdue_invoices})
+    if not customer_ids:
+        return {"sent": 0, "failed": 0, "errors": []}
+    if not (settings.get("smtp_host") or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Email isn't set up yet, so no statements were sent. Enter your "
+                "mail server under Settings, Email, then try again."
+            ),
+        )
 
     sent = 0
     failed = 0
     errors = []
+    company_name = settings.get("company_name", "") or ""
 
-    for cid, invs in by_customer.items():
+    for cid in customer_ids:
         customer = db.query(Customer).filter(Customer.id == cid).first()
         if not customer or not customer.email:
             errors.append(
-                f"Customer {customer.name if customer else cid}: no email address"
+                f"{customer.name if customer else cid}: no email address on file"
             )
             failed += 1
             continue
 
+        ok = False
         try:
             payments = (
                 db.query(Payment)
@@ -284,10 +330,13 @@ def batch_email_statements(db: Session = Depends(get_db)):
             )
 
             pdf_bytes = generate_statement_pdf(
-                customer, all_invoices, payments, settings, as_of_date
+                customer,
+                statement_activity(db, customer, as_of_date),
+                settings,
+                as_of_date,
             )
 
-            send_email(
+            ok = send_email(
                 db=db,
                 to_email=customer.email,
                 subject=f"Account Statement — {settings.get('company_name', 'Our Company')}",
@@ -297,11 +346,16 @@ def batch_email_statements(db: Session = Depends(get_db)):
                 entity_type="statement",
                 entity_id=cid,
             )
-            sent += 1
         except Exception:
             logger.exception("Failed to send statement to customer %s", customer.id)
-            errors.append(f"Customer {customer.name}: unable to send statement")
+        if ok:
+            sent += 1
+        else:
             failed += 1
+            errors.append(
+                f"{customer.name}: the statement could not be sent (the email "
+                "log has the reason)"
+            )
 
     return {"sent": sent, "failed": failed, "errors": errors}
 
@@ -320,13 +374,10 @@ def collection_letters(data: CollectionLetterRequest, db: Session = Depends(get_
     # Map letter type to minimum days overdue
     min_days = {"30": 30, "60": 60, "90": 90}.get(letter_type, 30)
 
+    # A draft was never sent, so it can't be overdue (as for statements).
     q = (
         db.query(Invoice)
-        .filter(
-            Invoice.status.in_(
-                [InvoiceStatus.DRAFT, InvoiceStatus.SENT, InvoiceStatus.PARTIAL]
-            )
-        )
+        .filter(Invoice.status.in_([InvoiceStatus.SENT, InvoiceStatus.PARTIAL]))
         .filter(Invoice.balance_due > 0)
         .filter(Invoice.due_date <= today - timedelta(days=min_days))
     )
@@ -361,13 +412,17 @@ def collection_letters(data: CollectionLetterRequest, db: Session = Depends(get_
             )
             generated += 1
 
-            if send_email_flag and customer.email:
+            if send_email_flag and not customer.email:
+                errors.append(f"{customer.name}: no email address on file")
+            elif send_email_flag:
                 type_labels = {
                     "30": "Payment Reminder",
                     "60": "Second Notice",
                     "90": "Final Notice",
                 }
-                send_email(
+                # send_email() returns False instead of raising; only a
+                # letter that went out counts as emailed.
+                if send_email(
                     db=db,
                     to_email=customer.email,
                     subject=f"{type_labels.get(letter_type, 'Collection Notice')} — {settings.get('company_name', '')}",
@@ -376,8 +431,13 @@ def collection_letters(data: CollectionLetterRequest, db: Session = Depends(get_
                     attachment_name=f"Collection_{letter_type}day_{customer.name}.pdf",
                     entity_type="collection",
                     entity_id=cid,
-                )
-                emailed += 1
+                ):
+                    emailed += 1
+                else:
+                    errors.append(
+                        f"{customer.name}: the letter could not be emailed (the "
+                        "email log has the reason)"
+                    )
         except Exception:
             logger.exception(
                 "Failed to generate collection letter for customer %s", customer.id

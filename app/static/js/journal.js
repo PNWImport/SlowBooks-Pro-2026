@@ -11,7 +11,7 @@ const JournalPage = {
             </div>`;
 
         if (entries.length === 0) {
-            html += '<div class="empty-state"><p>No manual journal entries yet</p></div>';
+            html += '<div class="empty-state"><p>No journal entries yet</p></div>';
         } else {
             html += `<div class="table-container"><table>
                 <thead><tr><th scope="col">ID</th><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Reference</th>
@@ -26,13 +26,21 @@ const JournalPage = {
                     <td class="amount">${formatCurrency(e.total_credit)}</td>
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="JournalPage.view(${e.id})">View</button>
-                        ${!e.source_type.endsWith('_void') ? `<button class="btn btn-sm btn-danger" onclick="JournalPage.void(${e.id})">Void</button>` : ''}
+                        ${e.voided ? '<span class="journal-voided" style="color:var(--danger);font-weight:700;">Voided</span>' : ''}
+                        ${JournalPage.canVoid(e) ? `<button class="btn btn-sm btn-danger" onclick="JournalPage.void(${e.id})">Void</button>` : ''}
                     </td>
                 </tr>`;
             }
             html += '</tbody></table></div>';
         }
         return html;
+    },
+
+    // A journal entry, or a posting the QuickBooks Online import made, voids
+    // here with a reversing entry; a document's own posting (a bill payment,
+    // a deposit...) voids from its document, so its view offers no Void.
+    canVoid(e) {
+        return !e.voided && ['manual', 'qbo_journal', 'qbo_ledger'].includes(e.source_type || '');
     },
 
     async view(id) {
@@ -50,6 +58,7 @@ const JournalPage = {
                 <strong>Description:</strong> ${escapeHtml(entry.description)}<br>
                 ${entry.reference ? `<strong>Reference:</strong> ${escapeHtml(entry.reference)}<br>` : ''}
                 <strong>Type:</strong> ${escapeHtml(entry.source_type)}
+                ${entry.voided ? '<div class="journal-voided" style="color:var(--danger);font-weight:700;margin-top:6px;">Voided</div>' : ''}
             </div>
             <div class="table-container"><table>
                 <thead><tr><th scope="col">Account</th><th scope="col">Description</th>${CostCodes.headHtml()}<th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th></tr></thead>
@@ -60,6 +69,7 @@ const JournalPage = {
                 <div class="total-row"><span class="label">Total Credit</span><span class="value">${formatCurrency(entry.total_credit)}</span></div>
             </div>
             <div class="form-actions">
+                ${JournalPage.canVoid(entry) ? `<button class="btn btn-danger" onclick="JournalPage.void(${entry.id})">Void</button>` : ''}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
     },
@@ -232,6 +242,7 @@ const JournalPage = {
         try {
             await API.post(`/journal/${id}/void`);
             toast('Journal entry voided');
+            closeModal();
             App.navigate('#/journal');
         } catch (err) { toast(err.message, 'error'); }
     },

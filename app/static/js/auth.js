@@ -48,7 +48,14 @@
             let detail = "Request failed";
             try {
                 const data = await res.json();
-                detail = data.detail || detail;
+                // A 422 is a list of entries; API.errorMessage turns them into
+                // sentences ("Company name must be 200 characters or fewer.")
+                // where a bare list used to print "[object Object]".
+                // (API is a top-level const in api.js: a shared global
+                // binding, not a property of window.)
+                detail = typeof API !== "undefined" && typeof API.errorMessage === "function"
+                    ? API.errorMessage(data.detail, detail)
+                    : (typeof data.detail === "string" ? data.detail : detail);
             } catch (e) {}
             const err = new Error(detail);
             err.status = res.status;
@@ -87,7 +94,7 @@
     function sectionHeader(text) {
         return (
             '<div style="margin:18px 0 4px;padding-bottom:4px;border-bottom:1px solid #eee;' +
-            'font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#888;font-weight:700;">' +
+            'font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#767676;font-weight:700;">' +
             text +
             "</div>"
         );
@@ -210,16 +217,24 @@
     }
 
     function loginViewHTML() {
+        // Name the books: with several companies on one machine, "Unlock
+        // Slowbooks" did not say whose password it wanted (explore 2.17.3,
+        // macbase1 F2).
+        const name = existingCompany.name;
         return (
             '<form id="auth-form" ' +
             'style="background:#fff;color:#111;padding:32px 28px;border-radius:8px;' +
             'min-width:340px;max-width:400px;width:100%;' +
             'box-shadow:0 20px 60px rgba(0,0,0,0.4);">' +
-            '<h2 style="margin:0 0 6px;font-size:20px;">Unlock Slowbooks</h2>' +
+            '<h2 id="auth-title" style="margin:0 0 6px;font-size:20px;">' +
+            (name ? "Unlock " + escapeText(name) : "Unlock Slowbooks") +
+            "</h2>" +
             '<p style="margin:0 0 20px;color:#555;font-size:13px;line-height:1.5;">' +
             (multiUser
                 ? "Sign in to continue."
-                : "Enter your password to continue.") +
+                : name
+                    ? "Enter the password for " + escapeText(name) + " to continue."
+                    : "Enter your password to continue.") +
             "</p>" +
             (multiUser ? userSelectHTML() + '<div style="height:10px"></div>' : "") +
             field("auth-password", "Password", {
@@ -357,7 +372,7 @@
             '<div id="auth-error" style="' +
             errorBoxStyle() +
             '"></div>' +
-            '<p style="margin:14px 0 0;color:#777;font-size:12px;line-height:1.5;text-align:center;">' +
+            '<p style="margin:14px 0 0;color:#767676;font-size:12px;line-height:1.5;text-align:center;">' +
             "You can add your address, phone, tax ID, payment defaults, " +
             "and integrations in Settings after you sign in." +
             "</p>" +
@@ -451,11 +466,31 @@
         if (existing) existing.remove();
     }
 
+    // The status bar behind the overlay. The shell's own placeholder and the
+    // failed first page load used to read "Error loading page · Company:
+    // bookkeeper.sbk" behind a brand-new company's sign-in (explore 2.17.3,
+    // skytech M18); nothing had failed.
+    function paintStatusBar(mode) {
+        const text = document.getElementById("status-text");
+        if (text) {
+            text.textContent = mode === "setup"
+                ? "Set up this company to continue"
+                : "Sign in to continue";
+        }
+        const company = document.getElementById("status-company");
+        if (company) {
+            company.textContent = existingCompany.name
+                ? "Company: " + existingCompany.name
+                : "";
+        }
+    }
+
     function renderView(mode, onSuccess) {
         removeOverlay();
         const html = mode === "setup" ? setupViewHTML() : loginViewHTML();
         const overlay = buildShell(html);
         document.body.appendChild(overlay);
+        paintStatusBar(mode);
         if (mode === "setup") {
             wireSetup(overlay, onSuccess);
         } else {

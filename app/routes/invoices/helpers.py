@@ -5,7 +5,10 @@
 
 from datetime import date, timedelta
 from decimal import Decimal
+import logging
 
+from fastapi import HTTPException
+from fastapi.exceptions import RequestValidationError
 from sqlalchemy.orm import Session
 
 from app.models.items import Item
@@ -63,6 +66,54 @@ def resolve_line_taxable(db: Session, lines_data, customer=None) -> None:
         ln.is_taxable = default
 
 
+def refuse_negative_lines(db: Session, lines, invoice=None) -> None:
+    """A negative price is a discount. A line may carry one on a discount
+    item (the one a QuickBooks Online discount came in on:
+    qbo_common.is_discount_item), or on an item (or no item) the invoice
+    being edited already has a negative line on: a QuickBooks Online
+    document keeps the negative lines it came with, and an edit saves them
+    back. Any other is refused as it always was, in the same words: a
+    refund belongs on a credit memo."""
+    from app.services.qbo_common import is_discount_item
+
+    had = {
+        line.item_id
+        for line in (invoice.lines if invoice is not None else [])
+        if Decimal(str(line.rate or 0)) < 0
+    }
+    for index, line in enumerate(lines):
+        if Decimal(str(line.rate or 0)) >= 0:
+            continue
+        if line.item_id in had or is_discount_item(db, line.item_id):
+            continue
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("body", "lines", index),
+                    "msg": "Value error, rate must be non-negative; use a credit "
+                    "memo for refunds",
+                    "input": None,
+                }
+            ]
+        )
+
+
+def kept_tax(invoice, tax_rate, lines):
+    """The tax amount an edit keeps as it is: one an import brought with no
+    rate that gives it (QuickBooks Online's, when its tax lines don't make a
+    single rate; see qbo_import._qbo_rate). Worked out from the rate, it
+    would come to 0.00. None when a rate is entered, when the invoice has a
+    rate or no tax, or when no line is taxable now."""
+    if tax_rate and Decimal(str(tax_rate)) != 0:
+        return None
+    if Decimal(str(invoice.tax_rate or 0)) != 0 or not invoice.tax_amount:
+        return None
+    if not any(getattr(line, "is_taxable", None) is not False for line in lines):
+        return None
+    return Decimal(str(invoice.tax_amount))
+
+
 def _compute_totals(lines_data, tax_rate):
     """Tax applies to the lines flagged taxable (QuickBooks-style per-line
     tax); the rate itself stays on the document."""
@@ -83,6 +134,7 @@ def _build_invoice_journal_lines(
     """Build the journal-line list for an invoice. Used by create/update/duplicate.
 
     `lines_iter` yields objects with .quantity, .rate, and .item_id.
+    `face` is the document's own name (donor_documents.document_label).
     """
     journal_lines = []
     journal_lines.append(
@@ -109,8 +161,10 @@ def _build_invoice_journal_lines(
         journal_lines.append(
             {
                 "account_id": income_id,
-                "debit": Decimal("0"),
-                "credit": line_amount,
+                # A discount line (negative) is taken off its account, the
+                # discount account of the item it is on: a debit.
+                "debit": -line_amount if line_amount < 0 else Decimal("0"),
+                "credit": line_amount if line_amount > 0 else Decimal("0"),
                 "description": (getattr(ld, "description", "") or ""),
                 "class_id": getattr(ld, "class_id", None),
                 "job_id": getattr(ld, "job_id", None),

@@ -9,14 +9,14 @@ const App = {
         '/jobs':          { page: 'jobs',            label: 'Jobs',               render: () => JobsPage.render() },
         '/jobs/:id':      { page: 'jobs',            label: 'Job',                render: (id) => JobsPage.renderDetail(id) },
         '/job-costs':     { page: 'job-costs',       label: 'Job Cost Entries',   render: () => JobCostsPage.render() },
-        '/releases':      { page: 'releases',        label: 'Releases from Restriction', render: () => ReleasesPage.render() },
-        '/functional-allocations': { page: 'functional-allocations', label: 'Functional Allocations', render: () => AllocationsPage.render() },
+        '/releases':      { page: 'releases',        label: 'Releases from Restriction', nonprofit: true, render: () => ReleasesPage.render() },
+        '/functional-allocations': { page: 'functional-allocations', label: 'Functional Allocations', nonprofit: true, render: () => AllocationsPage.render() },
         '/vendors':       { page: 'vendors',         label: 'Vendor Center',      render: () => VendorsPage.render() },
         '/items':         { page: 'items',           label: 'Item List',          render: () => ItemsPage.render() },
         '/invoices':      { page: 'invoices',        label: 'Create Invoices',    render: () => InvoicesPage.render() },
         '/invoices/:id':  { page: 'invoices',        label: 'Invoice',            render: (id) => App.renderDocument(InvoicesPage, id) },
         '/sales-receipts': { page: 'sales-receipts', label: 'Enter Sales Receipts', render: () => SalesReceiptsPage.render() },
-        '/in-kind-gifts': { page: 'in-kind-gifts',   label: 'In-Kind Gifts',      render: () => InKindPage.render() },
+        '/in-kind-gifts': { page: 'in-kind-gifts',   label: 'In-Kind Gifts',      nonprofit: true, render: () => InKindPage.render() },
         '/estimates':     { page: 'estimates',       label: 'Create Estimates',   render: () => EstimatesPage.render() },
         '/payments':      { page: 'payments',        label: 'Receive Payments',   render: () => PaymentsPage.render() },
         '/payments/:id':  { page: 'payments',        label: 'Payment',            render: (id) => App.renderDocument(PaymentsPage, id) },
@@ -42,7 +42,7 @@ const App = {
         // Phase 4: CSV Import/Export
         '/csv':           { page: 'csv',             label: 'CSV Import/Export',  render: () => App.renderCSV() },
         // Phase 8: QuickBooks Online
-        '/qbo':           { page: 'qbo',             label: 'QuickBooks Online',  render: () => QBOPage.render() },
+        '/qbo':           { page: 'qbo',             label: 'QuickBooks Online',  render: () => QBOPage.render(), mount: () => QBOPage.mount() },
         // Phase 5: Advanced Integration
         '/tax':           { page: 'tax',             label: 'Tax Reports',        render: () => TaxPage.render() },
         // Phase 6: Ambitious
@@ -66,7 +66,9 @@ const App = {
         // The Check Register page is the Banking register now (2.10); old bookmarks land there.
         '/check-register': { page: 'banking',         label: 'Banking',            render: () => BankingPage.render() },
         '/cc-charges':    { page: 'cc-charges',      label: 'CC Charges',         render: () => CCChargesPage.render() },
+        '/cc-charges/:id':    { page: 'cc-charges', label: 'CC Charge',     render: (id) => App.withDocument(() => CCChargesPage.render(), () => JournalPage.view(id)) },
         '/expenses':      { page: 'expenses',        label: 'Enter Expenses',     render: () => ExpensesPage.render() },
+        '/expenses/:id':      { page: 'expenses',   label: 'Expense',       render: (id) => App.withDocument(() => ExpensesPage.render(), () => ExpensesPage.showDetail(id)) },
         // Phase 10: Quick Wins + Medium Effort Features
         '/budgets':       { page: 'budgets',         label: 'Budget vs Actual',   render: () => BudgetsPage.render() },
         '/bank-rules':    { page: 'bank-rules',      label: 'Bank Rules',         render: () => BankRulesPage.render() },
@@ -106,7 +108,16 @@ const App = {
     },
 
     async navigate(hash) {
+        if (App._pageCleanup) { App._pageCleanup(); App._pageCleanup = null; }
         const path = hash.replace('#', '') || '/';
+        // Keep the address in step with the page shown. The toolbar's Home,
+        // Quick Entry and Reports (and the shortcuts, search results and the
+        // pages that move on by themselves) came here without changing it,
+        // so the sidebar link of the page left behind then did nothing:
+        // clicking it changed no hash (2.18.0 gate, macbase1 NEW-9).
+        // pushState gives Back an entry, as a link does, and fires no
+        // hashchange to navigate a second time.
+        if ((location.hash || '#/') !== `#${path}`) history.pushState(null, '', `#${path}`);
         let route = App.routes[path];
         let param = null;
         if (!route) {
@@ -128,11 +139,47 @@ const App = {
         // Status bar
         App.setStatus(`Loading ${route.label}...`);
 
+        // The nonprofit pages are in the sidebar only in nonprofit mode, but
+        // a bookmark or a typed URL reached them in a business company too
+        // (W-L13) — and posted to net-asset accounts a business never has.
+        if (route.nonprofit && !Terms.isNonprofit()) {
+            $('#page-content').innerHTML = App._nonprofitOnlyHtml(route.label);
+            App.setStatus(`${route.label} — nonprofit companies only`);
+            return;
+        }
+        // Payroll and HR are the administrator's: the server refuses them to
+        // every other role, reads included, and the sidebar leaves them out.
+        // A bookmark or a typed address still opened them half loaded, on
+        // buttons that answered 403; a read-only user's View Checklist even
+        // tried to set up a checklist (2.18.0 gate, W-L17 leftovers). So is
+        // Migrate Data, whose dry run and import are refused to every other
+        // role. The role can arrive while the first page loads: asked again
+        // after.
+        // The audit log is closed to a read-only sign-in (it keeps every
+        // earlier value of every record); typed in, it said only "Couldn't
+        // load this page" (skytech, 2.18.0 round 6).
+        const notForReadOnly = () => App.NOT_FOR_READONLY_PAGES.includes(route.page) && App.isReadOnly();
+        const adminOnly = () => (App.ADMIN_ONLY_PAGES.includes(route.page) && App.role !== 'admin')
+            || notForReadOnly();
+        const showAdminOnly = () => {
+            if (notForReadOnly()) {
+                $('#page-content').innerHTML = App._notForReadOnlyHtml(route.label);
+                App.setStatus(`${route.label} — not open to a read-only sign-in`);
+                return;
+            }
+            $('#page-content').innerHTML = App._adminOnlyHtml(route.label, route.page);
+            App.setStatus(`${route.label} — administrators only`);
+        };
+        if (adminOnly()) return showAdminOnly();
+
         try {
             const html = await route.render(param);
+            if (adminOnly()) return showAdminOnly();
             $('#page-content').innerHTML = html;
             App.setStatus(`${route.label} — Ready`);
+            if (route.mount) App._pageCleanup = route.mount();
         } catch (err) {
+            if (adminOnly()) return showAdminOnly();
             // Server-side detail (err.message and stack) goes to console
             // for devs; the DOM gets a clean user-facing error with a
             // recovery action. Avoid leaking framework internals into
@@ -147,6 +194,245 @@ const App = {
             </div>`;
             App.setStatus('Error loading page');
         }
+    },
+
+    _nonprofitOnlyHtml(label) {
+        return `<div class="empty-state">
+            <h3>${escapeHtml(label)} is for nonprofit companies</h3>
+            <p>This company is set up as a business, so there is nothing to record here.
+               If it is a nonprofit, change its Company Type in Settings first.</p>
+            <p style="margin-top:12px;">
+                <a href="#/" class="btn btn-secondary">Return to Dashboard</a>
+                <a href="#/settings" class="btn btn-secondary">Open Settings</a>
+            </p>
+        </div>`;
+    },
+
+    // Why a page is the administrator's; payroll and HR unless named here.
+    _ADMIN_ONLY_WHY: {
+        migrate: "Bringing books in from another program is open to an administrator's sign-in only.",
+    },
+
+    _notForReadOnlyHtml(label) {
+        return `<div class="empty-state">
+            <h3>${escapeHtml(label)} isn't open to a read-only sign-in</h3>
+            <p>It keeps every earlier value of every record, so it is for administrators and bookkeepers.
+               An administrator can change your role under Settings → Users.</p>
+            <p style="margin-top:12px;">
+                <a href="#/" class="btn btn-secondary">Return to Dashboard</a>
+            </p>
+        </div>`;
+    },
+
+    _adminOnlyHtml(label, page) {
+        const why = App._ADMIN_ONLY_WHY[page]
+            || "Payroll and staff records open to an administrator's sign-in only.";
+        return `<div class="empty-state">
+            <h3>${escapeHtml(label)} is for administrators</h3>
+            <p>${escapeHtml(why)}
+               An administrator can change your role under Settings → Users.</p>
+            <p style="margin-top:12px;">
+                <a href="#/" class="btn btn-secondary">Return to Dashboard</a>
+            </p>
+        </div>`;
+    },
+
+    // ---- Read-only sign-ins (Server Edition) -------------------------------
+    // The server refuses every write from the readonly role with a 403 —
+    // that stays the enforcement. But every page offered "+ New", and a
+    // whole form could be filled in before the refusal arrived (2.17.3
+    // exploratory test, W-L17). Once /api/auth/status names the role, the
+    // create buttons are hidden and every form, a dialog's or a page's, is
+    // shown locked, with a sentence saying why.
+    role: 'admin',
+    READ_ONLY_MESSAGE: 'Your sign-in is read-only: you can look, but not save changes. '
+        + 'An administrator can change your role under Settings → Users.',
+
+    isReadOnly() { return App.role === 'readonly'; },
+
+    isAdmin() { return App.role === 'admin'; },
+
+    setRole(role) {
+        App.role = role || 'admin';
+        document.body.classList.toggle('role-readonly', App.isReadOnly());
+        // the first page can open before the role is known
+        const open = document.querySelector('#sidebar .nav-link.active');
+        if (App.role !== 'admin' && open && App.ADMIN_ONLY_PAGES.includes(open.dataset.page)) {
+            App.navigate(location.hash);
+        }
+        const page = document.getElementById('page-content');
+        if (App.isAdmin() || !page) return;
+        if (App.isReadOnly()) {
+            // the toolbar's shortcuts to new documents, and batch entry
+            document.querySelectorAll('#topbar .tb-btn[data-action], #topbar .tb-btn[data-nav="#/quick-entry"]')
+                .forEach(b => b.classList.add('hidden'));
+            // the sidebar's pages that only enter things (Batch Payments...),
+            // and the Audit Log, which the server refuses this role
+            App.hideWriteControls(document.getElementById('sidebar'));
+            document.querySelectorAll('#sidebar a[href="#/audit"]').forEach(l => {
+                (l.closest('li') || l).classList.add('hidden');
+            });
+        }
+        const roots = [page, document.getElementById('modal-body')].filter(Boolean);
+        roots.forEach(App.rolePass);
+        if (!App._roleObserver) {
+            // Pages re-render in place (tabs, filters), and pages and dialogs
+            // fill in after they open (Settings' lists, a report's figures):
+            // keep them clean. The skytech sweep at 2.18.0 still found AR
+            // Aging's Apply Late Fees on offer, drawn after the dialog opened.
+            App._roleObserver = new MutationObserver(() => roots.forEach(App.rolePass));
+            roots.forEach(r => App._roleObserver.observe(r, { childList: true, subtree: true }));
+        }
+    },
+
+    // What a sign-in other than the administrator's gets of a page or a
+    // dialog: the administrator's controls taken away, and for a read-only
+    // sign-in every write as well.
+    rolePass(root) {
+        App.adminPass(root);
+        App.readOnlyPass(root);
+    },
+
+    // ---- The administrator's controls (Server Edition) ---------------------
+    // Some writes are the administrator's: company settings, backups, new
+    // company files, the logo, connecting and importing from QuickBooks
+    // Online (app.main's _ADMIN_WRITE_PREFIXES, and the routes that call
+    // require_admin). The server refuses them to every other role, but a
+    // bookkeeper was offered them: the whole Settings page could be filled
+    // in before Save Settings answered "Admin role required". They are
+    // marked where they are built, and for any role but admin:
+    //   data-admin         a control only an administrator can use is hidden;
+    //                      a field so marked shows its value, locked
+    //   data-admin-fields  a form whose fields only an administrator saves
+    //                      (Settings) shows its named fields locked: they are
+    //                      what it sends
+    //   data-admin-note    the sentence that says why, drawn hidden where the
+    //                      controls are, is shown
+    // A read-only sign-in's forms carry its own sentence, so the notes stay
+    // hidden for it: one sentence, not two.
+    adminPass(root) {
+        if (!root || App.isAdmin()) return;
+        root.querySelectorAll('[data-admin]').forEach(el => {
+            const field = /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName);
+            if (field) el.disabled = true;
+            // a field shows its value; a file chooser has none to show
+            if (!field || el.type === 'file') el.classList.add('hidden');
+        });
+        root.querySelectorAll('form[data-admin-fields]').forEach(form => {
+            form.querySelectorAll('input[name], select[name], textarea[name]')
+                .forEach(el => { el.disabled = true; });
+        });
+        if (App.isReadOnly()) return;
+        root.querySelectorAll('[data-admin-note]').forEach(el => el.classList.remove('hidden'));
+    },
+
+    // What a read-only sign-in can't do, named by the page method a button
+    // calls: the server refuses every one ("Your role doesn't allow this
+    // action"), so the button isn't shown (skytech W-L17, 2.18.0 gate: a
+    // read-only sign-in still saw Edit, Mark Sent, Void, Duplicate and
+    // Upload on an invoice). Opening a record's form stays: it opens locked,
+    // with the read-only note, and for some records it is the only view.
+    // Reads stay too: View, Print, Save PDF, reports and IIF/CSV exports.
+    WRITE_ACTIONS: new Set([
+        'InvoicesPage.void', 'InvoicesPage.markSent', 'InvoicesPage.duplicate', 'InvoicesPage.uploadAttachment',
+        'InvoicesPage.deleteAttachment', 'InvoicesPage.showApplyCredit', 'InvoicesPage.showWriteOff',
+        'InvoicesPage.emailInvoice', 'InvoicesPage.copyPaymentLink', 'InvoicesPage.checkPaymentStatus',
+        'EstimatesPage.convert', 'SalesReceiptsPage.void', 'CreditMemosPage.void', 'CreditMemosPage.showApply',
+        'CreditMemosPage.doApply', 'PaymentsPage.void', 'PaymentsPage.showApplyCredit', 'DepositsPage.voidDeposit',
+        'DepositsPage.makeDeposit', 'BillsPage.void', 'BillsPage.voidBillPayment', 'BillsPage.uploadAttachment',
+        'BillsPage.deleteAttachment', 'BillsPage.showPayForm', 'VendorCreditsPage.void', 'VendorCreditsPage.showApply',
+        'VendorCreditsPage.doApply', 'PurchaseOrdersPage.convertToBill', 'PurchaseOrdersPage.doConvert',
+        'ExpensesPage.void', 'ExpensesPage.uploadAttachment', 'ExpensesPage.deleteAttachment', 'CCChargesPage.voidCharge',
+        'JournalPage.void', 'JobCostsPage.voidEntry', 'JobCostsPage.showAllocate', 'JobsPage.postTime', 'JobsPage.remove',
+        'JobsPage.saveBudget', 'JobsPage.seedBudget', 'InKindPage.voidEntry', 'ReleasesPage.voidEntry',
+        'AllocationsPage.voidEntry', 'AllocationsPage.deleteRule', 'AllocationsPage.showRun', 'RecurringPage.generateNow',
+        'RecurringPage.del', 'ResellerPermitsPage.del', 'ResellerPermitsPage.verifyWorkflow', 'TimeEntriesPage.approve',
+        'TimeEntriesPage.reject', 'PayrollPage.process', 'PTOPage.approveRequest', 'PTOPage.rejectRequest',
+        'PTOPage.runAccrual', 'PTOPage.revalue', 'DeductionsPage.endGarnishment', 'BenefitsPage.endEnrollment',
+        'BenefitsPage.retireCode', 'BenefitsPage.seedStandard', 'BenefitsPage.setupAccounts', 'BenefitsPage.rebuildYTD',
+        'BenefitsPage.createRemittanceBill', 'BenefitsPage.deleteRate', 'BenefitsPage.deleteGroup',
+        'OnboardingPage.completeTask', 'FixedAssetsPage.showPostPurchaseForm', 'FixedAssetsPage.showDisposeForm',
+        'FixedAssetsPage.showDepreciationForm', 'FixedAssetsPage.showImportForm', 'ItemsPage.showAdjust',
+        'BankingPage.voidEntry', 'BankingPage.voidTransfer', 'BankingPage.showEntryForm', 'BankingPage.showTransferForm',
+        'BankingPage.showAccountForm', 'BankingPage.showOFXImport', 'BankingPage.confirmOFXImport', 'BankingPage.startReconcile',
+        'BankingPage.finishReconcile', 'BankingPage.abandonReconcile', 'BankingPage.matchLine', 'BankingPage.showMatch',
+        'BankingPage.excludeLine', 'BankingPage.findMatches', 'BankingPage.addAll', 'BankingPage.postLegacy',
+        'BankingPage.dismissLegacy', 'BankingPage.syncSimpleFIN', 'BankingPage.disconnectSimpleFIN',
+        'BankingPage.showSimpleFINHistory', 'BankRulesPage.deleteRule', 'BankRulesPage.applyAll', 'TaxPage.showPaySalesTax',
+        'ReportsPage.sendCollectionLetters', 'ReportsPage.batchEmailStatements', 'ReportsPage.emailGivingStatements',
+        'ReportsPage.applyLateFees', 'ReportsPage.deleteSaved', 'QBOPage.importAll', 'QBOPage.importSelected',
+        'QBOPage.exportAll', 'QBOPage.exportSelected', 'QBOPage.connect', 'QBOPage.disconnect', 'IIFPage.importFile',
+        'IIFPage.importQbReportCsv', 'MigrationPage.doImport', 'OpeningBalancesPage.save', 'BudgetsPage.saveAll',
+    ]),
+
+    // "+ New Invoice", "+ Record Payment", "New Account": a create button is
+    // labelled "+ …", or is the page header's primary action; and every
+    // button that calls one of WRITE_ACTIONS.
+    //
+    // The rest is marked where it is built, with data-write: a control only
+    // an edit can use (Deactivate on an account, Create Backup, a bank
+    // line's Add, the panel that imports a file). It is hidden; a field
+    // marked so shows a value (a budget, a stored category), so it stays in
+    // sight, locked. A file chooser is only ever an upload: hidden (macbase1,
+    // 2.18.0 round 4: the Attachments "Choose File" in an invoice's view).
+    hideWriteControls(root) {
+        if (!root || !App.isReadOnly()) return;
+        root.querySelectorAll('button, a.btn, [data-write], input[type="file"]').forEach(el => {
+            if (el.getAttribute('data-write') !== null) {
+                if (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) el.disabled = true;
+                else el.classList.add('hidden');
+                return;
+            }
+            if (el.tagName === 'INPUT') {  // the file choosers
+                el.disabled = true;
+                el.classList.add('hidden');
+                return;
+            }
+            const label = (el.textContent || '').trim();
+            const headerAction = el.classList.contains('btn-primary') && el.closest('.page-header');
+            const call = /^\s*(\w+Page\.\w+)\(/.exec(el.getAttribute('onclick') || '');
+            // Edit beside View (an invoice's row): View shows the record, and
+            // Edit would only open it locked
+            const editBesideView = label === 'Edit' && !!el.parentElement
+                && [...el.parentElement.querySelectorAll('button, a.btn')]
+                    .some(b => (b.textContent || '').trim() === 'View');
+            if (label.startsWith('+') || headerAction || editBesideView
+                || (call && App.WRITE_ACTIONS.has(call[1]))) {
+                el.classList.add('hidden');
+            }
+        });
+    },
+
+    // Called by openModal(), and for the page by readOnlyPass: Settings,
+    // Quick Entry and Batch Payments are forms on the page itself, and were
+    // left open to a read-only sign-in until Save (skytech, 2.18.0 round 4).
+    // A form that only opens a document (the customer statement) carries
+    // data-readonly-ok and stays usable; so does a button that only opens a
+    // record inside a locked form (an email template, shown locked in turn).
+    lockForms(root) {
+        if (!root || !App.isReadOnly()) return;
+        root.querySelectorAll('form:not([data-readonly-ok])').forEach(form => {
+            form.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
+            form.querySelectorAll('button').forEach(b => {
+                if (/closeModal\(/.test(b.getAttribute('onclick') || '')) return;
+                if (b.hasAttribute('data-readonly-ok')) return;
+                b.disabled = true;
+                b.style.opacity = '0.5';
+                b.style.cursor = 'not-allowed';
+            });
+            form.onsubmit = (e) => { e.preventDefault(); toast(App.READ_ONLY_MESSAGE, 'error'); return false; };
+            if (!form.querySelector('.readonly-note')) {
+                form.insertAdjacentHTML('afterbegin',
+                    `<div class="hint hint--locked readonly-note" style="margin-bottom:10px;">${escapeHtml(App.READ_ONLY_MESSAGE)}</div>`);
+            }
+        });
+    },
+
+    // What a read-only sign-in gets of a page or a dialog: its forms locked,
+    // and nothing offered that only an edit could use.
+    readOnlyPass(root) {
+        App.lockForms(root);
+        App.hideWriteControls(root);
     },
 
     setStatus(text) {
@@ -470,20 +756,32 @@ const App = {
             try {
                 const results = await API.get(`/search?q=${encodeURIComponent(query)}`);
                 let html = '';
+                // A document reads "number · who · amount", so a search for an
+                // amount (612.30) shows which document matched.
+                const doc = (num, who, amt) => [num, who, formatCurrency(amt)].filter(Boolean).join(' · ');
                 const sections = [
                     { key: 'customers', label: T('Customers'), onClick: (item) => `App.navigate('#/customers');closeSearchDropdown();` },
                     { key: 'vendors', label: 'Vendors', onClick: (item) => `App.navigate('#/vendors');closeSearchDropdown();` },
                     { key: 'items', label: 'Items', onClick: (item) => `App.navigate('#/items');closeSearchDropdown();` },
-                    { key: 'invoices', label: T('Invoices'), onClick: (item) => `InvoicesPage.view(${item.id});closeSearchDropdown();` },
-                    { key: 'estimates', label: 'Estimates', onClick: (item) => `App.navigate('#/estimates');closeSearchDropdown();` },
-                    { key: 'payments', label: 'Payments', onClick: (item) => `App.navigate('#/payments');closeSearchDropdown();` },
+                    { key: 'invoices', label: T('Invoices'), onClick: (item) => `InvoicesPage.view(${item.id});closeSearchDropdown();`,
+                      text: (i) => doc(i.invoice_number, i.customer_name, i.total) },
+                    { key: 'sales_receipts', label: T('Sales Receipts'), onClick: (item) => `SalesReceiptsPage.view(${item.id});closeSearchDropdown();`,
+                      text: (i) => doc(i.invoice_number, i.customer_name, i.total) },
+                    { key: 'estimates', label: 'Estimates', onClick: (item) => `App.navigate('#/estimates');closeSearchDropdown();`,
+                      text: (i) => doc(i.estimate_number, i.customer_name, i.total) },
+                    { key: 'credit_memos', label: 'Credit Memos', onClick: (item) => `App.navigate('#/credit-memos');closeSearchDropdown();`,
+                      text: (i) => doc(i.memo_number, i.customer_name, i.total) },
+                    { key: 'bills', label: 'Bills', onClick: (item) => `BillsPage.view(${item.id});closeSearchDropdown();`,
+                      text: (i) => doc(i.bill_number, i.vendor_name, i.total) },
+                    { key: 'payments', label: 'Payments', onClick: (item) => `PaymentsPage.view(${item.id});closeSearchDropdown();`,
+                      text: (i) => doc(formatDate(i.date), i.customer_name, i.amount) },
                 ];
                 for (const sec of sections) {
                     const items = results[sec.key];
                     if (items && items.length > 0) {
                         html += `<div class="search-section">${sec.label}</div>`;
                         items.forEach(item => {
-                            const label = item.display || item.name || item.invoice_number || `#${item.id}`;
+                            const label = sec.text ? sec.text(item) : (item.display || item.name || item.invoice_number || `#${item.id}`);
                             html += `<div class="search-item" onclick="${sec.onClick(item)}">${escapeHtml(label)}</div>`;
                         });
                     }
@@ -521,7 +819,7 @@ const App = {
                         <a href="/api/csv/export/accounts" class="btn btn-secondary" download>Export Chart of Accounts</a>
                     </div>
                 </div>
-                <div class="settings-section">
+                <div class="settings-section" data-write>
                     <h3>Import</h3>
                     <p style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">Upload CSV files to import data.</p>
                     <form id="csv-import-form" onsubmit="App.importCSV(event)">
@@ -530,6 +828,7 @@ const App = {
                                 <option value="customers">${T('Customers')}</option>
                                 <option value="vendors">Vendors</option>
                                 <option value="items">Items</option>
+                                <option value="accounts">Chart of Accounts</option>
                             </select></div>
                         <div class="form-group"><label>CSV File</label>
                             <input type="file" name="file" accept=".csv" required></div>
@@ -615,7 +914,7 @@ const App = {
                 <div style="margin-top:12px; display:flex; justify-content:space-between; align-items:center;">
                     <div id="qe-total" style="font-size:16px; font-weight:700; color:var(--qb-navy);">Total: $0.00</div>
                     <div class="form-actions" style="margin:0;">
-                        <button type="submit" class="btn btn-primary">Save & Next (Ctrl+Enter)</button>
+                        <button type="submit" class="btn btn-primary" data-write>Save & Next (Ctrl+Enter)</button>
                     </div>
                 </div>
             </form>
@@ -719,17 +1018,25 @@ const App = {
     async loadCompanySettings() {
         try {
             const s = await API.get('/settings');
-            App.settings = s || {};
             Terms.init(s);
-            const companyEl = $('#status-company');
-            if (companyEl && s.company_name && s.company_name !== 'My Company') {
-                companyEl.textContent = `Company: ${s.company_name}`;
-                // the window / tab title and the topbar brand say whose books these are
-                document.title = `${s.company_name} — Slowbooks Pro 2026`;
-                const brand = $('#topbar-company');
-                if (brand) brand.textContent = s.company_name;
-            }
+            App.showCompany(s);
         } catch (e) { Terms.init(null); /* business words until signed in */ }
+    },
+
+    // The shell's copy of the settings, and the company's name where the
+    // shell shows it. Settings calls this after a save, so a rename shows at
+    // once; it used to wait for the next start, and the Restore dialog
+    // named the company by its old name meanwhile (2.18.0 gate, skytech N4).
+    showCompany(s) {
+        App.settings = s || {};
+        const name = App.settings.company_name;
+        if (!name || name === 'My Company') return;
+        const companyEl = $('#status-company');
+        if (companyEl) companyEl.textContent = `Company: ${name}`;
+        // the window / tab title and the topbar brand say whose books these are
+        document.title = `${name} — Slowbooks Pro 2026`;
+        const brand = $('#topbar-company');
+        if (brand) brand.textContent = name;
     },
 
     // Rewrites the static shell into the company's words. index.html is
@@ -777,6 +1084,11 @@ const App = {
                 const modalForm = document.querySelector('#modal-body form');
                 if (modalForm) { modalForm.requestSubmit(); e.preventDefault(); }
             }
+            // Alt+N / Alt+P / Alt+Q start new entries: a read-only sign-in is
+            // told why nothing opens, rather than handed a blank locked form
+            if (e.altKey && ['n', 'p', 'q'].includes(e.key) && App.isReadOnly()) {
+                toast(App.READ_ONLY_MESSAGE, 'info'); e.preventDefault(); return;
+            }
             // Alt+N: new invoice
             if (e.altKey && e.key === 'n') { InvoicesPage.showForm(); e.preventDefault(); }
             // Alt+P: receive payment
@@ -808,7 +1120,7 @@ const App = {
         App.updateClock();
         setInterval(App.updateClock, 60000);
 
-        // Real version in the footer + update badge on desktop installs
+        // Real version in the footer + optional update badge
         App.initSystemInfo();
 
         // Settings first: the vocabulary and the nonprofit nav items must
@@ -853,6 +1165,7 @@ const App = {
             const auth = await fetch('/api/auth/status', { credentials: 'same-origin' });
             if (auth.ok) {
                 const a = await auth.json();
+                if (a.user) App.setRole(a.user.role);
                 if (a.multi_user && a.user && a.user.role !== 'admin') {
                     // HR and payroll are admin functions; the server refuses
                     // them for other roles, so do not offer the pages.
@@ -873,7 +1186,7 @@ const App = {
                     }
                 }
             }
-            if (!info.desktop) return;
+            if (!info.update_check_enabled) return;
 
             res = await fetch('/api/system/update-check', { credentials: 'same-origin' });
             if (!res.ok) return;

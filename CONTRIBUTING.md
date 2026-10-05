@@ -71,20 +71,27 @@ contributors don't have (and don't need). The standard flow:
 Good work gets merged under your name; polish happens in follow-up
 commits, so don't hold a PR hostage to perfection.
 
-GitGuardian flags the fake credentials in `tests/` from time to time —
-those are pytest fixtures, tracked as dismissed false positives.
+GitGuardian's GitHub App scans every PR and does not read the repo's
+`.gitguardian.yaml` (that file configures the `ggshield` CLI only). Its
+pair detector fires when a `"username"` and a `"password"` literal sit
+next to each other in one object, so in tests keep fixture passwords in a
+named constant away from the username key. Scripts take a password from
+the environment (`SLOWBOOKS_QA_PASSWORD`), never as a default. Nothing in
+this repository — test, fixture, docstring, default — is ever a real
+credential.
 
 ## Platform maintainers
 
-- **Windows + Docker + server**: @VonHoltenCodes (releases signed via
-  Azure Trusted Signing in CI)
-- **macOS**: [@ContractorKeith](https://github.com/ContractorKeith) —
+- **Windows, Linux, Docker, Server Edition**: @VonHoltenCodes. Windows
+  releases are signed via Azure Trusted Signing in CI.
+- **macOS**: [@ContractorKeith](https://github.com/ContractorKeith)
   maintains the `.app`/DMG build and release tooling in
-  `packaging/macos/`. Since v2.5.3, releases sign, notarize, and staple
+  `packaging/macos/` and reviews macOS. Releases sign, notarize and staple
   in CI with the project's Apple Developer ID (credentials live only in
   repo secrets); Keith's local run of the same tooling is the documented
-  fallback, and installed-app acceptance on real hardware remains a
-  human gate.
+  fallback. Apple Silicon only — Intel Macs run the Docker image.
+- **Release QA** runs in the testing repo above, one lane per platform,
+  with a person at the installed program for the checks that need one.
 
 ## Branch naming
 
@@ -92,6 +99,8 @@ those are pytest fixtures, tracked as dismissed false positives.
   Claude Code on the web integration
 - `fix/<short-topic>` — bug fixes
 - `feat/<short-topic>` — new features
+- `docs/<short-topic>` — documentation only
+- `parked/<short-topic>` — work held back on purpose (see *Project rules*)
 - Use kebab-case for the topic (`feat/portal-cookie-session`, not
   `feat/portal_cookie_session`)
 
@@ -107,8 +116,9 @@ We don't enforce Conventional Commits, but commit messages should:
   over alternatives. Wrap body lines around 72 chars.
 - Reference related issues with `Fixes #123` or `Refs #45` in the body
 
-Commits authored via Claude Code on the web carry a session URL at the
-bottom; leave that in.
+Sign every commit off (`git commit -s`) — that line is how you agree to
+the Contributor Terms at the end of this file. Commits authored via Claude
+Code on the web carry a session URL at the bottom; leave that in.
 
 ## Code style
 
@@ -125,13 +135,48 @@ bottom; leave that in.
   - `client` — authenticated `TestClient`. Use for most tests.
   - `unauthed_client` — `TestClient` with no session. Use only for
     auth-flow tests (setup, login, logout).
-  - `db_session` — isolated SQLAlchemy session backed by an in-memory
-    SQLite DB; cleared between tests.
+  - `db_session` — isolated SQLAlchemy session on the suite's file-backed
+    SQLite database; each test runs inside a savepoint that is rolled
+    back afterwards, and a sentinel fails the suite if a test leaks a
+    row. Read `tests/test_*` for a test that talks to the ledger before
+    writing one.
   - `seed_accounts` — chart-of-accounts pre-loaded.
   - `seed_customer` — a single active customer pre-loaded.
 
   Picking the wrong client fixture is the most common newbie miss:
   using `unauthed_client` against a protected route silently 401s.
+
+## Project rules
+
+Decisions the owner has made that a contributor would not guess from the
+code. A PR that crosses one is asked to change, however good the code is.
+
+- **USA only.** Tax, payroll, currency and address handling target the
+  United States. Forks for other countries are welcome; the product does
+  not claim support it cannot test.
+- **The company's words, everywhere.** A nonprofit sees Pledge, Donor and
+  Donation Receipt on every screen, every server message and every printed
+  page. Page text goes through `T()` / `Terms.text` in JS and
+  `terms.text()` in Python (every HTTP error crosses one chokepoint in
+  `app/main.py`). **A posting says what the document is**, in the
+  document's own words at posting time (`document_label`), and history is
+  never rewritten. `scripts/audit/vocab_walk.py` measures a running server
+  in both company types; the gate runs it.
+- **A saved email template is the user's.** The product never rewrites
+  one. Defaults may change; a template someone saved is left alone.
+- **No importer for a named third-party format without a real exported
+  file.** A format built from documentation alone is parked on a
+  `parked/*` branch, contributor's commits intact, until a real file
+  arrives. An importer that is absent fails loudly; one that is present
+  and wrong lands silently in someone's books.
+- **An error never tells the reader to do something they cannot do.**
+  A frozen desktop build has no interpreter and no `alembic`; an
+  instruction has to be one the program itself can carry out (the
+  `--_repair-schema` flag exists for this reason).
+- **The desktop and Server Edition are one program.** A page that only
+  makes sense under the desktop shell checks for it
+  (`window.pywebview.api`) and hides itself in a browser; the API never
+  assumes a window.
 
 ## Adding a feature
 
@@ -336,7 +381,41 @@ of a real DB before shipping.
 **Don't open a public issue for vulnerabilities.** See
 [SECURITY.md](SECURITY.md) for the responsible disclosure path.
 
-## License
+## Contributor Terms
 
-By contributing, you agree your contributions are licensed under the
-same terms as the rest of the repo (see LICENSE).
+You keep the copyright in what you write. By submitting a contribution
+(a pull request, a patch, a fixture, a document) you agree to these terms,
+which exist so the project can keep shipping your work and so the license
+on it can change without going back to every author:
+
+1. **License to the project.** You grant Trent Von Holten, and anyone who
+   receives the Software from him, a perpetual, worldwide, irrevocable,
+   royalty-free, non-exclusive license to use, reproduce, modify,
+   distribute, sublicense, and **relicense** your contribution as part of
+   the Software, under the project's license or any other license he
+   chooses in future. This is the same shape as the Apache and Google
+   contributor agreements: you are not giving up ownership, you are giving
+   the project a license broad enough to be relied on.
+2. **You have the right to grant it.** The contribution is your original
+   work, or you have the right to submit it under these terms — including
+   from your employer if you wrote it on their time or equipment, and
+   including for any third-party code you brought in, whose license you
+   name in the PR.
+3. **Patents.** To the extent you hold patent claims that your contribution
+   would infringe on its own or combined with the Software, you grant the
+   same recipients a license under them for the Software.
+4. **No warranty from you either.** Contributions are provided as-is, the
+   same way the Software is.
+
+**How you agree:** add a sign-off line to every commit —
+
+    git commit -s
+
+— which appends `Signed-off-by: Your Name <you@example.com>`. That line is
+the record that you read these terms and have the right to contribute the
+change. Pull requests without it are asked for it before review, not
+rejected. The PR template repeats the four points as a checkbox.
+
+If you contributed before this section existed (September 2026), your work
+is in the Software under the license it shipped with, and these terms apply
+to anything you contribute from here on. Thank you.

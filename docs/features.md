@@ -27,10 +27,12 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 ![Invoices with IRS Pub 583 Mock Data](../screenshots/invoices.png)
 
 ## Accounts Payable
-- **Purchase Orders** — Non-posting documents to vendors with auto-numbering, convert-to-bill workflow
-- **Bills** — Enter vendor bills (AP mirror of invoices). Track payables with status progression (draft/unpaid/partial/paid/void). Vendor default expense account pre-fill (account resolution: explicit → item → vendor default → global fallback). Scan a vendor receipt to pre-fill the form (see Receipt scanning under Sales Receipts)
-- **Bill Payments** — Pay vendor bills with allocation. Journal: DR AP, CR Bank
-- **AP Aging Report** — Outstanding payables grouped by vendor with 30/60/90 day buckets
+- **Purchase Orders** — Non-posting documents to vendors with auto-numbering, live line amounts and totals, View, Save PDF and Print, and a To Bill step that asks for an account on each line that has none. A new PO starts at no tax
+- **Bills** — Enter vendor bills (AP mirror of invoices). Track payables with status progression (draft/unpaid/partial/paid/void). Each line posts to the account on the line, else the item's expense account, else the vendor's default — a line none of them names is refused (it used to fall back to 6000). Enter Bill has an Account column, fills a picked item's cost and account, takes the vendor's terms and due date, shows a running total and refuses $0.00. Save PDF and Print. Scan a vendor receipt to pre-fill the form (see Receipt scanning under Sales Receipts)
+- **Tax on a purchase** — Sales tax a supplier charges is part of what the purchase cost: spread over the lines to the cent and posted with them (expense, cost of goods or inventory, in the item's unit cost). It never touches 2200 Sales Tax Payable. The Sales Tax report names purchase tax an older release posted there and gives the correcting entry
+- **Vendor list** — Balances worked out from open bills and unapplied credits; a vendor can be made inactive; cost-of-goods accounts can be a vendor's default
+- **Bill Payments** — Pay vendor bills with allocation. Journal: DR AP, CR Bank. Pay Bills makes one payment per vendor and asks for one vendor at a time when a check number is entered; a payment pays only its own vendor's bills. A bill lists its payments, each with View, Print Check and Void (refused once the check is reconciled). Paying from a bank account that would go below zero asks first
+- **AP Aging Report** — Outstanding payables grouped by vendor with 30/60/90 day buckets past due, in home currency, with vendor credits and bill-payment money not yet applied netted, so the total equals account 2000. A bill with no due date ages from its date and terms
 
 ## Double-Entry Accounting
 - **Manual Journal Entries** — Full CRUD for manual journal entries with dynamic line rows, running debit/credit totals, balance indicator, and void with reversing entries
@@ -40,6 +42,7 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 - **Closing Date Enforcement** — Prevent modifications to transactions before a configurable closing date with optional password protection
 - **Audit Log** — Automatic logging of all create/update/delete operations with old/new value tracking via SQLAlchemy event hooks
 - **Account Balances** — Updated in real-time as transactions post
+- **Fixed Assets** — Register an asset and its purchase posts: paid from a bank or card account, on a bill or expense already entered (the cost moves out of the expense account), or owned before the books began (with depreciation already taken). Straight-line depreciation posts monthly; salvage above cost is refused
 
 ## Payroll & HR
 - **Core payroll** — pay runs with federal/state/FICA withholding, balanced journal entries, pay stubs, YTD totals, encrypted ACH direct deposit, gross-up calculator, supplemental wages, multi-state withholding
@@ -50,10 +53,12 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 Tax calculations are approximate — verify with a tax professional. Full module reference (models, routes, UI pages, pending items) lives at [docs/payroll-hr-module.md](payroll-hr-module.md).
 
 ## Banking
-- **Bank Accounts** — Register view with deposits and withdrawals
-- **Check Register** — Filtered bank transaction view with running balance, payment/deposit columns, sorted by date
-- **Make Deposits** — Move funds from Undeposited Funds to a bank account. Select pending payments, choose target account, create deposit
-- **Credit Card Charges** — Enter credit card charges as expenses (DR Expense, CR Credit Card Payable). Dedicated charge entry form with vendor, amount, and expense category
+The register is the ledger account (v2.10, issue #114). Full guide: [docs/banking.md](banking.md).
+- **Bank and credit-card accounts** — chart accounts flagged `bank` / `credit_card`; every paid-from, deposit-to and pay-from picker lists exactly those
+- **Register** — every posting on the account with a running balance (a card shows the amount owed), payee, source link, cleared/reconciled marks; a register entry posts (DR category / CR account for money out, the reverse for money in)
+- **Transfers** — DR to / CR from between bank and card accounts; paying a card is a transfer. Voidable
+- **Make Deposits** — Move funds from Undeposited Funds to a bank account. Select pending payments (each named with its receipt or check number), choose target account, create deposit. A deposit records the payments it took; Recent deposits lists them with View and Void
+- **Credit Card Charges** — DR Expense, CR the card you pick (default 2100). Voidable
 - **Check Printing** — Generate check PDFs in standard 3-per-page format (stub/stub/check) with payee, amount in words, memo, and signature line
 - **Bank Reconciliation** — Full workflow: enter statement balance, toggle cleared items, validate difference = $0, complete
 - **OFX/QFX Import** — Import bank transactions from OFX/QFX files with FITID dedup, preview before import, auto-match by amount/date
@@ -167,9 +172,10 @@ an account ID, while the Worker Gateway needs its deployed URL.
 
 **Settings encryption.** API keys are stored in the `settings` table under `ai_api_key`, encrypted with **Fernet** (AES-128-CBC + HMAC-SHA256) via `app/services/crypto.py`. Ciphertext rows carry the prefix `fernet:v1:` so legacy plaintext rows are detected and migrated gracefully. The master key is resolved in priority order:
 
-1. `SETTINGS_ENCRYPTION_KEY` environment variable (ops-preferred)
-2. `.slowbooks-master.key` file next to the repo (zero-config default; auto-created at 0600)
-3. Fresh generation on first run (logged as a warning)
+1. `SETTINGS_ENCRYPTION_KEY` environment variable (ops-preferred; the desktop app keeps one in its per-user `.env`)
+2. `.slowbooks-master.key` file next to the repo (an install that has one keeps using it)
+3. Derived from `PAYROLL_ENCRYPTION_SECRET` when that is set to a real secret (v2.18+; how a Docker install keeps its key when the container is recreated). During a payroll-secret rotation the previous secret's key still decrypts, and `python -m app.services.encryption rewrap` re-encrypts these too.
+4. Fresh generation on first run, written to (2) at 0600 (logged as a warning)
 
 **Never commit `.slowbooks-master.key`** — it is in `.gitignore`. Losing it means losing every encrypted secret.
 Docker Compose requires option 1 so the key lives outside replaceable app
@@ -263,7 +269,7 @@ curl http://localhost:3001/api/analytics/export.pdf > snapshot.pdf
 
 ## QuickBooks Online Integration
 - **OAuth 2.0** — Connect to QuickBooks Online via Intuit's OAuth Authorization Code flow with automatic token refresh
-- **Import from QBO** — Pull accounts, customers, vendors, items, invoices, and payments from QBO with dependency-ordered import and duplicate detection
+- **Import from QBO** — Pull accounts, customers, vendors, items, invoices, payments, sales receipts, journal entries, and posted ledger activity from QBO with dependency-ordered import and duplicate detection
 - **Export to QBO** — Push Slowbooks data to QBO with entity type mapping and ID tracking
 - **ID Mapping** — `qbo_mappings` table tracks QBO ID ↔ Slowbooks ID per entity for dedup and re-sync
 - **Setup Guide** — See [docs/setup-qbo.md](setup-qbo.md)
@@ -275,7 +281,7 @@ curl http://localhost:3001/api/analytics/export.pdf > snapshot.pdf
 - **CSV Import/Export** — Import customers, vendors, items and the chart of accounts from CSV; export those plus invoices, bills, sales receipts, deposits, classes and jobs
 - **Bring your own chart** (#139 / #161) — Chart of Accounts → **Import…** takes a CSV in the export's own columns (Number, Name, Type, optional Parent, Description, Active), any spreadsheet whose header row uses those words, or **hledger's** account list: the output of `hledger accounts`, `hledger accounts --types` (the `; type:` tag wins), or `hledger balance -O csv` (the `total` row is ignored, balances are not imported). The first post is a dry run that shows every row's fate — create, update, skip, deactivate, keep, error — with a reason, and writes nothing; the second post applies exactly that plan. Existing accounts are matched by number, then by name; a file that names a control account (Receivable, Payable, Checking, Sales tax payable, Inventory, Undeposited funds, Retained earnings, Cost of goods sold, or a credit card under liabilities) **renames that control account** rather than creating a twin, so the operator's chart replaces ours and every document still finds its posting account. Rows without a number get the next free one in their type's range (1000s assets … 6000–9999 expenses). hledger paths keep their hierarchy: `assets:cash:petty cash` becomes *Petty cash* under a *Cash* parent (created if the file never lists it), with the full path kept as the description; the top segment (assets, liabilities, equity, revenues, expenses) is the category, not an account; `assets:bank:*` and `; type: C` accounts are marked as bank accounts. A parent segment that names a control account **is** that account: `assets:inventory` is 1300 Inventory and its children hang from it; a `liabilities:credit card` folder is 2100 and the cards inside it are its children, each marked as a card. Re-importing the same file changes nothing. **Replace the seeded chart** additionally deactivates every account the file does not name that has never been posted to — control accounts and accounts with history are always kept. Also on the CSV Import/Export page as an entity type. `POST /api/csv/import/accounts?dry_run=1|0&replace=0|1`
 - **Print Preview** — Browser print dialog for invoices and estimates via dedicated HTML preview endpoints. Native OS print dialog with "Save as PDF" option
-- **Print-Optimized PDF** — Enhanced invoice PDF template with company logo support
+- **Print-Optimized PDF** — Enhanced invoice PDF template; the company logo (Settings → Company Logo) prints on invoices, estimates, statements, letters, donor documents and reports. When a logo is configured, **Show company logo on invoices** is available in Settings and when creating, editing, or viewing an invoice, alongside a logo preview. It controls all invoice PDFs, Print views, and emailed PDF attachments; enabled by default. Changes made from an invoice save immediately for all invoices.
 - **IIF Import/Export** — Full QuickBooks 2003 Pro interoperability (see below)
 
 ## Inventory, Drill-Down & Duplicate Detection
@@ -295,7 +301,8 @@ curl http://localhost:3001/api/analytics/export.pdf > snapshot.pdf
 - **Saved reports** — Full CRUD on named `(report_type, parameters)` tuples at `/api/saved-reports`. Lets users one-click rerun their favorite P&L, Balance Sheet, or account drill-down without re-entering dates
 
 ## Security & Authentication
-- Single-user authentication with Argon2id password hashing and rate-limited login
+- Single-user authentication with Argon2id password hashing and rate-limited login; a new company opens on setup with its name; an opt-in setting asks for the password each time the app starts
+- Closing date override password: asked for when a change falls in the closed period; five wrong passwords lock the override for ten minutes
 - App-level HTTPS redirect, HSTS, and `Secure` session cookie when `FORCE_HTTPS=true`
 - Field-level Fernet encryption for bank routing/account numbers, with zero-downtime key rotation
 - Self-service portal tokens expire on 90-day idle + 1-year hard windows
@@ -305,7 +312,7 @@ Canonical list of security measures lives in [SECURITY.md](../SECURITY.md); engi
 
 ## System & Administration
 - **Dark Mode** — Toggle between QB2003 Blue theme and dark mode (Alt+D or toolbar button). Persists in localStorage
-- **Backup/Restore** — Create and download PostgreSQL backups from the settings page
+- **Backup/Restore** — Create, download and restore backups from Settings. Backups are named for their company and listed per company; a restore takes a safety copy first, asks twice for another company's backup, and refuses a newer version's
 - **Multi-Company** — Support for multiple company databases, switchable from UI
 - **Global Search** — Unified server-side search across customers, vendors, items, invoices, estimates, and payments
 - **Attachments** — Upload files (PDF, images) to invoices, bills, and other entities with MIME type and extension validation
@@ -317,6 +324,7 @@ Canonical list of security measures lives in [SECURITY.md](../SECURITY.md); engi
 - Authentic QB2003 "Default Blue" skin with navy/gold color palette (+ dark mode)
 - Splash screen with build info and what's new
 - Windows XP-era toolbar, sidebar navigator with icons, status bar
+- **Type-ahead pickers** (v2.19.0) — customer, vendor, item, account, employee, job and class pickers, and any list of 15 or more, search as you type; "+ New Customer" opens its quick add with the typed name
 - Keyboard shortcuts: `Alt+N` (new invoice), `Alt+P` (payment), `Alt+Q` (quick entry), `Alt+H` (home), `Alt+D` (dark mode), `Ctrl+S` (save modal form), `Ctrl+K` (search), `Escape` (close modal)
 - No frameworks — vanilla HTML/CSS/JS single-page app
 - 35+ SPA routes, 34 sidebar nav links
@@ -371,14 +379,18 @@ Slowbooks can exchange data with QuickBooks 2003 Pro via **Intuit Interchange Fo
 2. In Slowbooks: navigate to **QuickBooks Interop**
 3. Drag and drop the `.iif` file (or click to browse)
 4. Click **Validate** — checks structure, account types, and balanced transactions
-5. If validation passes, click **Import**
+5. If the file has names typed in ALL CAPS, Validate shows a few of them as they would import and offers **Change ALL-CAPS names to normal capitalization** (`BOB JONES` → `Bob Jones`, `ACME TOOLING, INC.` → `ACME Tooling, Inc.`). It is off unless you tick it: customer, vendor and account names only, item names kept as typed, and names already in your books are left alone (v2.18.1, #195)
+6. If validation passes, click **Import**
 
 The importer handles:
 - Automatic account type mapping (QB's 14 types → Slowbooks' 6 types)
 - Parent:Child colon-separated account names
-- Duplicate detection (skips records that already exist by name or document number)
+- Fields QuickBooks quotes because they hold a comma (`"Jones, Bob"`, `"99,250.02"`) — the quotes are not part of the name (v2.18.1, #195)
+- Duplicate detection (skips records that already exist by name, in any case, or by document number)
 - Per-row error collection (a bad row won't abort the entire import)
 - Windows-1252 and UTF-8 encoded files
+
+`tools/clean_iif.py` (source installs) writes a cleaned copy of an export with the same quote and capitalization rules, for anyone who wants the file fixed before importing it.
 
 ### IIF Format Reference
 
@@ -458,19 +470,32 @@ All endpoints under `/api/`. Swagger docs at `/docs`. 300+ routes across 50 rout
 | `/api/estimates/{id}/convert` | POST | Convert estimate to invoice |
 | `/api/estimates/{id}/print-preview` | GET | Browser print preview (HTML) |
 | `/api/payments` | GET, POST | Record payments with invoice allocation |
-| `/api/payments/{id}/void` | POST | Void payment with reversing journal entry |
-| `/api/banking/accounts` | GET, POST, PUT | Bank account management |
-| `/api/banking/transactions` | GET, POST | Bank register entries |
-| `/api/banking/reconciliations` | GET, POST | Reconciliation sessions |
+| `/api/payments/{id}/void` | POST | Void payment with reversing journal entry (refused while in a deposit) |
+| `/api/payments/{id}/apply` | POST | Apply a payment's unapplied remainder to invoices (`allocations`) |
+| `/api/customers/{id}/credits` | GET | A customer's unapplied payments and open credit memos |
+| `/api/banking/ledger-balance` | GET | The ledger balance of a bank/card account as of a date |
+| `/api/banking/transactions/{id}` | PATCH | Keep the category picked for a statement line |
+| `/api/banking/reconciliations/{id}/report · /pdf` | GET | A completed reconciliation's report |
+| `/api/banking/overview` | GET | Bank and card accounts with ledger balances, feed, to-review count |
+| `/api/banking/accounts` | GET, POST, PUT | Bank feeds (statement identity of a ledger account); `opening_balance` posts; `…/post-legacy-balance` |
+| `/api/banking/transactions` | GET, POST | GET: statement lines (review queue). POST: a register entry — posts a journal entry |
+| `/api/banking/transactions/{id}/candidates · match · unmatch · add · exclude · restore` | GET, POST | Review-queue actions |
+| `/api/banking/accounts/{id}/feed/add-all · auto-match` | POST | Bulk review actions |
+| `/api/banking/entries/{id}/void` | POST | Void a register entry |
+| `/api/banking/reconciliations` | GET, POST, DELETE | Reconciliation sessions over ledger lines (`…/{id}/transactions`, `toggle/{line_id}`, `complete`) |
+| `/api/transfers` | GET, POST | Transfers between bank/card accounts (`…/{id}/void`) |
 
 ### Accounts Payable
 | Endpoint | Methods | Description |
 |----------|---------|-------------|
 | `/api/purchase-orders` | GET, POST, PUT | Purchase order CRUD |
-| `/api/purchase-orders/{id}/convert-to-bill` | POST | Convert PO to bill |
+| `/api/purchase-orders/{id}/convert-to-bill` | POST | Convert PO to bill; optional body `lines: [{line_id, account_id}]` |
+| `/api/purchase-orders/{id}/pdf · /print-preview` | GET | Purchase order PDF / print page |
 | `/api/bills` | GET, POST, PUT | Bill CRUD with line items |
 | `/api/bills/{id}/void` | POST | Void bill |
-| `/api/bill-payments` | POST | Pay vendor bills with allocation |
+| `/api/bills/{id}/pdf · /print-preview` | GET | Bill PDF / print page |
+| `/api/bill-payments` | GET, POST | Pay vendor bills with allocation (a payment pays its own vendor's bills only); `?bill_id=` lists a bill's payments |
+| `/api/bill-payments/{id}` | GET | One bill payment with what it paid |
 | `/api/credit-memos` | GET, POST | Credit memo CRUD |
 | `/api/credit-memos/{id}/apply` | POST | Apply credit to invoices |
 | `/api/vendor-credits` | GET, POST | Vendor credit list and create |
@@ -502,11 +527,13 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 ### Banking & Deposits
 | Endpoint | Methods | Description |
 |----------|---------|-------------|
-| `/api/banking/check-register` | GET | Check register with running balance |
+| `/api/banking/check-register` | GET | The register: ledger lines on a bank/card account with running balance, links, cleared state |
 | `/api/deposits/pending` | GET | Pending deposits in Undeposited Funds |
-| `/api/deposits` | GET, POST | Create deposits (move funds to bank) |
-| `/api/cc-charges` | GET, POST | Credit card charge entry |
-| `/api/checks/print` | GET | Generate check PDF (3-per-page format) |
+| `/api/deposits` | GET, POST | List and create deposits (move funds to bank; `line_ids` are the payments taken) |
+| `/api/deposits/{id}` | GET | One deposit with its payments |
+| `/api/deposits/{id}/void` | POST | Void a deposit (its payments wait to be deposited again) |
+| `/api/cc-charges` | GET, POST | Credit card charge entry (`card_account_id`, `…/{id}/void`) |
+| `/api/checks/print` | GET | Generate check PDF (3-per-page format) for a bill payment (`bill_payment_id`) |
 
 ### Journal Entries
 | Endpoint | Methods | Description |
@@ -514,6 +541,8 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 | `/api/journal` | GET, POST | Manual journal entry CRUD |
 | `/api/journal/{id}` | GET | Get journal entry with lines |
 | `/api/journal/{id}/void` | POST | Void with reversing entry |
+| `/api/fixed-assets` | GET, POST, PUT | Fixed asset register (`acquisition` posts the purchase) |
+| `/api/fixed-assets/{id}/post-purchase` | POST | Post the purchase of an asset registered without one |
 
 ### Reports & Tax
 | Endpoint | Methods | Description |
@@ -549,7 +578,8 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 | Endpoint | Methods | Description |
 |----------|---------|-------------|
 | `/api/iif/export/all` | GET | Export everything as .iif |
-| `/api/iif/import` | POST | Import .iif file |
+| `/api/iif/validate` | POST | Check an .iif file without importing; `caps_names` and `caps_name_examples` show what the ALL-CAPS box would change |
+| `/api/iif/import` | POST | Import .iif file; form field `retitle_names=true` imports ALL-CAPS customer, vendor and account names in normal capitalization |
 | `/api/csv/export/{type}` | GET | Export entities as CSV |
 | `/api/csv/import/{type}` | POST | Import CSV file |
 | `/api/bank-import/preview` | POST | Preview OFX/QFX transactions |
@@ -571,18 +601,20 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 | Endpoint | Methods | Description |
 |----------|---------|-------------|
 | `/pay/{token}` | GET | Public payment page (no auth) |
-| `/api/stripe/create-checkout-session` | POST | Create Stripe Checkout session |
-| `/api/stripe/webhook` | POST | Stripe webhook handler |
-| `/api/stripe/payment-link/{id}` | GET | Get public payment URL for invoice |
+| `/api/payments/{provider}/create-checkout-session` | POST | Create a hosted checkout for an invoice (public; the token is the capability) |
+| `/api/payments/{provider}/webhook` | POST | Provider webhook handler (`/api/stripe/webhook` still works) |
+| `/api/payments/{provider}/check-status/{invoice_id}` | POST | Ask the provider whether an invoice was paid |
+| `/api/payments/payment-link/{invoice_id}` | GET | Public payment URL for an invoice (a read-only sign-in reads one; it can't make one) |
 
 ### System
 | Endpoint | Methods | Description |
 |----------|---------|-------------|
 | `/api/audit` | GET | Audit log viewer |
 | `/api/backups` | GET, POST | Backup management |
-| `/api/backups/{id}/download` | GET | Download backup file |
+| `/api/backups/{id}/download` | GET | Download backup file (administrator) |
 | `/api/companies` | GET, POST | Multi-company management |
-| `/api/uploads/logo` | POST | Upload company logo |
+| `/api/uploads/logo` | GET, POST, DELETE | Company logo: describe, upload, remove (upload and remove: administrator) |
+| `/api/uploads/logo/{id}` | GET | The logo image, from the company's database |
 | `/api/attachments/{type}/{id}` | GET, POST, DELETE | File attachments CRUD |
 | `/api/bank-rules` | GET, POST, PUT, DELETE | Bank transaction categorization rules |
 | `/api/budgets` | GET, POST, PUT, DELETE | Budget management |

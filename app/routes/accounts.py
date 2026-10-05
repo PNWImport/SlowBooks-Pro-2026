@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -124,6 +126,8 @@ def _in_company_words(db: Session, accounts):
 
 @router.post("", response_model=AccountResponse, status_code=201)
 def create_account(data: AccountCreate, db: Session = Depends(get_db)):
+    _check_bank_kind(data.bank_kind, data.account_type)
+    _check_account_number(data.account_number)
     _reject_duplicate_number(db, data.account_number)
     _check_bank_kind(data.bank_kind, data.account_type)
     _check_parent(db, data.parent_id)
@@ -167,6 +171,10 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
                 )
 
     if "account_number" in fields:
+        # Checked only when it changes: an account an importer brought in
+        # with its own number (or none) can still be renamed from the form.
+        if fields["account_number"] != account.account_number:
+            _check_account_number(fields["account_number"])
         _reject_duplicate_number(db, fields["account_number"], exclude_id=account_id)
     if fields.get("parent_id") == account_id:
         raise HTTPException(

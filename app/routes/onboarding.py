@@ -24,18 +24,15 @@ from app.services.new_hire_report import (
     compute_new_hire_report,
     generate_new_hire_report_pdf,
 )
-from app import config
+from app.services.payroll_documents import employer_block
+from app.services.request_utils import content_disposition, file_name
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 
 
-def _employer() -> dict:
-    return {
-        "name": config.COMPANY_NAME,
-        "address": config.COMPANY_ADDRESS,
-        "ein": config.EMPLOYER_EIN,
-        "state": config.EMPLOYER_STATE,
-    }
+def _employer(db: Session) -> dict:
+    """The company in Settings (not the "My Company" config default)."""
+    return employer_block(db)
 
 
 def _checklist(db: Session, emp: Employee) -> OnboardingChecklistResponse:
@@ -162,7 +159,7 @@ def complete_task(
 def new_hire_report(emp_id: int, db: Session = Depends(get_db)):
     """State new-hire report data — must be filed within 20 days of hire."""
     try:
-        return compute_new_hire_report(db, emp_id, _employer())
+        return compute_new_hire_report(db, emp_id, _employer(db))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -171,12 +168,16 @@ def new_hire_report(emp_id: int, db: Session = Depends(get_db)):
 def new_hire_report_pdf(emp_id: int, db: Session = Depends(get_db)):
     try:
         pdf = generate_new_hire_report_pdf(
-            db, emp_id, _employer(), company_settings=get_all_settings(db)
+            db, emp_id, _employer(db), company_settings=get_all_settings(db)
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    # Named for the person, not the employee id ("new_hire_1.pdf"; 2.18.0
+    # gate, NEW-6).
+    emp = db.query(Employee).filter(Employee.id == emp_id).first()
+    name = file_name("New-Hire-Report", emp.full_name if emp else None)
     return Response(
         content=pdf,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"inline; filename=new_hire_{emp_id}.pdf"},
+        headers={"Content-Disposition": content_disposition(name + ".pdf")},
     )

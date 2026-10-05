@@ -59,7 +59,8 @@ def test_rejects_path_traversal_filename(client, seed_accounts, tmp_path):
     # Path(...).name strips directory prefixes; this verifies the fallback still holds.
     r = _upload(client, "invoice", 1, "../../secret.pdf")
     # Either the filename gets stripped to "secret.pdf" and accepted,
-    # or it's rejected. Either way, the file must not land outside UPLOAD_BASE.
+    # or it's rejected. Either way nothing lands on disk at all: the file is
+    # kept in the company's database, under the stripped name.
     assert r.status_code in (201, 400)
 
     if r.status_code == 201:
@@ -92,8 +93,10 @@ def test_accepts_valid_pdf(client, seed_accounts):
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["filename"] == "report.pdf"
-    # file_path is relative to /static and includes the sanitized type dir
-    assert body["file_path"].startswith("uploads/attachments/invoice/42/")
+    # the file is a row of the company's own stored files, not a path in a
+    # folder every company shared (2.18.0)
+    assert body["file_path"].startswith("stored_files/")
+    assert body["from_shared_folder"] is False and body["missing"] is False
 
 
 def test_filename_special_chars_sanitized(client, seed_accounts):

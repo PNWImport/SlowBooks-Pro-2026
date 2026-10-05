@@ -36,6 +36,12 @@ def enable_sqlite_tuning(target_engine) -> None:
     second person opens a report mid-save. busy_timeout makes brief lock
     contention wait instead of erroring; NORMAL sync is the recommended
     pairing with WAL. Harmless no-ops on :memory: databases.
+
+    secure_delete: a company keeps its files in its own database (W-4s and
+    I-9s among them), and SQLite otherwise leaves a deleted row's bytes in
+    the file's free pages, where a later copy or backup of the file still
+    carries them. With it on, a deleted document is overwritten, not just
+    unlinked from the table.
     """
     from sqlalchemy import event
 
@@ -45,6 +51,7 @@ def enable_sqlite_tuning(target_engine) -> None:
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA busy_timeout=5000")
         cur.execute("PRAGMA synchronous=NORMAL")
+        cur.execute("PRAGMA secure_delete=ON")
         cur.close()
 
 
@@ -69,6 +76,18 @@ def get_db(request: HTTPConnection = None):
         session = getattr(request, "session", None) if request is not None else None
         if isinstance(session, dict) and session.get("authenticated") is True:
             db.info["acting_username"] = session.get("username") or "operator"
+            # The closing-date override password, when the page resent a
+            # refused change with it. A signed-in person's request only —
+            # the token branch below never carries it.
+            from app.services.closing_date import (
+                PASSWORD_HEADER,
+                SESSION_INFO_KEY,
+                password_from_header,
+            )
+
+            supplied = password_from_header(request.headers.get(PASSWORD_HEADER))
+            if supplied:
+                db.info[SESSION_INFO_KEY] = supplied
         elif request is not None:
             # Scoped API tokens: the middleware stashes the principal on
             # request.state — audit rows attribute to "token:<label>".

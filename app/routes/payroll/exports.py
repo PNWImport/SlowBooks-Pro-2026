@@ -1,5 +1,7 @@
 from datetime import date
 
+from decimal import Decimal
+
 from fastapi import Depends, HTTPException
 from fastapi.responses import Response, PlainTextResponse
 from app.schemas.common import StrictModel
@@ -8,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.routes.payroll._router import router
 from app.routes.payroll.ytd import employee_ytd
+from app.services.payroll_documents import employer_block
+from app.services.request_utils import content_disposition, file_name
 from app.models.payroll import (
     PayRun,
     PayStub,
@@ -36,21 +40,37 @@ def download_paystub(run_id: int, stub_id: int, db: Session = Depends(get_db)):
             status_code=409, detail="Pay stub references missing payroll data"
         )
 
+    # Year to date means up to this pay date: the stubs of processed runs
+    # this year dated on or before it, and this stub (a later run, or a
+    # draft, is not part of what this stub reports).
+    from app.models.payroll import PayRunStatus
+    from app.routes.payroll.ytd import _ytd_stubs
+
+    ytd_stubs = [
+        s
+        for s in _ytd_stubs(db, stub.employee_id, run.pay_date.year)
+        if s.id != stub.id
+        and s.pay_run.pay_date <= run.pay_date
+        and s.pay_run.status == PayRunStatus.PROCESSED
+    ] + [stub]
     ytd = employee_ytd(db, stub.employee_id, run.pay_date.year)
-    company = {
-        "name": config.COMPANY_NAME,
-        "address": config.COMPANY_ADDRESS,
-        "phone": config.COMPANY_PHONE,
-        "ein": config.EMPLOYER_EIN,
-    }
+    for key, attr in (("gross", "gross_pay"), ("net", "net_pay")):
+        ytd[key] = sum((getattr(s, attr) or 0 for s in ytd_stubs), Decimal("0"))
     pdf = generate_paystub_pdf(
-        stub, emp, run, company, {k: str(v) for k, v in ytd.items()}
+        stub,
+        emp,
+        run,
+        employer_block(db),
+        {k: str(v) for k, v in ytd.items()},
+        ytd_stubs=ytd_stubs,
     )
-    filename = f"paystub_{run_id}_{stub_id}.pdf"
+    # Named for the person and the pay date, not internal ids
+    # ("paystub_1_1.pdf"; 2.18.0 gate, NEW-6).
+    name = file_name("Pay-Stub", run.pay_date, emp.full_name if emp else None)
     return Response(
         content=pdf,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"inline; filename={filename}"},
+        headers={"Content-Disposition": content_disposition(name + ".pdf")},
     )
 
 

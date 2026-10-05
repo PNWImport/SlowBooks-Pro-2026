@@ -73,9 +73,16 @@ def _get_employee(token: str, db: Session) -> Employee:
     """Resolve a portal token to an active, non-expired employee, or HTTPException.
 
     Updates `portal_token_last_used` on every successful lookup. 90-day idle
-    + hard expiry-at enforced.
+    + hard expiry-at enforced. A link is found by its SHA-256: the token
+    itself is not kept (app/models/payroll.py).
     """
-    employee = db.query(Employee).filter(Employee.portal_token == token).first()
+    employee = None
+    if token and len(token) <= 128:
+        employee = (
+            db.query(Employee)
+            .filter(Employee.portal_token_hash == portal_token_digest(token))
+            .first()
+        )
     if not employee or not employee.is_active:
         raise HTTPException(status_code=404, detail="Portal not found")
 
@@ -91,15 +98,26 @@ def _get_employee(token: str, db: Session) -> Employee:
             raise HTTPException(status_code=410, detail="Portal token has expired")
 
     employee.portal_token_last_used = now
+    if employee.portal_token is None:
+        # Its encrypted copy was saved under a payroll key this install no
+        # longer has: the link just proved itself, so keep it again under
+        # the key it has now, for the cookie and for an administrator.
+        employee.portal_token = token
     db.commit()
     return employee
 
 
 def _branding(db: Session) -> dict:
     settings = get_all_settings(db)
+    # The employee has no app session, so the logo comes through the
+    # portal's own public route (it is on every invoice, so no secret); the
+    # id in the query changes with each new upload.
+    logo = file_store.current_logo(db)
     return {
         "company_name": settings.get("company_name") or "Employer",
-        "company_logo_url": settings.get("company_logo_path") or "",
+        "company_logo_url": (
+            f"/portal/logo?v={logo.id}" if logo is not None and not logo.missing else ""
+        ),
     }
 
 
@@ -580,6 +598,20 @@ def portal_logout():
     return response
 
 
+def _logo_or_nothing(db: Session):
+    """The company's own logo, from its database, or a 204: no logo is not
+    an error worth a 404 in every browser console."""
+    from fastapi import Response
+
+    logo = file_store.current_logo(db)
+    try:
+        response = file_store.logo_response(db, logo)
+    except HTTPException:
+        return Response(status_code=204, headers=_PORTAL_HEADERS)
+    response.headers.update(_PORTAL_HEADERS)
+    return response
+
+
 @router.get("/portal/favicon.ico")
 def portal_favicon(db: Session = Depends(get_db)):
     """Serve the employer's company logo as the portal favicon.
@@ -587,26 +619,18 @@ def portal_favicon(db: Session = Depends(get_db)):
     Falls back to a 204 if no logo is configured — better than a 404 in
     every browser dev-tools console. The actual <link rel="icon"> in the
     portal templates points here, so each customer's portal carries their
-    own bookmark icon.
+    own bookmark icon. Read from the company's own database, with its real
+    image type (it used to look for the file under app/static only, which a
+    desktop install never wrote to, and to call every logo a PNG).
     """
-    from fastapi.responses import FileResponse, Response
+    return _logo_or_nothing(db)
 
-    settings = get_all_settings(db)
-    logo_path = (settings.get("company_logo_path") or "").lstrip("/")
-    if not logo_path:
-        return Response(status_code=204)
 
-    # Same resolve-within guard the attachments code uses — never serve
-    # anything outside the static dir.
-    static_root = (Path(__file__).parent.parent / "static").resolve()
-    full_path = (static_root / logo_path.removeprefix("static/")).resolve()
-    try:
-        full_path.relative_to(static_root)
-    except ValueError:
-        return Response(status_code=204)
-    if not full_path.exists():
-        return Response(status_code=204)
-    return FileResponse(full_path, media_type="image/png")
+@router.get("/portal/logo")
+def portal_logo(db: Session = Depends(get_db)):
+    """The logo in the portal's header (the employee has no app session to
+    fetch /api/uploads/logo/<id> with)."""
+    return _logo_or_nothing(db)
 
 
 @router.get("/portal/documents")

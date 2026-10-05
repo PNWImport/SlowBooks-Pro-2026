@@ -4,10 +4,81 @@
  * for company name and tax rate.
  */
 const SettingsPage = {
+    // The settings this page saves, the logo and the backups are the
+    // administrator's: the server refuses them to every other role. A
+    // backup is the whole company, password hashes and payroll records
+    // included, so only an administrator downloads one too. What is drawn
+    // before the role is known is marked data-admin (App.adminPass).
+    _isAdmin() {
+        return typeof App === 'undefined' || !App.role || App.role === 'admin';
+    },
+
+    // The default tax rate as the field can hold it: up to four decimals. A
+    // default saved before 2.18 with more would fail the field's step and
+    // hold back Save Settings for the whole page; it shows (and saves)
+    // rounded to four, which is all a document keeps.
+    _ratePercent(value) {
+        const n = Number(value);
+        return Number.isFinite(n) ? String(+n.toFixed(4)) : '0.0';
+    },
+
+    // Where each encrypted setting is entered again, for the notice below.
+    _SECRET_PLACES: {
+        smtp_password: 'the email password, under Email (SMTP)',
+        stripe_secret_key: 'the Stripe secret key, under Online Payments',
+        stripe_webhook_secret: 'the Stripe webhook secret, under Online Payments',
+        paypal_client_secret: 'the PayPal client secret, under Online Payments',
+        square_access_token: 'the Square access token, under Online Payments',
+        square_webhook_signature_key: 'the Square webhook signature key, under Online Payments',
+        qbo_client_secret: 'the QuickBooks Online client secret, under QuickBooks Online',
+        qbo_access_token: 'the QuickBooks Online connection: connect again on the QuickBooks Online page',
+        qbo_refresh_token: 'the QuickBooks Online connection: connect again on the QuickBooks Online page',
+        simplefin_access_url: 'the SimpleFIN bank feed: connect again on Banking',
+        closing_date_password: 'the closing-date password, under Closing Date',
+        ai_api_key: 'the AI Insights API key, under AI Insights',
+    },
+
+    // Passwords and keys saved under a settings key this install no longer
+    // has read as not set (a Docker container recreated before 2.18 lost
+    // its key). Say which, and where each is entered again.
+    async loadUnreadableSecrets() {
+        const el = document.getElementById('settings-unreadable');
+        if (!el || !SettingsPage._isAdmin()) return;
+        let keys = [];
+        try {
+            keys = (await API.get('/settings/unreadable-secrets')).keys || [];
+        } catch (e) {
+            return;
+        }
+        const places = [...new Set(keys.map(k => SettingsPage._SECRET_PLACES[k] || k))];
+        if (!places.length) { el.hidden = true; return; }
+        el.innerHTML = `Some saved passwords and keys can't be read on this install, so what uses them is off until
+            they are entered again: ${places.map(p => `<em>${escapeHtml(p)}</em>`).join('; ')}. They were saved
+            under a settings key this install no longer has.`;
+        el.hidden = false;
+    },
+
+    // Said under the logo when the upgrade to 2.18.0 copied it in from the
+    // folder every company shared before: that held ONE logo file for all of
+    // them, so it may be another company's.
+    _logoNote(logo) {
+        let text = '';
+        if (logo && logo.missing) {
+            text = 'Your logo file was not in the shared folder when these books were upgraded. Upload it again.';
+        } else if (logo && logo.from_shared_folder) {
+            text = "This logo was copied from the folder earlier versions shared between companies. If this isn't your logo, upload it again.";
+        }
+        return text ? `<div id="company-logo-note" style="font-size:10px; color:var(--text-muted); margin-bottom:6px;">${escapeHtml(text)}</div>` : '';
+    },
+
     async render() {
         const s = await API.get('/settings');
+        const logo = s.company_logo_path ? await API.get('/uploads/logo').catch(() => null) : null;
+        // what the books hold; the closing date's state line describes this
+        SettingsPage._savedClosingDate = s.closing_date || '';
         setTimeout(() => {
             SettingsPage.loadBackups();
+            SettingsPage.loadLegacyFiles();
             SettingsPage.loadEmailTemplates();
             SettingsPage.loadAiConfig();
             SettingsPage.loadClasses();
@@ -16,17 +87,29 @@ const SettingsPage = {
             SettingsPage.loadEquipment();
             SettingsPage.loadUsers();
             SettingsPage.loadApiTokens();
+            SettingsPage.loadSignInPref();
             SettingsPage.loadOcrStatus();
             SettingsPage.loadOcrEnginePref();
+            SettingsPage.loadUnreadableSecrets();
             SettingsPage.scrollToFocus();
+            SettingsPage._installLeaveGuard();
+            SettingsPage._markClean();
         }, 0);
         return `
             <div class="page-header">
                 <h2>Company Settings</h2>
             </div>
-            <form id="settings-form" onsubmit="SettingsPage.save(event)">
-                <div class="settings-section">
-                    <h3>Company Information</h3>
+            <div id="settings-unreadable" class="hint hint--locked" role="status" style="margin-bottom:12px;" data-admin hidden></div>
+            <!-- data-admin-fields: the fields this form saves (PUT /api/settings)
+                 are the administrator's. Any other sign-in sees them locked, with
+                 the sentence below (App.adminPass). AI Insights and the lists
+                 further down (templates, classes, cost types and codes, equipment)
+                 save themselves, and a bookkeeper keeps them. -->
+            <form id="settings-form" data-admin-fields onsubmit="SettingsPage.save(event)"
+                oninput="SettingsPage._updateDirty()" onchange="SettingsPage._updateDirty()">
+                <div class="hint hint--locked hidden" data-admin-note style="margin-bottom:10px;">Company settings are changed by an administrator.</div>
+                <div class="settings-section" role="group" aria-labelledby="settings-h-company-information">
+                    <h3 id="settings-h-company-information">Company Information</h3>
                     <div class="form-grid">
                         <div class="form-group full-width"><label>Company Name *</label>
                             <input name="company_name" value="${escapeHtml(s.company_name || '')}" required></div>
@@ -58,19 +141,29 @@ const SettingsPage = {
                     </div>
                 </div>
 
-                <div class="settings-section">
-                    <h3>Company Logo</h3>
+                <div class="settings-section" role="group" aria-labelledby="settings-h-company-logo">
+                    <h3 id="settings-h-company-logo">Company Logo</h3>
                     <div class="form-grid">
                         <div class="form-group">
-                            ${s.company_logo_path ? `<img src="${escapeHtml(s.company_logo_path)}" style="max-width:200px; max-height:80px; margin-bottom:8px; display:block;">` : ''}
-                            <input type="file" id="logo-upload" accept="image/*" onchange="SettingsPage.uploadLogo(this)">
-                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">PNG, JPG, GIF, WebP, or SVG &middot; max 5 MB &middot; 200&times;80 px recommended.</div>
+                            ${s.company_logo_path && !(logo && logo.missing) ? `<img id="company-logo-preview" src="${escapeHtml(s.company_logo_path)}" style="max-width:200px; max-height:80px; margin-bottom:8px; display:block;">` : ''}
+                            ${SettingsPage._logoNote(logo)}
+                            ${SettingsPage._isAdmin() ? `<input type="file" id="logo-upload" aria-label="Logo image" data-admin accept="image/*" onchange="SettingsPage.uploadLogo(this)">
+                            ${s.company_logo_path ? `<button type="button" class="btn btn-sm btn-secondary" data-admin data-write style="margin-left:6px;" onclick="SettingsPage.removeLogo()">Remove logo</button>` : ''}
+                            <div data-admin style="font-size:10px; color:var(--text-muted); margin-top:4px;">PNG, JPG, GIF, WebP, or SVG &middot; max 5 MB &middot; 200&times;80 px recommended.</div>`
+                            : `<div id="logo-admin-only" style="font-size:10px; color:var(--text-muted);">Only an administrator can change the logo.</div>`}
+                            ${s.company_logo_path ? `<div style="margin-top:8px;">
+                                <label for="invoice-show-logo" style="font-weight:normal;">
+                                    <input type="checkbox" id="invoice-show-logo" name="invoice_show_logo" value="true" style="width:auto; vertical-align:middle; margin-right:6px;" ${s.invoice_show_logo !== 'false' ? 'checked' : ''}>
+                                    Show company logo on invoices
+                                </label>
+                                <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">Applies to PDF, Print, and emailed invoice attachments.</div>
+                            </div>` : ''}
                         </div>
                     </div>
                 </div>
 
-                <div class="settings-section">
-                    <h3>${T('Invoice')} Defaults</h3>
+                <div class="settings-section" role="group" aria-labelledby="settings-h-invoice-defaults">
+                    <h3 id="settings-h-invoice-defaults">${T('Invoice')} Defaults</h3>
                     <div class="form-grid">
                         <div class="form-group"><label>Default Terms</label>
                             <select name="default_terms">
@@ -78,15 +171,21 @@ const SettingsPage = {
                                     `<option ${s.default_terms===t?'selected':''}>${t}</option>`).join('')}
                             </select></div>
                         <div class="form-group"><label>Default Tax Rate (%)</label>
-                            <input name="default_tax_rate" type="number" step="0.01" value="${s.default_tax_rate || '0.0'}"></div>
+                            <input name="default_tax_rate" type="number" min="0" max="100" step="0.0001"
+                                title="A percent from 0 to 100, up to four decimal places: 8.875 means 8.875%"
+                                value="${escapeHtml(SettingsPage._ratePercent(s.default_tax_rate))}"></div>
                         <div class="form-group"><label>${`${T('Invoice')} Prefix`}</label>
                             <input name="invoice_prefix" value="${escapeHtml(s.invoice_prefix || '')}" placeholder="e.g. INV-"></div>
                         <div class="form-group"><label>${`Next ${T('Invoice')} #`}</label>
-                            <input name="invoice_next_number" value="${escapeHtml(s.invoice_next_number || '1001')}"></div>
+                            <input name="invoice_next_number" inputmode="numeric" pattern="[0-9]*[1-9][0-9]*" required
+                                title="A whole number, 1 or more"
+                                value="${escapeHtml(s.invoice_next_number || '1001')}"></div>
                         <div class="form-group"><label>Estimate Prefix</label>
                             <input name="estimate_prefix" value="${escapeHtml(s.estimate_prefix || '')}" placeholder="e.g. E-"></div>
                         <div class="form-group"><label>Next Estimate #</label>
-                            <input name="estimate_next_number" value="${escapeHtml(s.estimate_next_number || '1001')}"></div>
+                            <input name="estimate_next_number" inputmode="numeric" pattern="[0-9]*[1-9][0-9]*" required
+                                title="A whole number, 1 or more"
+                                value="${escapeHtml(s.estimate_next_number || '1001')}"></div>
                         <div class="form-group full-width"><label>${`Default ${T('Invoice')} Notes`}</label>
                             <textarea name="invoice_notes">${escapeHtml(s.invoice_notes || '')}</textarea></div>
                         <div class="form-group full-width"><label>${`${T('Invoice')} Footer`}</label>
@@ -99,22 +198,55 @@ const SettingsPage = {
                     </div>
                 </div>
 
-                <div class="settings-section">
-                    <h3>Closing Date</h3>
+                <!-- Desktop app only (shown by loadSignInPref); the session used
+                     to outlive the app, so a relaunch reopened the company
+                     without its password (explore 2.17.3, macbase1 S-j). -->
+                <div class="settings-section" id="settings-sign-in" hidden role="group" aria-labelledby="settings-h-sign-in">
+                    <h3 id="settings-h-sign-in">Sign-in</h3>
+                    <div class="form-grid">
+                        <div class="form-group full-width">
+                            <label for="ask-password-on-start">Ask for the password each time SlowBooks Pro starts</label>
+                            <select id="ask-password-on-start" name="ask_password_on_start">
+                                <option value="false" ${s.ask_password_on_start !== 'true' ? 'selected' : ''}>No: stay signed in until you sign out</option>
+                                <option value="true" ${s.ask_password_on_start === 'true' ? 'selected' : ''}>Yes: quitting the app signs this company out</option>
+                            </select>
+                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">
+                                With Yes, the next start asks for the password even if you did not sign out.
+                                On Server Edition, a restart of the server signs everyone out.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-section" id="settings-closing-date" role="group" aria-labelledby="settings-h-closing-date">
+                    <h3 id="settings-h-closing-date">Closing Date</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         Prevent modifications to transactions before this date.
                     </div>
                     <div class="form-grid">
-                        <div class="form-group"><label>Closing Date</label>
-                            <input name="closing_date" type="date" value="${escapeHtml(s.closing_date || '')}"></div>
+                        <div class="form-group"><label for="closing-date">Closing Date</label>
+                            <div style="display:flex; gap:6px; align-items:center;">
+                                <input id="closing-date" name="closing_date" type="date" value="${escapeHtml(s.closing_date || '')}"
+                                    aria-describedby="closing-date-state"
+                                    oninput="SettingsPage.showClosingState()" onchange="SettingsPage.showClosingState()"
+                                    oninvalid="SettingsPage.closingDateInvalid()">
+                                <button type="button" class="btn btn-sm btn-secondary" id="closing-date-clear" data-admin data-write
+                                    onclick="SettingsPage.clearClosingDate()" ${s.closing_date ? '' : 'disabled'}>Clear</button>
+                            </div>
+                            <!-- An empty date field shows today's date in grey on macOS, which
+                                 read as "closed through today" (explore 2.17.3, macbase1 S-i). -->
+                            <div id="closing-date-state" role="status" aria-live="polite"
+                                style="font-size:11px; margin-top:4px;">${escapeHtml(SettingsPage._closingStateText(s.closing_date))}</div></div>
                         <div class="form-group"><label>Password (optional)</label>
                             <input name="closing_date_password" type="password" value="${escapeHtml(s.closing_date_password || '')}"
-                                placeholder="Leave blank for no password"></div>
+                                placeholder="Leave blank for no password" autocomplete="new-password">
+                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">
+                                With a password set, a change dated on or before the closing date asks for it
+                                and goes through when it is right. Without one, such changes are refused.</div></div>
                     </div>
                 </div>
 
-                <div class="settings-section">
-                    <h3>Email (SMTP)</h3>
+                <div class="settings-section" role="group" aria-labelledby="settings-h-email-smtp">
+                    <h3 id="settings-h-email-smtp">Email (SMTP)</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         Configure SMTP for sending invoices by email.
                     </div>
@@ -122,7 +254,7 @@ const SettingsPage = {
                         <div class="form-group"><label>SMTP Host</label>
                             <input name="smtp_host" value="${escapeHtml(s.smtp_host || '')}" placeholder="smtp.gmail.com"></div>
                         <div class="form-group"><label>SMTP Port</label>
-                            <input name="smtp_port" type="number" value="${escapeHtml(s.smtp_port || '587')}"></div>
+                            <input name="smtp_port" type="number" min="1" max="65535" step="1" value="${escapeHtml(s.smtp_port || '587')}"></div>
                         <div class="form-group"><label>Username</label>
                             <input name="smtp_user" value="${escapeHtml(s.smtp_user || '')}"></div>
                         <div class="form-group"><label>Password</label>
@@ -137,18 +269,18 @@ const SettingsPage = {
                                 <option value="false" ${s.smtp_use_tls === 'false' ? 'selected' : ''}>No</option>
                             </select></div>
                     </div>
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.testEmail()" style="margin-top:8px;">
+                    <button type="button" class="btn btn-sm btn-secondary" data-admin data-write onclick="SettingsPage.testEmail()" style="margin-top:8px;">
                         Send Test Email</button>
                 </div>
 
-                <div class="settings-section">
-                    <h3>Online Payments</h3>
+                <div class="settings-section" role="group" aria-labelledby="settings-h-online-payments">
+                    <h3 id="settings-h-online-payments">Online Payments</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         Accept online payments on emailed invoice links. Enable any combination of
                         providers — the customer pay page shows one button per enabled provider.
                     </div>
-                    <h4 style="margin:8px 0 4px; font-size:12px;">Stripe</h4>
-                    <div class="form-grid">
+                    <h4 id="settings-h-stripe" style="margin:8px 0 4px; font-size:12px;">Stripe</h4>
+                    <div class="form-grid" role="group" aria-labelledby="settings-h-stripe">
                         <div class="form-group"><label>Stripe Payments</label>
                             <select name="stripe_enabled">
                                 <option value="false" ${s.stripe_enabled !== 'true' ? 'selected' : ''}>Disabled</option>
@@ -161,8 +293,8 @@ const SettingsPage = {
                         <div class="form-group"><label>Webhook Secret</label>
                             <input name="stripe_webhook_secret" type="password" value="${escapeHtml(s.stripe_webhook_secret || '')}" placeholder="whsec_..."></div>
                     </div>
-                    <h4 style="margin:12px 0 4px; font-size:12px;">PayPal</h4>
-                    <div class="form-grid">
+                    <h4 id="settings-h-paypal" style="margin:12px 0 4px; font-size:12px;">PayPal</h4>
+                    <div class="form-grid" role="group" aria-labelledby="settings-h-paypal">
                         <div class="form-group"><label>PayPal Payments</label>
                             <select name="paypal_enabled">
                                 <option value="false" ${s.paypal_enabled !== 'true' ? 'selected' : ''}>Disabled</option>
@@ -181,8 +313,8 @@ const SettingsPage = {
                             <input name="paypal_webhook_id" value="${escapeHtml(s.paypal_webhook_id || '')}"
                                 placeholder="From the PayPal developer dashboard"></div>
                     </div>
-                    <h4 style="margin:12px 0 4px; font-size:12px;">Square</h4>
-                    <div class="form-grid">
+                    <h4 id="settings-h-square" style="margin:12px 0 4px; font-size:12px;">Square</h4>
+                    <div class="form-grid" role="group" aria-labelledby="settings-h-square">
                         <div class="form-group"><label>Square Payments</label>
                             <select name="square_enabled">
                                 <option value="false" ${s.square_enabled !== 'true' ? 'selected' : ''}>Disabled</option>
@@ -205,8 +337,8 @@ const SettingsPage = {
                     </div>
                 </div>
 
-                <div class="settings-section">
-                    <h3>QuickBooks Online</h3>
+                <div class="settings-section" role="group" aria-labelledby="settings-h-quickbooks-online">
+                    <h3 id="settings-h-quickbooks-online">QuickBooks Online</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         Configure your Intuit Developer app credentials for QBO integration.
                         Get these from <a href="https://developer.intuit.com" target="_blank" style="color:var(--text-link);">developer.intuit.com</a>.
@@ -232,8 +364,8 @@ const SettingsPage = {
                     </div>
                 </div>
 
-                <div class="settings-section" id="settings-ai">
-                    <h3>AI Insights</h3>
+                <div class="settings-section" id="settings-ai" role="group" aria-labelledby="settings-h-ai-insights">
+                    <h3 id="settings-h-ai-insights">AI Insights</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         Bring your own key for xAI Grok, Groq, Cloudflare Workers AI (direct or self-hosted gateway), Anthropic Claude, OpenAI, Google Gemini, or a custom OpenAI-compatible endpoint.
                         Used by the Analytics dashboard to generate observations, risks, and recommendations.
@@ -244,8 +376,8 @@ const SettingsPage = {
                     </div>
                 </div>
 
-                <div class="settings-section" id="settings-ocr">
-                    <h3>Receipt Scanning</h3>
+                <div class="settings-section" id="settings-ocr" role="group" aria-labelledby="settings-h-receipt-scanning">
+                    <h3 id="settings-h-receipt-scanning">Receipt Scanning</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         ${Terms.text('Local OCR for the Scan Receipt button on the Enter Sales Receipt and Enter Bill forms.')}
                         Everything runs on this computer — no cloud, no data leaves the machine.
@@ -255,7 +387,7 @@ const SettingsPage = {
                     <div id="ocr-status" style="font-size:12px;">Checking…</div>
                     <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
                         <label for="ocr-engine-pref" style="font-size:11px;">OCR engine:</label>
-                        <select id="ocr-engine-pref" style="font-size:11px;"
+                        <select id="ocr-engine-pref" data-admin style="font-size:11px;"
                             onchange="SettingsPage.saveOcrEngine(this.value)">
                             <option value="auto">Automatic (recommended) — built-in engine first</option>
                             <option value="tesseract">Prefer Tesseract (if installed)</option>
@@ -270,8 +402,8 @@ const SettingsPage = {
                     </div>
                 </div>
 
-                <div class="settings-section">
-                    <h3>Late Fees</h3>
+                <div class="settings-section" role="group" aria-labelledby="settings-h-late-fees">
+                    <h3 id="settings-h-late-fees">Late Fees</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         Automatically apply late fees to overdue invoices. Use "Apply Late Fees" on the AR Aging report.
                     </div>
@@ -282,39 +414,39 @@ const SettingsPage = {
                                 <option value="true" ${s.late_fee_enabled === 'true' ? 'selected' : ''}>Enabled</option>
                             </select></div>
                         <div class="form-group"><label>Late Fee Rate (%)</label>
-                            <input name="late_fee_rate" type="number" step="0.1" value="${escapeHtml(s.late_fee_rate || '1.5')}"></div>
+                            <input name="late_fee_rate" type="number" min="0" max="100" step="0.01" value="${escapeHtml(s.late_fee_rate || '1.5')}"></div>
                         <div class="form-group"><label>Grace Days</label>
-                            <input name="late_fee_grace_days" type="number" value="${escapeHtml(s.late_fee_grace_days || '15')}"></div>
+                            <input name="late_fee_grace_days" type="number" min="0" step="1" value="${escapeHtml(s.late_fee_grace_days || '15')}"></div>
                     </div>
                 </div>
 
-                <div class="settings-section">
-                    <h3>Email Templates</h3>
+                <div class="settings-section" role="group" aria-labelledby="settings-h-email-templates">
+                    <h3 id="settings-h-email-templates">Email Templates</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         Customize email templates for invoices, payment receipts, and collection notices.
                         Templates use Jinja2 syntax. Available variables: {{ invoice }}, {{ customer_name }}, {{ company }}, {{ pay_url }}. The donation acknowledgment letter (nonprofit) also gets {{ donor }}, {{ donor_name }}, {{ gift }} and {{ irs.text }}.
                     </div>
-                    <div style="display:flex; gap:8px; margin-bottom:12px;">
+                    <div style="display:flex; gap:8px; margin-bottom:12px;" data-write>
                         <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.seedTemplates()">Seed Default Templates</button>
                     </div>
                     <div id="email-template-list"></div>
                 </div>
 
-                <div class="settings-section">
-                    <h3>${T('Classes')}</h3>
+                <div class="settings-section" role="group" aria-labelledby="settings-h-classes">
+                    <h3 id="settings-h-classes">${T('Classes')}</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         Track income and expenses by department, location, or line of
                         business. ${T('Classes')} appear on entry forms and the ${T('P&L by Class')} report.
                     </div>
-                    <div style="display:flex; gap:8px; margin-bottom:12px;">
+                    <div style="display:flex; gap:8px; margin-bottom:12px;" data-write>
                         <input type="text" id="new-class-name" placeholder="New ${T('class')} name" style="width:220px;">
                         <button type="button" class="btn btn-primary" onclick="SettingsPage.addClass()">Add ${T('Class')}</button>
                     </div>
                     <div id="classes-list"></div>
                 </div>
 
-                <div class="settings-section">
-                    <h3>Cost Types</h3>
+                <div class="settings-section" role="group" aria-labelledby="settings-h-cost-types">
+                    <h3 id="settings-h-cost-types">Cost Types</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         How job costs roll up: labor, material, subcontract, equipment, other — add your own
                         (permits, bonding, warranty…). A labor-type carries a burden % (employer taxes, benefits,
@@ -322,7 +454,7 @@ const SettingsPage = {
                         code has none; the offset accounts are the credit side of job cost entries (payroll clearing,
                         applied equipment, applied overhead).
                     </div>
-                    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+                    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;" data-write>
                         <input type="text" id="new-ct-code" placeholder="Code (e.g. permits)" style="width:150px;">
                         <input type="text" id="new-ct-name" placeholder="Name" style="width:200px;">
                         <label style="font-weight:normal;font-size:11px;"><input type="checkbox" id="new-ct-labor"> labor-type (burden applies)</label>
@@ -332,23 +464,23 @@ const SettingsPage = {
                     <div id="cost-types-list"></div>
                 </div>
 
-                <div class="settings-section">
-                    <h3>Cost Codes</h3>
+                <div class="settings-section" role="group" aria-labelledby="settings-h-cost-codes">
+                    <h3 id="settings-h-cost-codes">Cost Codes</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         ${Terms.text('The job-costing chart: which part of a job a cost belongs to')}
                         ("03 Concrete", "26 Electrical"), independent of the account it posts
                         to. Picked per line on bills, expenses, purchase orders and journal
                         entries; ${Terms.text('the Job detail rolls costs up by code and cost type.')}
                     </div>
-                    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+                    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;" data-write>
                         <input type="text" id="new-cc-code" placeholder="Code" style="width:90px;">
                         <input type="text" id="new-cc-name" placeholder="Name" style="width:220px;">
-                        <select id="new-cc-type">
+                        <select id="new-cc-type" aria-label="Cost code type">
                             <option value="labor">Labor</option><option value="material">Material</option>
                             <option value="subcontract">Subcontract</option><option value="equipment">Equipment</option>
                             <option value="other" selected>Other</option>
                         </select>
-                        <select id="new-cc-parent"><option value="">(top level)</option></select>
+                        <select id="new-cc-parent" aria-label="Parent cost code"><option value="">(top level)</option></select>
                         <button type="button" class="btn btn-primary" onclick="SettingsPage.addCostCode()">Add Cost Code</button>
                         <button type="button" class="btn btn-secondary" onclick="SettingsPage.loadStandardCostCodes()" title="CSI MasterFormat divisions + Labor + Equipment Rental">Load standard list</button>
                         <button type="button" class="btn btn-secondary" onclick="SettingsPage.showCostCodeImport()">Import CSV</button>
@@ -356,13 +488,13 @@ const SettingsPage = {
                     <div id="cost-codes-list"></div>
                 </div>
 
-                <div class="settings-section">
-                    <h3>Equipment</h3>
+                <div class="settings-section" role="group" aria-labelledby="settings-h-equipment">
+                    <h3 id="settings-h-equipment">Equipment</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         ${Terms.text('Owned machines charged to jobs by the hour from a Job Cost Entry.')} The recovery account is
                         the credit side (defaults to the equipment cost type's offset).
                     </div>
-                    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+                    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;" data-write>
                         <input type="text" id="new-eq-code" placeholder="Code" style="width:90px;">
                         <input type="text" id="new-eq-name" placeholder="Name (Skid steer, F-250…)" style="width:220px;">
                         <input type="number" step="0.01" id="new-eq-rate" placeholder="$/hr" style="width:90px;">
@@ -371,16 +503,24 @@ const SettingsPage = {
                     <div id="equipment-list"></div>
                 </div>
 
-                <div class="settings-section">
-                    <h3>Backup / Restore</h3>
-                    <div style="display:flex; gap:8px; margin-bottom:12px;">
+                <div class="settings-section" id="settings-backups" role="group" aria-labelledby="settings-h-backup-restore">
+                    <h3 id="settings-h-backup-restore">Backup / Restore</h3>
+                    <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
+                        Backups of this company only, named for it. Restore replaces everything in this
+                        company with the backup; a safety backup of the books as they are is taken first,
+                        so a restore can be undone by restoring that one.
+                    </div>
+                    <div style="display:flex; gap:8px; margin-bottom:12px;" data-admin data-write>
                         <button type="button" class="btn btn-primary" onclick="SettingsPage.createBackup()">Create Backup</button>
                     </div>
+                    <div class="hidden" data-admin-note style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">Backups are made, downloaded and restored by an administrator.</div>
                     <div id="backup-list"></div>
                 </div>
 
-                <div class="settings-section" id="settings-users" style="display:none;">
-                    <h3>Users &mdash; Server Edition</h3>
+                ${SettingsPage._isAdmin() ? '<div class="settings-section" id="settings-legacy-files" data-admin hidden></div>' : ''}
+
+                <div class="settings-section" id="settings-users" data-admin style="display:none;" role="group" aria-labelledby="settings-h-users-server-edition">
+                    <h3 id="settings-h-users-server-edition">Users &mdash; Server Edition</h3>
                     <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
                         Add a second user and this deployment becomes
                         <strong>Server Edition</strong>: everyone signs in with a
@@ -405,8 +545,8 @@ const SettingsPage = {
                     <button type="button" class="btn btn-primary" onclick="SettingsPage.createUser()">Add User</button>
                 </div>
 
-                <div class="settings-section" id="settings-api-tokens" style="display:none;">
-                    <h3>API Tokens &mdash; agents &amp; integrations</h3>
+                <div class="settings-section" id="settings-api-tokens" data-admin style="display:none;" role="group" aria-labelledby="settings-h-api-tokens-agents-integrations">
+                    <h3 id="settings-h-api-tokens-agents-integrations">API Tokens &mdash; agents &amp; integrations</h3>
                     <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
                         Scoped credentials for non-humans: AI agents, the receipt
                         service, scripts. A token wears a role just like a user —
@@ -436,10 +576,96 @@ const SettingsPage = {
                     <button type="button" class="btn btn-primary" onclick="SettingsPage.createApiToken()">Create Token</button>
                 </div>
 
-                <div class="form-actions">
-                    <button type="submit" class="btn btn-primary">Save Settings</button>
+                <!-- Always in reach: the one Save for the settings above sat at
+                     the very bottom, after 25 other buttons, and the first
+                     "Save" on the page was AI Insights' (explore 2.17.3, L16). -->
+                <div class="form-actions" data-admin id="settings-savebar" data-write
+                    style="position:sticky; bottom:0; z-index:5; align-items:center; background:var(--content-bg);
+                           padding-bottom:10px; box-shadow:0 -4px 8px -6px rgba(0,0,0,0.25);">
+                    <span id="settings-dirty-note" role="status" aria-live="polite"
+                        style="margin-right:auto; font-size:11px; color:var(--text-muted);"></span>
+                    <button type="submit" class="btn btn-primary" id="settings-save-btn">Save Settings</button>
                 </div>
             </form>`;
+    },
+
+    // ------------------------------------------------------------------
+    // Unsaved changes. Leaving the page used to drop the edits without a
+    // word (explore 2.17.3, skytech L16). The named fields of the form are
+    // compared with what was last loaded or saved; the sections that save
+    // themselves (AI, classes, users, tokens...) have no names and are not
+    // counted.
+    // ------------------------------------------------------------------
+    _snapshot: null,
+    _leaving: false,
+
+    _formData() {
+        const form = document.getElementById('settings-form');
+        if (!form) return null;
+        const data = {};
+        for (const [k, v] of new FormData(form).entries()) {
+            if (typeof v === 'string') data[k] = v;
+        }
+        return data;
+    },
+
+    _formState(except) {
+        const data = SettingsPage._formData();
+        if (!data) return null;
+        if (except) delete data[except];
+        return JSON.stringify(data);
+    },
+
+    _markClean() {
+        SettingsPage._snapshot = SettingsPage._formData();
+        SettingsPage._updateDirty();
+    },
+
+    // True when a field differs from what was last loaded or saved;
+    // `except` leaves one field out of the comparison.
+    isDirty(except) {
+        // Only an administrator saves these fields: any other sign-in sees
+        // them locked, and nothing on the page is an edit. Locking takes the
+        // fields out of FormData, so a page locked after its snapshot (the
+        // role arrives after a first page) compared as changed, and asked a
+        // read-only user, then a bookkeeper, to leave without saving.
+        if (!SettingsPage._isAdmin()) return false;
+        if (typeof App !== 'undefined' && App.isReadOnly && App.isReadOnly()) return false;
+        const snap = SettingsPage._snapshot;
+        const now = SettingsPage._formState(except);
+        if (!snap || now === null) return false;
+        const before = Object.assign({}, snap);
+        if (except) delete before[except];
+        return now !== JSON.stringify(before);
+    },
+
+    _updateDirty() {
+        const note = document.getElementById('settings-dirty-note');
+        if (note) note.textContent = SettingsPage.isDirty() ? 'Unsaved changes' : '';
+    },
+
+    // App.navigate is the one door every in-app move goes through: sidebar
+    // links (via hashchange), toolbar buttons, keyboard shortcuts, search.
+    _installLeaveGuard() {
+        if (SettingsPage._leaveGuardInstalled || typeof App === 'undefined') return;
+        SettingsPage._leaveGuardInstalled = true;
+        const navigate = App.navigate;
+        App.navigate = function (hash) {
+            const target = String(hash || '').replace('#', '') || '/';
+            if (target !== '/settings' && SettingsPage.isDirty()) {
+                if (!confirm('You have unsaved changes in Settings. Leave without saving them?')) {
+                    if (location.hash !== '#/settings') history.replaceState(null, '', '#/settings');
+                    return Promise.resolve();
+                }
+                SettingsPage._snapshot = null;
+            }
+            return navigate.apply(this, arguments);
+        };
+        window.addEventListener('beforeunload', e => {
+            if (SettingsPage._leaving || !SettingsPage.isDirty()) return;
+            e.preventDefault();
+            e.returnValue = '';
+        });
     },
 
     // ------------------------------------------------------------------
@@ -474,6 +700,17 @@ const SettingsPage = {
                 <thead><tr><th scope="col">Username</th><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Last login</th><th scope="col"></th></tr></thead>
                 <tbody>${rows}</tbody></table></div>`;
         } catch (e) { /* non-admin or pre-upgrade server: section stays hidden */ }
+    },
+
+    // The start-up password choice applies to the desktop app (and its
+    // Server Edition), where one server process serves the company.
+    async loadSignInPref() {
+        const section = $('#settings-sign-in');
+        if (!section) return;
+        try {
+            const sys = await API.get('/system');
+            if (sys && sys.desktop) section.hidden = false;
+        } catch (e) { /* stays hidden */ }
     },
 
     // ------------------------------------------------------------------
@@ -576,12 +813,93 @@ const SettingsPage = {
         const data = Object.fromEntries(new FormData(e.target).entries());
         // Remove file input from data
         delete data.file;
+        // An unchecked box is left out of FormData; send it as "false".
+        const logoOption = e.target.querySelector('[name="invoice_show_logo"]');
+        if (logoOption) data.invoice_show_logo = logoOption.checked ? 'true' : 'false';
+        const btn = document.getElementById('settings-save-btn');
+        if (btn) btn.disabled = true;
         try {
-            await API.put('/settings', data);
+            const saved = await API.put('/settings', data);
+            SettingsPage._savedClosingDate = saved && typeof saved.closing_date === 'string'
+                ? saved.closing_date : (data.closing_date || '');
+            SettingsPage._markClean();
+            SettingsPage.showClosingState();
+            // the shell's copy too: a new company name shows in the status
+            // bar, the title and the topbar now, not at the next start
+            if (saved && typeof App !== 'undefined' && typeof App.showCompany === 'function') {
+                App.showCompany(saved);
+            }
             toast('Settings saved');
+            SettingsPage.loadUnreadableSecrets();
         } catch (err) {
             toast(err.message, 'error');
+        } finally {
+            if (btn) btn.disabled = false;
         }
+    },
+
+    // Closing date: say plainly whether one is set, and clear it in one
+    // click — clearing used to mean emptying three date segments by hand,
+    // which WebKit could leave half-empty and silently invalid.
+    //
+    // The state line describes the closing date the books HOLD, and then
+    // any change typed but not saved yet. It used to describe the field,
+    // so after a Clear that never reached the server it said "No closing
+    // date: every period is open." while the books stayed closed (2.18.0
+    // gate, macbase1 NEW-1).
+    _savedClosingDate: '',
+
+    _closingStateText(value) {
+        return value
+            ? `Closed through ${formatDate(value)}: changes dated on or before it are refused.`
+            : 'No closing date: every period is open.';
+    },
+
+    // What Save Settings will change, or '' when the field matches the books.
+    _closingPendingText(saved, typed, incomplete) {
+        if (incomplete) return 'The date typed is not complete: finish it, or press Clear.';
+        if (typed === saved) return '';
+        if (!typed) return 'Save Settings to remove the closing date.';
+        return saved
+            ? `Save Settings to move it to ${formatDate(typed)}.`
+            : `Save Settings to close the books through ${formatDate(typed)}.`;
+    },
+
+    showClosingState() {
+        const input = document.getElementById('closing-date');
+        const typed = input ? input.value : '';
+        // a half-typed date reads as '' but is not empty: the form will not submit
+        const incomplete = !!(input && input.validity && input.validity.badInput);
+        const saved = SettingsPage._savedClosingDate || '';
+        const state = document.getElementById('closing-date-state');
+        if (state) {
+            const pending = SettingsPage._closingPendingText(saved, typed, incomplete);
+            state.textContent = SettingsPage._closingStateText(saved) + (pending ? ` ${pending}` : '');
+        }
+        const clear = document.getElementById('closing-date-clear');
+        if (clear) clear.disabled = !typed && !incomplete;
+    },
+
+    // Save Settings was refused by the browser because the date is half
+    // typed. WebKit shows an empty message and nothing else, so say it.
+    closingDateInvalid() {
+        SettingsPage.showClosingState();
+        toast('Nothing was saved: the closing date is not complete. Finish it, or press Clear.', 'error');
+    },
+
+    clearClosingDate() {
+        const input = document.getElementById('closing-date');
+        if (!input) return;
+        // `value = ''` alone left WebKit's date segments holding the old
+        // date: the field was invalid with an empty message, so Save
+        // Settings sent nothing, for this or any other setting, until a
+        // reload (2.18.0 gate, macbase1 NEW-1). Changing the type rebuilds
+        // the segments empty, which every engine accepts.
+        input.type = 'text';
+        input.value = '';
+        input.type = 'date';
+        SettingsPage.showClosingState();
+        SettingsPage._updateDirty();
     },
 
     async uploadLogo(input) {
@@ -597,12 +915,35 @@ const SettingsPage = {
             try { data = await resp.json(); }
             catch (_) { data = null; }
             if (!resp.ok) {
-                const msg = (data && data.detail) ||
-                    `Upload failed (HTTP ${resp.status}). The file may be too large or the server returned an unexpected response.`;
+                const fallback = `Upload failed (HTTP ${resp.status}). The file may be too large or the server returned an unexpected response.`;
+                // a 422 is a list of entries: API.errorMessage makes sentences of it
+                const msg = data && data.detail ? API.errorMessage(data.detail, fallback) : fallback;
                 throw new Error(msg);
             }
             toast('Logo uploaded');
-            App.navigate('#/settings');
+            if (!SettingsPage.isDirty()) { App.navigate('#/settings'); return; }
+            // Unsaved edits elsewhere on the page: show the new logo in place
+            // rather than re-render the page over them.
+            document.getElementById('company-logo-note')?.remove();
+            let img = document.getElementById('company-logo-preview');
+            if (!img) {
+                img = document.createElement('img');
+                img.id = 'company-logo-preview';
+                img.setAttribute('style', 'max-width:200px; max-height:80px; margin-bottom:8px; display:block;');
+                input.parentElement.insertBefore(img, input);
+            }
+            img.src = `${(data && data.path) || ''}?t=${Date.now()}`;
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async removeLogo() {
+        if (!confirm('Remove the company logo? Documents print without one until you upload another.')) return;
+        try {
+            await API.del('/uploads/logo');
+            toast('Logo removed');
+            if (!SettingsPage.isDirty()) { App.navigate('#/settings'); return; }
+            document.getElementById('company-logo-preview')?.remove();
+            document.getElementById('company-logo-note')?.remove();
         } catch (err) { toast(err.message, 'error'); }
     },
 
@@ -619,16 +960,25 @@ const SettingsPage = {
     async changeCompanyType(sel) {
         const value = sel.value;
         const previous = value === 'nonprofit' ? 'business' : 'nonprofit';
-        const msg = value === 'nonprofit'
+        // The switch reloads the page; other changes on it are saved with
+        // the new type rather than dropped by the reload.
+        const others = SettingsPage.isDirty('company_type');
+        const msg = (value === 'nonprofit'
             ? 'Switch this company to nonprofit mode? Screens will say donor, pledge, donation and fund; the net-asset accounts are added. Nothing in your data changes.'
-            : 'Switch this company back to business mode? Screens return to customer, invoice, sales receipt and class. Nothing in your data changes.';
+            : 'Switch this company back to business mode? Screens return to customer, invoice, sales receipt and class. Nothing in your data changes.')
+            + (others ? '\n\nYour other unsaved changes on this page are saved with it.' : '');
         if (!confirm(msg)) { sel.value = previous; return; }
+        const form = document.getElementById('settings-form');
+        if (others && form && !form.reportValidity()) { sel.value = previous; return; }
         try {
-            await API.put('/settings', { company_type: value });
+            const payload = others ? SettingsPage._formData() : {};
+            payload.company_type = value;
+            await API.put('/settings', payload);
             if (value === 'nonprofit') {
                 try { await API.post('/nonprofit/setup-accounts', {}); }
                 catch (e) { /* accounts can be created later from the Nonprofit section */ }
             }
+            SettingsPage._leaving = true;
             toast('Company type saved — reloading');
             setTimeout(() => location.reload(), 600);
         } catch (err) {
@@ -673,7 +1023,7 @@ const SettingsPage = {
                     + ` &middot; languages: ${escapeHtml(langs)}`
                     + pdfNote;
             } else {
-                el.innerHTML = '<strong style="color:#b45309;">No OCR engine is available — scanning is disabled.</strong>'
+                el.innerHTML = '<strong style="color:var(--text-warning);">No OCR engine is available — scanning is disabled.</strong>'
                     + '<div style="font-size:11px; color:var(--text-muted); margin-top:4px;">macOS and Windows normally use the engine built into the OS; installing Tesseract enables scanning anywhere.</div>'
                     + '<div style="font-size:11px; color:var(--text-muted); margin-top:6px;">'
                     + 'Ubuntu: <code>sudo apt-get install tesseract-ocr</code> &middot; '
@@ -699,6 +1049,7 @@ const SettingsPage = {
     async loadBackups() {
         try {
             const backups = await API.get('/backups');
+            SettingsPage._backups = backups;
             const el = $('#backup-list');
             if (!el) return;
             if (backups.length === 0) {
@@ -708,15 +1059,158 @@ const SettingsPage = {
             el.innerHTML = `<div class="table-container"><table>
                 <thead><tr><th scope="col">Filename</th><th scope="col">Size</th><th scope="col">Created</th><th scope="col">Actions</th></tr></thead>
                 <tbody>${backups.map(b => `<tr>
-                    <td>${escapeHtml(b.filename)}</td>
+                    <td>${escapeHtml(b.filename)}${b.backup_type === 'pre-restore'
+                        ? ' <span style="font-size:10px; color:var(--text-muted);">(taken before a restore)</span>' : ''}</td>
                     <td>${(b.file_size / 1024).toFixed(1)} KB</td>
-                    <td>${formatDate(b.created_at)}</td>
+                    <td>${escapeHtml(SettingsPage._when(b.created_at))}</td>
                     <td class="actions">
-                        <a href="/api/backups/download/${encodeURIComponent(b.filename)}" class="btn btn-sm btn-secondary" download>Download</a>
+                        ${SettingsPage._isAdmin() ? `<a href="/api/backups/download/${encodeURIComponent(b.filename)}" class="btn btn-sm btn-secondary" data-admin download>Download</a>` : ''}
+                        <button type="button" class="btn btn-sm btn-secondary" data-admin data-write data-filename="${escapeHtml(b.filename)}"
+                            onclick="SettingsPage.confirmRestore(this.dataset.filename)">Restore…</button>
                     </td>
                 </tr>`).join('')}</tbody>
             </table></div>`;
         } catch (e) { /* ignore */ }
+    },
+
+    // ------------------------------------------------------------------
+    // Files from earlier versions. Before 2.18 every company on an install
+    // kept its logo, attachments and employee documents in one shared
+    // folder; each company has its own copies now, but the old ones (W-4s
+    // and I-9s among them) are still there. Shown to an administrator only
+    // while the folder holds files. Removing them waits until every company
+    // has been opened since the update: that is when each copies its own in.
+    // ------------------------------------------------------------------
+    _andList(names) {
+        return names.length <= 2 ? names.join(' and ')
+            : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+    },
+
+    async loadLegacyFiles() {
+        const section = $('#settings-legacy-files');
+        if (!section || !SettingsPage._isAdmin()) return;
+        let state;
+        try {
+            state = await API.get('/uploads/legacy');
+        } catch (e) { return; }  // an older server, or one that refuses this role: stays hidden
+        SettingsPage._legacyFiles = state;
+        if (!state || !(state.files > 0)) {
+            section.hidden = true;
+            section.innerHTML = '';
+            return;
+        }
+        const pending = state.pending_companies || [];
+        const count = `${state.files} ${state.files === 1 ? 'file' : 'files'} (${formatFileSize(state.bytes)})`;
+        let wait = '';
+        if (pending.length === 1) {
+            wait = `${pending[0]} hasn't been opened since SlowBooks Pro was updated, and still needs to copy its files`
+                + ' from this folder. Open it once, then come back here to remove them.';
+        } else if (pending.length) {
+            wait = `${SettingsPage._andList(pending)} haven't been opened since SlowBooks Pro was updated, and still need`
+                + ' to copy their files from this folder. Open each of them once, then come back here to remove them.';
+        }
+        section.innerHTML = `
+            <h3>Files from earlier versions</h3>
+            <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
+                Before version 2.18, every company here kept its logo, attachments and employee documents in one
+                shared folder. Each company now keeps its own copies inside its company file, so nothing uses that
+                folder any more, but it still holds ${escapeHtml(count)}. A document deleted since then still has
+                its old copy there.
+            </div>
+            ${wait ? `<div id="legacy-files-pending" style="font-size:11px; margin-bottom:8px;">${escapeHtml(wait)}</div>` : ''}
+            <button type="button" class="btn btn-sm btn-secondary" id="legacy-files-remove" data-write
+                ${pending.length ? 'disabled' : ''} onclick="SettingsPage.removeLegacyFiles()">Remove them</button>`;
+        section.hidden = false;
+    },
+
+    async removeLegacyFiles() {
+        const n = (SettingsPage._legacyFiles && SettingsPage._legacyFiles.files) || 0;
+        if (!confirm(`Delete the ${n} ${n === 1 ? 'file' : 'files'} in the folder earlier versions shared between companies? `
+            + 'Each company keeps its own copies inside its company file, so nothing in your books changes. '
+            + 'This cannot be undone: a backup made before version 2.18, restored later, would come back '
+            + 'without its logo, attachments and employee documents.')) return;
+        try {
+            const result = await API.del('/uploads/legacy');
+            toast(`Removed ${result.removed} ${result.removed === 1 ? 'file' : 'files'} from the shared folder`);
+        } catch (err) { toast(err.message, 'error'); }
+        await SettingsPage.loadLegacyFiles();
+    },
+
+    // Date and time: a company often has several backups on one day.
+    _when(iso) {
+        if (!iso) return '';
+        const d = new Date(iso);
+        return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString('en-US', {
+            month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+        });
+    },
+
+    // Restore had an endpoint and no button (explore 2.17.3, macbase1 F25).
+    // It replaces the whole company, so it asks plainly and needs a tick.
+    async confirmRestore(filename) {
+        const b = (SettingsPage._backups || []).find(x => x.filename === filename) || { filename };
+        const when = b.created_at ? SettingsPage._when(b.created_at) : 'when it was made';
+        // The company as it is now. The shell's copy of the settings is read
+        // when the window opens, so after a rename this named the company by
+        // its old name (2.18.0 gate, skytech N4).
+        let company = (App.settings && App.settings.company_name) || '';
+        try {
+            const now = await API.get('/settings');
+            if (now && now.company_name) company = now.company_name;
+        } catch (e) { /* the shell's copy will do */ }
+        company = company || 'this company';
+        openModal('Restore a backup', `
+            <form id="restore-form" onsubmit="SettingsPage.restoreBackup(event)">
+                <input type="hidden" name="filename" value="${escapeHtml(filename)}">
+                <p style="margin:0 0 8px;"><strong>This replaces everything in ${escapeHtml(company)} with the books
+                    as they were in ${escapeHtml(filename)} (${escapeHtml(when)}).</strong></p>
+                <p style="margin:0 0 8px;">Anything entered or changed since then (${T('invoices')}, payments, bills,
+                    settings, users) is replaced. A safety backup of the books as they are now is taken first;
+                    restore that one to undo this.</p>
+                <label style="display:flex; gap:6px; align-items:flex-start; font-weight:normal;">
+                    <input type="checkbox" name="understood" required
+                        onchange="this.form.querySelector('button[type=submit]').disabled = !this.checked">
+                    <span>I understand that everything since ${escapeHtml(when)} will be replaced.</span></label>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-danger" disabled>Replace my books with this backup</button>
+                </div>
+            </form>`);
+    },
+
+    async restoreBackup(e) {
+        e.preventDefault();
+        const form = e.target;
+        const filename = form.filename.value;
+        const btn = form.querySelector('button[type=submit]');
+        const label = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Restoring…';
+        const send = allowOther => API.post('/backups/restore',
+            allowOther ? { filename, allow_other_company: true } : { filename });
+        try {
+            let result;
+            try {
+                result = await send(false);
+            } catch (err) {
+                // Another company's backup: say whose, and ask a second time.
+                if (!(err.status === 409 && err.detail && err.detail.code === 'other_company')) throw err;
+                if (!confirm(`${err.message}\n\nRestore it over this company anyway?`)) {
+                    btn.disabled = false;
+                    btn.textContent = label;
+                    return;
+                }
+                result = await send(true);
+            }
+            closeModal();
+            SettingsPage._leaving = true;  // the books were replaced; nothing here to keep
+            toast(`Restored from ${filename}. The books as they were are kept in ${result.safety_backup}. Reloading…`);
+            setTimeout(() => location.reload(), 1500);
+        } catch (err) {
+            toast(err.message, 'error');
+            btn.disabled = false;
+            btn.textContent = label;
+        }
     },
 
     async seedTemplates() {
@@ -736,6 +1230,10 @@ const SettingsPage = {
                 el.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">No templates. Click "Seed Default Templates" to create them.</div>';
                 return;
             }
+            // Edit is type="button": the list is inside the Settings form, where
+            // a button with no type submits it, so opening a template also saved
+            // every setting on the page (and told a bookkeeper "Your role
+            // doesn't allow this action").
             el.innerHTML = `<div class="table-container"><table>
                 <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Subject</th><th scope="col">Actions</th></tr></thead>
                 <tbody>${templates.map(t => `<tr>
@@ -743,7 +1241,7 @@ const SettingsPage = {
                     <td>${escapeHtml(t.template_type)}</td>
                     <td style="font-size:11px;">${escapeHtml(t.subject_template)}</td>
                     <td class="actions">
-                        <button class="btn btn-sm btn-secondary" onclick="SettingsPage.editTemplate(${t.id})">Edit</button>
+                        <button type="button" class="btn btn-sm btn-secondary" data-readonly-ok onclick="SettingsPage.editTemplate(${t.id})">Edit</button>
                     </td>
                 </tr>`).join('')}</tbody>
             </table></div>`;
@@ -887,10 +1385,14 @@ const SettingsPage = {
             `${escapeHtml(p.label)}</option>`
         ).join('');
 
+        // The administrator's, like every company setting (the key is a
+        // company-wide credential and the endpoint receives the dashboard's
+        // figures): any other sign-in sees the values locked (App.adminPass).
         return `
+            <div class="hidden" data-admin-note style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">AI settings are changed by an administrator.</div>
             <label class="form-field">
                 <span>Provider</span>
-                <select id="ai-settings-provider">${providerOptions}</select>
+                <select id="ai-settings-provider" data-admin>${providerOptions}</select>
             </label>
             <div id="ai-settings-hint" class="ai-settings-hint">
                 ${escapeHtml(currentSpec.free_tier_hint || '')}
@@ -910,7 +1412,7 @@ const SettingsPage = {
             </label>
             <label class="form-field" id="ai-settings-cf-wrap" style="${needsAccount ? '' : 'display:none'}">
                 <span>Cloudflare Account ID</span>
-                <input type="text" id="ai-settings-cf-account"
+                <input type="text" id="ai-settings-cf-account" data-admin
                        value="${escapeHtml(cfg.cloudflare_account_id || '')}"
                        placeholder="32-char hex (from dash.cloudflare.com)">
             </label>
@@ -926,7 +1428,7 @@ const SettingsPage = {
                 </p>
                 <label class="form-field">
                     <span>Worker URL <em class="ai-worker-required">(https only)</em></span>
-                    <input type="url" id="ai-settings-worker-url"
+                    <input type="url" id="ai-settings-worker-url" data-admin
                            value="${escapeHtml(cfg.worker_url || '')}"
                            placeholder="https://slowbooks-ai.yourname.workers.dev/v1/chat/completions"
                            autocomplete="off" spellcheck="false">
@@ -951,7 +1453,7 @@ const SettingsPage = {
                 </p>
                 <label class="form-field">
                     <span>Base URL <em class="ai-worker-required">(https only)</em></span>
-                    <input type="url" id="ai-settings-endpoint-url"
+                    <input type="url" id="ai-settings-endpoint-url" data-admin
                            value="${escapeHtml(cfg.endpoint_url || '')}"
                            placeholder="https://api.example.com/v1"
                            autocomplete="off" spellcheck="false">
@@ -964,16 +1466,16 @@ const SettingsPage = {
                 </p>
             </fieldset>
             <label class="form-field">
-                <span>API Key / Shared Secret ${hasKey ? '<em class="ai-key-saved">(saved &#10003;)</em> <button type="button" class="btn btn-sm" id="ai-settings-key-remove" title="Remove the stored key">Remove</button>' : ''}</span>
-                <input type="password" id="ai-settings-key"
+                <span>API Key / Shared Secret ${hasKey ? '<em class="ai-key-saved">(saved &#10003;)</em> <button type="button" class="btn btn-sm" id="ai-settings-key-remove" data-write data-admin title="Remove the stored key">Remove</button>' : ''}</span>
+                <input type="password" id="ai-settings-key" data-admin
                        placeholder="${hasKey ? 'Leave blank to keep existing' : 'Paste key or openssl rand -hex 32'}"
                        autocomplete="new-password">
             </label>
             <div class="ai-settings-buttons">
-                <button type="button" class="btn btn-secondary btn-sm" id="ai-settings-test">Test</button>
+                <button type="button" class="btn btn-secondary btn-sm" data-write data-admin id="ai-settings-test">Test</button>
                 <span id="ai-settings-test-result" class="ai-settings-test-result"></span>
                 <div class="ai-settings-spacer"></div>
-                <button type="button" class="btn btn-primary btn-sm" id="ai-settings-save">Save</button>
+                <button type="button" class="btn btn-primary btn-sm" data-write data-admin id="ai-settings-save">Save AI settings</button>
             </div>
         `;
     },
@@ -1143,10 +1645,10 @@ SettingsPage.loadClasses = async function () {
                 ${fundCells(c)}
                 <td>${c.is_archived ? 'Archived' : 'Active'}</td>
                 <td class="actions">
-                    ${np ? `<button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.editFund(${c.id})">Edit</button>` : ''}
+                    ${np ? `<button type="button" class="btn btn-sm btn-secondary" data-readonly-ok onclick="SettingsPage.editFund(${c.id})">Edit</button>` : ''}
                     ${c.is_system_default ? '' : `
-                        <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.renameClass(${c.id})">Rename</button>
-                        <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.toggleArchiveClass(${c.id}, ${!c.is_archived})">${c.is_archived ? 'Unarchive' : 'Archive'}</button>`}
+                        <button type="button" class="btn btn-sm btn-secondary" data-write onclick="SettingsPage.renameClass(${c.id})">Rename</button>
+                        <button type="button" class="btn btn-sm btn-secondary" data-write onclick="SettingsPage.toggleArchiveClass(${c.id}, ${!c.is_archived})">${c.is_archived ? 'Unarchive' : 'Archive'}</button>`}
                 </td>
             </tr>`).join('') + `</tbody></table></div>`;
     } catch (err) {
@@ -1251,14 +1753,14 @@ SettingsPage.loadCostCodes = async function () {
         el.innerHTML = `<div class="table-container"><table>
             <thead><tr><th scope="col">Code</th><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Default account</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
             <tbody>` + codes.map(c => `<tr>
-                <td style="padding-left:${8 + (c.depth || 0) * 16}px">${c.depth ? '<span style="color:#aaa">└ </span>' : ''}<code>${escapeHtml(c.code)}</code></td>
+                <td style="padding-left:${8 + (c.depth || 0) * 16}px">${c.depth ? '<span style="color:var(--text-muted)">└ </span>' : ''}<code>${escapeHtml(c.code)}</code></td>
                 <td>${escapeHtml(c.name)}</td>
                 <td>${escapeHtml(c.cost_type)}</td>
                 <td>${escapeHtml(c.account_name || '')}</td>
                 <td>${c.is_active ? 'Active' : 'Inactive'}</td>
                 <td class="actions">
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.renameCostCode(${c.id})">Rename</button>
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.toggleCostCode(${c.id}, ${!c.is_active})">${c.is_active ? 'Deactivate' : 'Activate'}</button>
+                    <button type="button" class="btn btn-sm btn-secondary" data-write onclick="SettingsPage.renameCostCode(${c.id})">Rename</button>
+                    <button type="button" class="btn btn-sm btn-secondary" data-write onclick="SettingsPage.toggleCostCode(${c.id}, ${!c.is_active})">${c.is_active ? 'Deactivate' : 'Activate'}</button>
                 </td>
             </tr>`).join('') + `</tbody></table></div>`;
     } catch (err) {
@@ -1348,8 +1850,8 @@ SettingsPage.loadCostTypes = async function () {
                 <td><code>${escapeHtml(t.code)}</code></td>
                 <td><input class="ct-name" value="${escapeHtml(t.name)}" style="width:130px"></td>
                 <td style="text-align:center"><input type="checkbox" class="ct-labor" ${t.is_labor ? 'checked' : ''}></td>
-                <td><input type="number" step="0.01" class="ct-burden" value="${t.burden_pct ?? ''}" style="width:70px" placeholder="%" aria-label="Flat burden percent"></td>
-                <td>${t.is_labor ? `<select class="ct-burden-method" aria-label="Burden method" title="Flat: the % above posts with each time entry. Payroll: the pay run distributes actual employer taxes + job-routed benefit codes by hours — only for stubs built from time entries (Use approved time entries on the pay run); hours typed on a stub leave that employee's burden in the pool.">
+                <td><input type="number" step="0.01" class="ct-burden" value="${t.burden_pct ?? ''}" style="width:70px" placeholder="%" aria-label="Flat burden percent, ${escapeHtml(t.code)}"></td>
+                <td>${t.is_labor ? `<select class="ct-burden-method" aria-label="Burden method, ${escapeHtml(t.code)}" title="Flat: the % above posts with each time entry. Payroll: the pay run distributes actual employer taxes + job-routed benefit codes by hours — only for stubs built from time entries (Use approved time entries on the pay run); hours typed on a stub leave that employee's burden in the pool.">
                     <option value="flat" ${t.burden_method !== 'payroll' ? 'selected' : ''}>Flat %</option>
                     <option value="payroll" ${t.burden_method === 'payroll' ? 'selected' : ''}>Actual payroll</option>
                 </select>` : '—'}</td>
@@ -1357,8 +1859,8 @@ SettingsPage.loadCostTypes = async function () {
                 <td><select class="ct-offset">${await SettingsPage._accountOptions(t.offset_account_id)}</select></td>
                 <td><select class="ct-burden-offset">${await SettingsPage._accountOptions(t.burden_offset_account_id)}</select></td>
                 <td class="actions">
-                    <button type="button" class="btn btn-sm btn-primary" onclick="SettingsPage.saveCostType(${t.id})">Save</button>
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.toggleCostType(${t.id}, ${!t.is_active})">${t.is_active ? 'Deactivate' : 'Activate'}</button>
+                    <button type="button" class="btn btn-sm btn-primary" data-write onclick="SettingsPage.saveCostType(${t.id})">Save</button>
+                    <button type="button" class="btn btn-sm btn-secondary" data-write onclick="SettingsPage.toggleCostType(${t.id}, ${!t.is_active})">${t.is_active ? 'Deactivate' : 'Activate'}</button>
                 </td>
             </tr>`);
         }
@@ -1436,8 +1938,8 @@ SettingsPage.loadEquipment = async function () {
                 <td>${escapeHtml(q.cost_code_label || '')}</td>
                 <td>${q.is_active ? 'Active' : 'Inactive'}</td>
                 <td class="actions">
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.rateEquipment(${q.id})">Set rate</button>
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.toggleEquipment(${q.id}, ${!q.is_active})">${q.is_active ? 'Deactivate' : 'Activate'}</button>
+                    <button type="button" class="btn btn-sm btn-secondary" data-write onclick="SettingsPage.rateEquipment(${q.id})">Set rate</button>
+                    <button type="button" class="btn btn-sm btn-secondary" data-write onclick="SettingsPage.toggleEquipment(${q.id}, ${!q.is_active})">${q.is_active ? 'Deactivate' : 'Activate'}</button>
                 </td>
             </tr>`).join('') + `</tbody></table></div>`;
     } catch (err) {

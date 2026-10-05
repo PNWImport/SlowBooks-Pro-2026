@@ -5,6 +5,17 @@
  * ============================================================================ */
 
 [data-theme="dark"] {
+    /* the bright chart colours: every one clears 3:1 on the dark card */
+    --chart-green: #00c48f;
+    --chart-red: #ff6b6b;
+    --chart-orange: #ffa94d;
+    --chart-amber: #ff922b;
+    --chart-crimson: #ff4757;
+    --chart-blue: #5b7fff;
+    --chart-purple: #a855f7;
+    --chart-pink: #e879f9;
+    --chart-sky: #38bdf8;
+    --chart-yellow: #facc15;
     /* Navy becomes a bright readable blue in dark mode — used for headings, card values */
     --qb-navy:        #8ab4e0;
     --qb-navy-dark:   #6a9cc8;
@@ -18,7 +29,10 @@
     --qb-green:       #4caf7a;
     --qb-green-dark:  #3d9065;
     --qb-gold:        #e0a840;
-    --qb-red:         #e05555;
+    /* red text (overdue counts and days, negative figures, errors) was
+       4.33:1 on the panel, 5.05 now; the void and overdue badges take the
+       same red, 4.86 on their ground */
+    --qb-red:         #e46969;
     --qb-orange:      #e08050;
 
     --invoice-bg:     #1e2028;
@@ -35,8 +49,10 @@
 
     --text-primary:   #e0e4ec;
     --text-secondary: #a0a8b8;
-    --text-muted:     #7a8498;
-    --text-light:     #606878;
+    /* #7a8498 was 4.32:1 on the panel and 3.93 on a page header; 5.06 and
+       4.60 now (macOS gate's contrast sweep, 2.18.0) */
+    --text-muted:     #8790a2;
+    --text-light:     #7f8899;   /* was #606878, 2.90:1 on a card; 4.55 */
     --text-on-dark:   #c8d0dc;
     --text-on-navy:   #e0e4ec;
 
@@ -47,12 +63,12 @@
     --gray-200:       #2e3240;
     --gray-300:       #3a3e48;
     --gray-400:       #8b94a6; /* was #606878 — failed AA on the dark ground */
-    --gray-500:       #7a8498;
+    --gray-500:       #8790a2;   /* = --text-muted */
     --gray-600:       #a0a8b8;
 
     --success:        #4caf7a;
     --warning:        #e0a840;
-    --danger:         #e05555;
+    --danger:         #e46969;   /* = --qb-red */
 }
 
 /* Body and main content */
@@ -139,6 +155,9 @@
 
 [data-theme="dark"] tbody tr:nth-child(even) { background: #181a22; }
 [data-theme="dark"] tbody tr:hover { background: #222838; }
+/* the pay-run view's Employee column keeps its own ground (style.css) */
+[data-theme="dark"] .pay-run-table tbody tr:nth-child(even) td:first-child { background: #181a22; }
+[data-theme="dark"] .pay-run-table tbody tr:hover td:first-child { background: #222838; }
 
 /* Table group header rows (Chart of Accounts type headers) */
 [data-theme="dark"] tbody tr[style*="background:linear-gradient"] td {
@@ -409,3 +428,62 @@
     border-color: var(--pick-stroke);
 }
 [data-theme="dark"] .btn.ocr-pick:hover { filter: brightness(1.15); }
+
+/* Control accounts (issue #122) — same treatment as badge-partial, which is
+   the amber the dark theme already uses for "attention, not a problem". */
+[data-theme="dark"] .badge-control { background: #3a3010; color: #e0a840; border-color: #5a5020; }
+[data-theme="dark"] .hint--locked {
+    background: #2a2410;
+    border-color: #5a5020;
+    border-left-color: #e0a840;
+    color: #e8d9b0;
+}
+[data-theme="dark"] .hint--locked em { color: #e0a840; }
+[data-theme="dark"] .form-group input[disabled],
+[data-theme="dark"] .form-group select[disabled] { background: #23262b; color: #8b9098; }
+
+/* Contrast, from the macOS gate's sweep (2.18.0) and the same sweep over
+   every page (tests/test_theme_contrast.py). */
+
+/* The skip link's --qb-blue is a light blue here: white on it was 4.20:1.
+   The primary button's blue, 7.17. */
+[data-theme="dark"] .skip-link { background: #2a5a8a; }
+
+/* "Click to browse" on the IIF drop zone: --qb-blue as text, 4.30:1 */
+[data-theme="dark"] .iif-dropzone-text strong { color: var(--qb-blue-light); }
+
+/* AI Insights title: #a855f7 was 4.11:1 on the card */
+[data-theme="dark"] .ai-insights-title { color: #ae62f8; }
+
+/* Toasts are white text on a colour, and this theme's green, red and blue
+   are light: white on them read 2.72, 3.75 and 4.20:1. They keep the light
+   theme's colours, 4.86, 5.14 and 6.00. */
+[data-theme="dark"] .toast-success { background: #2b8055; }
+[data-theme="dark"] .toast-error   { background: #cc3333; }
+[data-theme="dark"] .toast-info    { background: #336699; }
+
+/* The tinted notes (style.css .note--*): a dark tint of each, under this
+   theme's text. As inline pale boxes they took the light text on a pale
+   ground, 1.14:1. */
+[data-theme="dark"] .card.note--ok,
+[data-theme="dark"] .note--ok      { background: #1a3a2a; border-left-color: #4caf7a; }
+[data-theme="dark"] .card.note--alert,
+[data-theme="dark"] .note--alert   { background: #3a1a1a; border-left-color: #e46969; }
+[data-theme="dark"] .card.note--caution,
+[data-theme="dark"] .note--caution { background: #2a2518; border-left-color: #e0a840; }
+[data-theme="dark"] .note--plain   { background: #242830; }
+
+/* Type-ahead pickers (combobox.js) */
+[data-theme="dark"] .cbx-input {
+    background-color: #14161c;
+    color: var(--text-primary);
+    border-color: var(--input-border);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0h8L4 5z' fill='%23a0a8b8'/%3E%3C/svg%3E") !important;
+}
+[data-theme="dark"] .cbx-popup {
+    background: var(--panel-bg);
+    border-color: var(--panel-border);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+[data-theme="dark"] .cbx-opt[aria-selected="true"] { background: #2b4a78; color: #ffffff; }
+[data-theme="dark"] .cbx-opt[aria-selected="true"] .cbx-in { color: #c8d0dc; }

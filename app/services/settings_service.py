@@ -5,15 +5,23 @@ cross-router dependencies or violating the "don't import private _functions
 from other modules" convention.
 """
 
+import re
+from datetime import date
+from decimal import Decimal, InvalidOperation
+
 from sqlalchemy.orm import Session
 
 from app.models.settings import Settings, DEFAULT_SETTINGS
-from app.services.crypto import decrypt_value, encrypt_value, is_encrypted
+from cryptography.fernet import InvalidToken
+
+from app.services.crypto import decrypt_value, encrypt_value, is_encrypted, is_readable
 
 _SENSITIVE_KEYS = frozenset(
     {
         "auth_password_hash",
         "session_secret",
+        # which company a sign-in belongs to (app/services/auth.py)
+        "company_session_id",
     }
 )
 
@@ -65,8 +73,24 @@ def redact_secrets(settings: dict) -> dict:
 
 def _maybe_decrypt(key: str, value):
     if key in ENCRYPTED_SETTINGS_KEYS and value:
-        return decrypt_value(value)
+        try:
+            return decrypt_value(value)
+        except (InvalidToken, ValueError):
+            # Saved under a settings key this install no longer has (a
+            # Docker container recreated without its key did this). Read as
+            # not set: every use of these fails closed (a webhook with no
+            # secret is refused, a closing date with no password refuses
+            # changes), and Settings names it to be entered again. Raising
+            # here failed every page that reads the settings.
+            return ""
     return value
+
+
+def unreadable_secret_keys(db: Session) -> list[str]:
+    """The settings saved encrypted that no key here decrypts: they read as
+    not set until someone enters them again."""
+    rows = db.query(Settings).filter(Settings.value.like("fernet:%")).all()
+    return sorted(r.key for r in rows if not is_readable(r.value))
 
 
 def get_all_settings(db: Session) -> dict:
@@ -123,6 +147,87 @@ def upgrade_plaintext_secrets(db: Session) -> int:
     except Exception:
         db.rollback()
     return upgraded
+
+
+# Settings a person types a number or a date into. Every other setting is
+# free text (or an enum, checked by the route). Before these were checked, a
+# default tax rate of 150 or -5 and a next invoice number of "abc" all
+# answered "Settings saved" — and then every new invoice was refused with a
+# validator message about fractions (explore 2.17.3, skytech M4 / macbase1
+# F4). A value that cannot work is refused here, where it was typed, in the
+# words of the field it was typed into.
+_PERCENT_SETTINGS = {
+    "default_tax_rate": "Default tax rate",
+    "late_fee_rate": "Late fee rate",
+}
+# A document keeps its tax rate to four places of a percent (New York
+# City's 8.875%, 7.0625%), so the default that fills it in can have no more.
+_FOUR_PLACE_PERCENTS = {"default_tax_rate"}
+# key -> (label, smallest allowed, largest allowed or None)
+_WHOLE_NUMBER_SETTINGS = {
+    "invoice_next_number": ("Next invoice number", 1, None),
+    "estimate_next_number": ("Next estimate number", 1, None),
+    "late_fee_grace_days": ("Grace days", 0, None),
+    "smtp_port": ("SMTP port", 1, 65535),
+}
+# Document counters keep the zeros typed in front: "0001" numbers invoices
+# 0001, 0002 ... ("INV-0001" style), where "1" numbers them 1, 2 ...
+_KEEP_TYPED_DIGITS = {"invoice_next_number", "estimate_next_number"}
+# A closing date that does not parse used to be stored as typed, and then
+# read as "no closing date" — the lock silently off.
+_DATE_SETTINGS = {"closing_date": "Closing date"}
+
+_DIGITS = re.compile(r"[0-9]+")
+
+
+class SettingValueError(ValueError):
+    """A setting value a person has to correct; str() is the sentence to
+    show them."""
+
+
+def clean_setting_value(key: str, value) -> str:
+    """The string to store for ``key``, or SettingValueError saying what to
+    type instead. Settings without a rule are stored as given."""
+    text = "" if value is None else str(value).strip()
+    if key in _PERCENT_SETTINGS:
+        label = _PERCENT_SETTINGS[key]
+        if text == "":
+            return "0"
+        try:
+            number = Decimal(text)
+        except InvalidOperation:
+            number = None
+        if number is None or not number.is_finite() or not 0 <= number <= 100:
+            raise SettingValueError(
+                f"{label} must be a number from 0 to 100. It is a percent: "
+                "8.25 means 8.25%."
+            )
+        if key in _FOUR_PLACE_PERCENTS and number != number.quantize(Decimal("0.0001")):
+            raise SettingValueError(
+                f"{label} can have up to four decimal places: 8.875 means 8.875%."
+            )
+        return "0" if number == 0 else format(number, "f")
+    if key in _WHOLE_NUMBER_SETTINGS:
+        label, low, high = _WHOLE_NUMBER_SETTINGS[key]
+        number = int(text) if _DIGITS.fullmatch(text) else None
+        if number is None or number < low or (high is not None and number > high):
+            if high is not None:
+                wanted = f"a whole number from {low} to {high}"
+            else:
+                wanted = f"a whole number, {low} or more"
+            raise SettingValueError(f"{label} must be {wanted}.")
+        return text if key in _KEEP_TYPED_DIGITS else str(number)
+    if key in _DATE_SETTINGS:
+        if text == "":
+            return ""
+        try:
+            return date.fromisoformat(text).isoformat()
+        except ValueError:
+            raise SettingValueError(
+                f"{_DATE_SETTINGS[key]} must be a date (YYYY-MM-DD), or empty "
+                "for no closing date."
+            ) from None
+    return "" if value is None else str(value)
 
 
 def is_nonprofit(db: Session) -> bool:

@@ -103,7 +103,7 @@ const BankingPage = {
                     then paste the <strong>setup token</strong> it gives you below.
                     Your credential stays on this machine; SlowBooks has no middleman server.
                 </p>
-                <form onsubmit="BankingPage.connectSimpleFIN(event)">
+                <form onsubmit="BankingPage.connectSimpleFIN(event)" data-write>
                     <div class="form-group">
                         <label>SimpleFIN setup token</label>
                         <input type="password" id="simplefin-token" required autocomplete="off"
@@ -124,7 +124,7 @@ const BankingPage = {
             const rows = feed.accounts.map(a => `<tr>
                     <td>${escapeHtml(a.name)}<div style="font-size:10px; color:var(--gray-400);">${escapeHtml(a.org || '')}</div></td>
                     <td class="amount">${escapeHtml(a.balance)} ${escapeHtml(a.currency)}</td>
-                    <td><select data-sfid="${escapeHtml(a.id)}" class="simplefin-map">${options(a.id)}</select></td>
+                    <td><select data-sfid="${escapeHtml(a.id)}" class="simplefin-map" data-write>${options(a.id)}</select></td>
                 </tr>`).join('');
             body = `
                 <p style="font-size:12px; margin-bottom:8px;">
@@ -132,6 +132,8 @@ const BankingPage = {
                     duplicates are skipped, bank rules suggest categories, and matches to postings you
                     already made are found. Everything else waits in the account's <em>To review</em> list.
                     ${feed.last_sync ? `Last sync: ${escapeHtml(feed.last_sync.replace('T', ' '))}` : 'Not synced yet.'}
+                    The first sync brings in about the last three months; <em>Fetch older history</em> reaches
+                    back as far as your SimpleFIN provider keeps.
                 </p>
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Bank feed</th><th scope="col" class="amount">Balance</th><th scope="col">Imports into</th></tr></thead>
@@ -139,6 +141,7 @@ const BankingPage = {
                 </table></div>
                 <div class="form-actions" style="margin-top:12px;">
                     <button class="btn btn-primary" onclick="BankingPage.syncSimpleFIN()">Sync Now</button>
+                    <button class="btn btn-secondary" onclick="BankingPage.showSimpleFINHistory()">Fetch older history…</button>
                     <button class="btn btn-secondary" onclick="BankingPage.disconnectSimpleFIN()">Disconnect</button>
                 </div>`;
         }
@@ -153,7 +156,7 @@ const BankingPage = {
         try {
             const data = await API.post('/simplefin/claim', { setup_token: token });
             toast(`Connected — found ${data.accounts.length} account(s). Now map them below.`);
-            App.navigate('#/banking');
+            BankingPage.go('#/banking');
         } catch (err) { toast(err.message, 'error'); }
     },
 
@@ -175,12 +178,57 @@ const BankingPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
+    // Older history: how far back is the person's choice; how much there is
+    // depends on the SimpleFIN provider. The server fetches it in slices the
+    // Bridge accepts; duplicates are skipped as on any sync.
+    showSimpleFINHistory() {
+        openModal('Fetch older history', `
+            <form onsubmit="BankingPage.fetchSimpleFINHistory(event)">
+                <div class="form-group">
+                    <label for="simplefin-history">Reach back</label>
+                    <select id="simplefin-history" name="history_months">
+                        <option value="3">3 months</option>
+                        <option value="6">6 months</option>
+                        <option value="12" selected>12 months</option>
+                    </select>
+                </div>
+                <p style="font-size:12px; margin:8px 0;">
+                    How much history there is depends on your SimpleFIN provider: the SimpleFIN Bridge keeps
+                    about 90 days, and others, such as BankSync, keep up to a year. Transactions already
+                    imported are skipped; the rest wait in each account's <em>To review</em> list, where
+                    anything from before your books began can be excluded.
+                </p>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Fetch</button>
+                </div>
+            </form>`);
+    },
+
+    async fetchSimpleFINHistory(e) {
+        e.preventDefault();
+        const months = parseInt(e.target.history_months.value, 10);
+        const btn = e.target.querySelector('button[type=submit]');
+        if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
+        try {
+            await BankingPage.saveSimpleFINMap();
+            const r = await API.post('/simplefin/sync', { history_months: months });
+            closeModal();
+            toast(`Fetched back to ${formatDate(r.since)}: ${r.imported} new, ${r.skipped} duplicates skipped`);
+            if (r.warnings && r.warnings.length) toast(r.warnings[0], 'error');
+            BankingPage.go('#/banking');
+        } catch (err) {
+            if (btn) { btn.disabled = false; btn.textContent = 'Fetch'; }
+            toast(err.message, 'error');
+        }
+    },
+
     async disconnectSimpleFIN() {
         if (!confirm('Disconnect the SimpleFIN bank feed? Imported transactions are kept.')) return;
         try {
             await API.post('/simplefin/disconnect');
             toast('Bank feed disconnected');
-            App.navigate('#/banking');
+            BankingPage.go('#/banking');
         } catch (err) { toast(err.message, 'error'); }
     },
 
@@ -261,7 +309,7 @@ const BankingPage = {
             });
             toast('Bank account created');
             closeModal();
-            App.navigate('#/banking');
+            BankingPage.go('#/banking');
         } catch (err) { toast(err.message, 'error'); }
     },
 
@@ -588,7 +636,7 @@ const BankingPage = {
                 </p>
                 <div class="form-grid">
                     <div class="form-group"><label>Statement Date *</label>
-                        <input name="statement_date" type="date" required value="${todayISO()}"></div>
+                        <input name="statement_date" type="date" required value="${defaultDate}" ${minDate ? `min="${minDate}"` : ''}></div>
                     <div class="form-group"><label>Statement Ending Balance *</label>
                         <input name="statement_balance" type="number" step="0.01" required></div>
                 </div>
@@ -621,9 +669,10 @@ const BankingPage = {
         const data = await API.get(`/banking/reconciliations/${reconId}/transactions`);
         const rows = data.transactions.map(t => {
             const cls = t.reconciled ? 'style="background:var(--primary-light);"' : '';
-            const amtCls = t.amount >= 0 ? 'color:var(--success)' : 'color:var(--danger)';
+            const amtCls = t.amount >= 0 ? 'color:var(--text-success)' : 'color:var(--text-danger)';
+            const said = ['Cleared', formatDate(t.date), t.payee || t.description, formatCurrency(t.amount)].filter(Boolean).join(', ');
             return `<tr ${cls}>
-                <td><input type="checkbox" ${t.reconciled ? 'checked' : ''}
+                <td><input type="checkbox" ${t.reconciled ? 'checked' : ''} aria-label="${escapeHtml(said)}"
                     onchange="BankingPage.toggleCleared(${reconId}, ${t.id}, this)"></td>
                 <td>${formatDate(t.date)}</td>
                 <td>${escapeHtml(t.payee || t.description || '')}${t.matched ? ' <span title="matched to a statement line" style="color:var(--success);">●</span>' : ''}</td>
@@ -642,6 +691,7 @@ const BankingPage = {
                     <button class="btn btn-primary" id="recon-finish-btn" onclick="BankingPage.finishReconcile(${reconId}, ${data.account_id})" ${balanced ? '' : 'disabled'}>Finish Reconciliation</button>
                 </div>
             </div>
+            <div id="recon-finish-msg" role="alert" style="font-size:12px; color:var(--danger); margin-bottom:8px;"></div>
             <div class="card-grid" style="margin-bottom:16px;">
                 <div class="card"><div class="card-header">Beginning Balance</div>
                     <div class="card-value">${formatCurrency(data.beginning_balance)}</div></div>
@@ -672,6 +722,14 @@ const BankingPage = {
     async finishReconcile(reconId, accountId) {
         if (!confirm('Mark this reconciliation as complete? Cleared lines are locked.')) return;
         try {
+            const data = await API.get(`/banking/reconciliations/${reconId}/transactions`);
+            if (Math.abs(data.difference) >= 0.005) {
+                const why = `Not finished: the difference is ${formatCurrency(data.difference)}, and it must be $0.00. Tick the lines that are on your statement, or check the statement's ending balance.`;
+                if (msg) msg.textContent = why;
+                toast(why, 'error');
+                return;
+            }
+            if (!confirm('Mark this reconciliation as complete? Cleared lines are locked.')) return;
             await API.post(`/banking/reconciliations/${reconId}/complete`);
             toast('Reconciliation completed');
             App.navigate(`#/banking/${accountId}`);
@@ -733,19 +791,27 @@ const BankingPage = {
         try {
             const endpoint = isCsv ? '/api/bank-import/preview-csv' : '/api/bank-import/preview';
             const resp = await fetch(endpoint, { method: 'POST', body: formData });
+            if (!resp.ok) throw new Error(await API.responseError(resp, 'Parse failed'));
             const data = await resp.json();
-            if (!resp.ok) throw new Error(data.detail || 'Parse failed');
+            if (isCsv && data.error && data.header_row) {
+                // A layout detection missed ("Unknown CSV format" with no
+                // way forward — exploratory 2.17.3, W-L15): ask which
+                // column is which, then preview again with the answer.
+                $('#ofx-preview').innerHTML = BankingPage._mappingStep(data, data.has_header !== false);
+                return;
+            }
             if (isCsv && data.error) throw new Error(data.error);
             const rows = data.transactions.map(t => `<tr>
                 <td>${escapeHtml(t.date || '')}</td>
                 <td>${escapeHtml(t.payee || '')}</td>
-                <td class="amount" style="${t.amount >= 0 ? 'color:var(--success)' : 'color:var(--danger)'}">${formatCurrency(t.amount)}</td>
+                <td class="amount" style="${t.amount >= 0 ? 'color:var(--text-success)' : 'color:var(--text-danger)'}">${formatCurrency(t.amount)}</td>
                 <td>${escapeHtml(isCsv ? (t.description || '') : (t.fitid || ''))}</td>
             </tr>`).join('');
             $('#ofx-preview').innerHTML = `
                 <div style="margin-bottom:8px; font-size:11px;">
                     <strong>${data.transactions.length}</strong> transactions found.
-                    ${isCsv && data.format ? `Format: ${escapeHtml(data.format)}` : ''}
+                    ${isCsv && data.format ? `Format: ${escapeHtml(layout)}.` : ''}
+                    ${isCsv && data.unread ? `${data.unread} row${data.unread === 1 ? '' : 's'} could not be read and will be skipped.` : ''}
                     ${data.account_id ? `Account: ${escapeHtml(data.account_id)}` : ''}
                 </div>
                 <div class="table-container" style="max-height:300px; overflow-y:auto;"><table>
@@ -776,10 +842,12 @@ const BankingPage = {
             const isCsv = BankingPage._isCsvFile(file);
             const formData = new FormData();
             formData.append('file', file);
+            if (isCsv && BankingPage._csvMapping) formData.append('mapping', JSON.stringify(BankingPage._csvMapping));
             const endpoint = isCsv
                 ? `/api/bank-import/import-csv/${feedId}`
                 : `/api/bank-import/import/${feedId}`;
             const resp = await fetch(endpoint, { method: 'POST', body: formData });
+            if (!resp.ok) throw new Error(await API.responseError(resp, 'Import failed'));
             const data = await resp.json();
             if (!resp.ok) throw new Error(data.detail || 'Import failed');
             toast(`Imported ${data.imported} (${data.skipped} duplicates skipped, ${data.matched || 0} matched to the books)`);

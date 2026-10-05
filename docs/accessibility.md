@@ -6,7 +6,7 @@ conform to WCAG 2.1 Level AA**. We do not claim compliance — no certifying
 body issues one — but we test against it, fix what we find, and treat a
 barrier as a bug.
 
-## What is in place (v2.8)
+![The Company Snapshot split down the middle: the light theme on the left, the dark theme on the right, with the same figures and the same A/R aging colour key in both](../screenshots/a11y-split.png)
 
 - Every data table declares its column headers (`scope="col"`).
 - Icon-only buttons (remove a line, delete an attachment, close a dialog)
@@ -31,8 +31,8 @@ barrier as a bug.
   validation pass; see [validation results](validation.md).
 - The chart-of-accounts tree and some long entry forms could use landmark
   regions and skip links.
-- Colour-coding on the dashboard charts (A/R aging) has text equivalents in
-  the legend but not on the bars themselves.
+- Colour-coding on the dashboard charts has text equivalents in the legend
+  but not on the bars themselves.
 - Keyboard-only drag ordering is not offered where a mouse drag exists
   (the dashboard uses arrow buttons instead).
 
@@ -40,5 +40,8 @@ barrier as a bug.
 
 If something in SlowBooks Pro is hard or impossible for you to use, open
 an issue at https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/issues or
-email support@slowbookspro.com and say which screen and which assistive
+email trent@neonpulsetechshop.com and say which screen and which assistive
 technology. Barriers are triaged as bugs.
+
+The same statement, with more screenshots, is on the website:
+https://www.slowbookspro.com/accessibility/

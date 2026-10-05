@@ -10,6 +10,7 @@
 # ============================================================================
 
 import logging
+import math
 import os
 import posixpath
 import re as _re
@@ -28,7 +29,9 @@ from starlette.middleware.sessions import SessionMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import http_exception_handler
+from fastapi.exceptions import RequestValidationError
 
 from app.services import storage
 from app.services.control_accounts import MissingControlAccount
@@ -136,6 +139,10 @@ from app.routes import reseller_permits as reseller_permits_routes
 # Tier 2: Receipt / document intake — local OCR (docs/design/receipt-intake.md)
 from app.routes import ocr as ocr_routes
 from app.services.auth import get_session_secret
+from app.services.auth import (
+    signed_in_before_this_start as _signed_in_before_this_start,
+    signed_in_to_another_company as _signed_in_to_another_company,
+)
 
 from app import __version__
 from app.config import (
@@ -147,6 +154,13 @@ from app.config import (
 from app.database import SessionLocal, Base, engine
 from app.services.audit import register_audit_hooks
 from app.services.request_context import acting_username as _acting_username
+from app.services.request_context import (
+    closing_date_password as _closing_date_password,
+)
+from app.services.closing_date import (
+    PASSWORD_HEADER as _CLOSING_PASSWORD_HEADER,
+    password_from_header as _closing_password_from_header,
+)
 from app.services.api_token_service import resolve as _resolve_api_token
 
 
@@ -456,9 +470,9 @@ app = FastAPI(
         "expenses, journal entries, in-kind gifts, job costs). `DELETE` on one "
         "answers 405 and names the void route. A pledge that will not be paid "
         "is written off (`POST /api/invoices/{id}/write-off`), not voided.\n"
-        "- **`tax_rate` on a document is a fraction** (0.089 = 8.9%); "
-        '`default_tax_rate` in settings is a percent string ("8.9"). '
-        "Divide by 100.\n"
+        "- **`tax_rate` on a document is a fraction** (0.089 = 8.9%), kept "
+        "to six places (0.08875 = 8.875%); `default_tax_rate` in settings is "
+        'a percent string ("8.9"). Divide by 100.\n'
         "- Enumerated fields are enums in this spec; read the allowed values "
         "here rather than guessing."
     ),
@@ -489,7 +503,9 @@ def _company_terms():
 
 
 async def _method_not_allowed_handler(request: Request, exc: StarletteHTTPException):
-    """A bare 405 on DELETE /api/<doc>/<id> names nothing. Posted documents
+    """Two things every HTTP error passes through.
+
+    A bare 405 on DELETE /api/<doc>/<id> names nothing. Posted documents
     are never deleted — they are voided, which keeps the audit trail and
     reverses the ledger — and the void route exists one segment further
     down. Say so in the body (2.9.0 gate: an agent rebuilt a whole fixture
@@ -752,6 +768,7 @@ _ADMIN_WRITE_PREFIXES = (
     "/api/backups",
     "/api/companies",
     "/api/migration",
+    "/api/qbo/connect-manual",
     # Staff records carry SSN, pay rate and W-4 elections: creating or
     # editing one is HR, not daily books (GHSA-rh75-6834-f66j).
     "/api/employees",
@@ -841,6 +858,27 @@ async def require_session(request: Request, call_next):
         return await call_next(request)
     token_principal = None
     if request.session.get("authenticated") is True:
+        if _signed_in_before_this_start(request.session):
+            # Settings -> "Ask for the password each time SlowBooks Pro
+            # starts": this session dates from before the app last started.
+            request.session.clear()
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": "SlowBooks Pro was restarted. Enter the password "
+                    "to continue."
+                },
+            )
+        if _signed_in_to_another_company(request.session):
+            # A sign-in belongs to the company it was made in (R6-1).
+            request.session.clear()
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": "That sign-in was for another company. Enter this "
+                    "company's password to continue."
+                },
+            )
         role = request.session.get("role") or "admin"
     else:
         # Scoped API tokens: non-human principals (agents, integrations)
@@ -915,12 +953,21 @@ class ActingUserContextMiddleware:
             return await self.app(scope, receive, send)
         session = scope.get("session") or {}
         acting = None
+        override = None
         if session.get("authenticated") is True:
             acting = session.get("username") or "operator"
+            # The closing-date override password a signed-in person resent a
+            # refused change with (get_db also stamps it on the Session).
+            wanted = _CLOSING_PASSWORD_HEADER.lower().encode("latin-1")
+            for name, value in scope.get("headers") or []:
+                if name == wanted:
+                    override = _closing_password_from_header(value.decode("latin-1"))
         token = _acting_username.set(acting)
+        override_token = _closing_date_password.set(override)
         try:
             await self.app(scope, receive, send)
         finally:
+            _closing_date_password.reset(override_token)
             _acting_username.reset(token)
 
 
@@ -1085,18 +1132,26 @@ app.include_router(ocr_routes.router)
 # Register audit log hooks
 register_audit_hooks(SessionLocal)
 
-# Static files. Uploads live outside the bundle on desktop installs
-# (SLOWBOOKS_DATA_DIR) but keep their /static/uploads URLs — the more
-# specific mount must be registered first so it wins over /static.
+# Static files.
 static_dir = Path(__file__).parent / "static"
-uploads_dir = storage.uploads_root()
-uploads_dir.mkdir(parents=True, exist_ok=True)
-if uploads_dir != static_dir / "uploads":
-    app.mount(
-        "/static/uploads",
-        StaticFiles(directory=str(uploads_dir)),
-        name="static-uploads",
-    )
+
+
+# The uploads folder is not served. Before 2.18.0 every company's logo,
+# attachments and employee documents were files there, one folder for every
+# company, published at /static/uploads/ like the app's own scripts — and
+# /static/ needs no sign-in, so a W-4 was one guessable URL away from anyone
+# who could reach the server. Each company now keeps its files in its own
+# database and serves them through signed-in routes; the folder is left on
+# disk (the upgrade copies from it, and other companies may still need it)
+# but nothing reads it over HTTP. Registered before the /static mount, which
+# on a server install covers app/static/uploads too.
+@app.api_route(
+    "/static/uploads/{rest:path}", methods=["GET", "HEAD"], include_in_schema=False
+)
+async def _uploads_folder_is_not_served(rest: str):
+    return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
+
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # SPA entry point

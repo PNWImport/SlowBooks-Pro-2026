@@ -16,6 +16,8 @@ import hmac
 import json
 import os
 import secrets
+import threading
+import weakref
 from pathlib import Path
 
 from argon2 import PasswordHasher
@@ -311,3 +313,140 @@ def require_auth(request: Request) -> None:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
+
+
+# ---------------------------------------------------------------------------
+# "Ask for the password each time SlowBooks Pro starts" (explore 2.17.3,
+# macbase1 S-j). The session cookie outlives the app — the desktop window
+# keeps a persistent profile so that print windows and downloads share the
+# sign-in — so quitting and relaunching reopened the company signed in. A
+# company can now choose otherwise: every session remembers which start of
+# the server signed it in, and with the setting on, one from an earlier
+# start counts as signed out. Off by default, so nothing changes for anyone
+# who does not ask.
+#
+# Desktop only (SLOWBOOKS_DESKTOP=1, set by the launcher for the window and
+# for Server Edition's --serve-lan, one server process either way). A Docker
+# deployment runs two workers, each with its own start, and would sign
+# people out at random.
+# ---------------------------------------------------------------------------
+
+BOOT_ID = secrets.token_hex(16)
+SESSION_BOOT_KEY = "boot"
+ASK_ON_START_KEY = "ask_password_on_start"
+
+
+def remember_this_start(session: dict) -> None:
+    """Called where a session is signed in."""
+    session[SESSION_BOOT_KEY] = BOOT_ID
+
+
+def _asks_for_password_on_start() -> bool:
+    # Looked up on the module at call time: the test harness and the
+    # launcher both repoint app.database.SessionLocal.
+    import app.database as database
+
+    try:
+        db = database.SessionLocal()
+        try:
+            return get_setting_raw(db, ASK_ON_START_KEY) == "true"
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("could not read %s; keeping the session", ASK_ON_START_KEY)
+        return False
+
+
+def signed_in_before_this_start(session: dict) -> bool:
+    """True when a signed-in session dates from an earlier start of the app
+    and the company asks for the password each time it starts: the caller
+    treats it as signed out. A session found current is marked with this
+    start, so the setting is read once per session per start, not on every
+    request."""
+    if session.get(SESSION_BOOT_KEY) == BOOT_ID:
+        return False
+    if os.environ.get("SLOWBOOKS_DESKTOP") == "1" and _asks_for_password_on_start():
+        return True
+    remember_this_start(session)
+    return False
+
+
+# ---------------------------------------------------------------------------
+# A sign-in belongs to one company (2.18.0 gate, skytech R6-1). Every company
+# on an install is served under the same session secret, and a session
+# recorded who signed in and with what role, not where: with last_opened
+# pointed at another company outside the app, or after a Switch company...
+# whose sign-out failed, the next company opened signed in, its own password
+# never asked. Each company file now carries an id of its own; a sign-in
+# records it, and a session recorded for another company counts as signed
+# out. A session from before 2.18.0 carries no company, and belongs to the
+# one it is first used on, so an upgrade signs nobody out.
+# ---------------------------------------------------------------------------
+
+SESSION_COMPANY_KEY = "company"
+COMPANY_SESSION_SETTING = "company_session_id"
+# Keyed by the engine itself, held weakly: the entry goes when the engine
+# does. Keyed by id(engine), a new engine could reuse a freed one's address
+# and inherit its company id — every request then read as "signed in to
+# another company" (seen as an order-dependent test failure; a server serves
+# one company per process, so only a process that repoints its engine can
+# meet it).
+_company_ids: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+_company_ids_lock = threading.Lock()
+
+
+def _company_id() -> str | None:
+    """This company's id, made the first time it is asked for. A server
+    serves one company, so the id is kept for the process, per database
+    (the test harness and the launcher repoint app.database.SessionLocal)."""
+    import app.database as database
+
+    factory = database.SessionLocal
+    key = getattr(factory, "kw", {}).get("bind") or factory
+    company = _company_ids.get(key)
+    if company:
+        return company
+    with _company_ids_lock:
+        company = _company_ids.get(key)
+        if company:
+            return company
+        try:
+            db = factory()
+            try:
+                company = get_setting_raw(db, COMPANY_SESSION_SETTING)
+                if not company:
+                    company = secrets.token_hex(16)
+                    set_setting(db, COMPANY_SESSION_SETTING, company)
+                    db.commit()
+            finally:
+                db.close()
+        except Exception:
+            logger.exception("could not read this company's id; keeping the session")
+            return None
+        _company_ids[key] = company
+        return company
+
+
+def forget_company_ids() -> None:
+    """For tests that serve another company in the same process."""
+    _company_ids.clear()
+
+
+def remember_this_company(session: dict) -> None:
+    """Called where a session is signed in."""
+    company = _company_id()
+    if company:
+        session[SESSION_COMPANY_KEY] = company
+
+
+def signed_in_to_another_company(session: dict) -> bool:
+    """True when a signed-in session was signed in to another company: the
+    caller treats it as signed out."""
+    company = _company_id()
+    if company is None:
+        return False
+    signed_in_to = session.get(SESSION_COMPANY_KEY)
+    if signed_in_to is None:
+        session[SESSION_COMPANY_KEY] = company
+        return False
+    return signed_in_to != company

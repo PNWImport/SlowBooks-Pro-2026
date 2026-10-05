@@ -7,12 +7,17 @@
 #   - Chase credit:   Amount column already signed (neg=charge, pos=payment)
 #   - PayPal:         Gross (NOT Net) = transaction amount;
 #                     Fee column goes to Merchant Fee expense (6120)
+#   - Generic:        a header naming a date, a description and either one
+#                     signed amount or money-out / money-in columns; when
+#                     no header says so, the import dialog asks the user
+#                     which column is which (a "mapping")
 # ============================================================================
 
 import csv
 import hashlib
 import io
 import logging
+import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Optional
@@ -20,6 +25,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.banking import BankTransaction
+from app.services.accounting import _q
 from app.services.bank_rules_engine import apply_bank_rules
 from app.services.safe_errors import DataProblem
 
@@ -351,14 +357,20 @@ def parse_bofa_detail(reader: csv.DictReader) -> list[dict]:
 # ── Dispatch ─────────────────────────────────────────────────────────────
 
 
-def parse_csv(csv_text: str) -> dict:
+def parse_csv(csv_text: str, mapping: Optional[dict] = None) -> dict:
     """Parse CSV text, auto-detect format, return parsed transactions.
 
     Strips BOM and surrounding quotes from headers for reliable detection.
-    Handles PayPal's '\ufeff"Date"' header format.
+    Handles PayPal's '\ufeff"Date"' header format. A named layout wins;
+    then a header naming a date, a description and an amount (or money
+    out / money in); otherwise the result carries the file's columns and a
+    few rows for the import dialog's mapping step. `mapping` is that
+    step's answer, and skips detection.
 
     Returns:
         {"format": str, "transactions": list[dict], "error": str | None}
+        plus, for an unknown layout, header_row / sample / has_header /
+        suggested.
     """
     # Strip BOM before handing to csv reader
     if csv_text.startswith("\ufeff"):
@@ -369,7 +381,7 @@ def parse_csv(csv_text: str) -> dict:
         return {
             "format": "unknown",
             "transactions": [],
-            "error": "Empty CSV or no headers",
+            "error": "The file is empty — there is nothing to import.",
         }
 
     # Some exports (notably Bank of America detail CSVs) put a statement
@@ -409,15 +421,7 @@ def parse_csv(csv_text: str) -> dict:
         "bofa_detail": parse_bofa_detail,
     }
 
-    parser = parsers.get(fmt)
-    if not parser:
-        return {
-            "format": "unknown",
-            "transactions": [],
-            "error": f"Unknown CSV format. Headers found: {sorted(headers)}",
-        }
-
-    transactions = parser(reader)
+    transactions = parsers[fmt](reader)
     return {"format": fmt, "transactions": transactions, "error": None}
 
 
@@ -466,13 +470,15 @@ def import_csv_transactions(
     bank_account_id: int,
     csv_text: str,
     format_hint: Optional[str] = None,
+    mapping: Optional[dict] = None,
 ) -> dict:
     """Parse CSV and import into BankTransaction records.
 
     Dedup strategy: content-derived import_id (see assign_import_ids),
-    mirroring the FITID dedup in ofx_import.import_transactions.
+    mirroring the FITID dedup in ofx_import.import_transactions. `mapping`
+    is the import dialog's column choices for a layout detection missed.
     """
-    result = parse_csv(csv_text)
+    result = parse_csv(csv_text, mapping)
     if result["error"]:
         return {"imported": 0, "skipped": 0, "errors": [result["error"]], "total": 0}
 
