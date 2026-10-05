@@ -14,9 +14,10 @@ function load() {
         fetch: async url => { calls.push(['fetch', url]); return reply; },
         toast: (...args) => calls.push(['toast', ...args]),
         closeModal: () => calls.push(['close']),
-        App: { navigate: route => calls.push(['navigate', route]) },
+        API: { responseError: async (resp, fallback) => { const b = await resp.json(); return b.detail || fallback; } },
     });
     const page = vm.runInContext(fs.readFileSync(path.join(__dirname, '../../app/static/js/banking.js'), 'utf8') + '\nBankingPage;', context);
+    page.go = route => calls.push(['go', route]);
     return { page, calls, finish };
 }
 
@@ -27,16 +28,16 @@ for (const success of [true, false]) {
         const pending = page.confirmOFXImport(7, 12, button);
         assert.equal(button.disabled, true);
         assert.equal(button.textContent, 'Importing…');
-        await page.confirmOFXImport(7, 12, button);
         assert.deepEqual(calls, [['fetch', '/api/bank-import/import-csv/7']]);
         finish({ ok: success, json: async () => success
             ? { imported: 2, skipped: 0, matched: 0 } : { detail: 'Import refused' } });
         await pending;
+        assert.equal(calls.filter(c => c[0] === 'fetch').length, 1);
         assert.equal(button.disabled, false);
         assert.equal(button.textContent, 'Import 2 Transactions');
         assert.equal(calls.some(c => c[0] === 'close'), success);
-        assert.equal(calls.some(c => c[0] === 'navigate'), success);
-        if (success) assert.deepEqual(calls.at(-1), ['navigate', '#/banking/12']);
+        assert.equal(calls.some(c => c[0] === 'go'), success);
+        if (success) assert.deepEqual(calls.at(-1), ['go', '#/banking/12']);
         else assert.deepEqual(calls.at(-1), ['toast', 'Import refused', 'error']);
     });
 }

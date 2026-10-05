@@ -617,10 +617,12 @@ const App = {
                     with the columns and a few example rows.
                 </p>
                 <div class="form-group"><label>File</label>
-                    <input type="file" name="file" accept=".csv,.txt,.journal" required></div>
+                    <input type="file" name="file" accept=".csv,.txt,.journal" required
+                        onchange="App.invalidateChartImportPreview()"></div>
                 <div class="form-group">
                     <label style="display:flex; gap:8px; align-items:flex-start; font-weight:normal;">
-                        <input type="checkbox" name="replace" style="margin-top:2px;">
+                        <input type="checkbox" name="replace" style="margin-top:2px;"
+                            onchange="App.invalidateChartImportPreview()">
                         <span>Replace the seeded chart: deactivate every account the file does not name
                         that has never been used. Control accounts and accounts with history stay.</span>
                     </label>
@@ -635,11 +637,18 @@ const App = {
             </form>`);
     },
 
-    async _postChartImport(form, dryRun) {
+    invalidateChartImportPreview() {
+        App._chartImportPreview = null;
+        const apply = $('#chart-import-apply');
+        if (apply) apply.hidden = true;
+    },
+
+    async _postChartImport(form, dryRun, planHash = null) {
         const fd = new FormData();
         fd.append('file', form.file.files[0]);
         const replace = form.replace.checked ? 1 : 0;
-        const resp = await fetch(`/api/csv/import/accounts?dry_run=${dryRun ? 1 : 0}&replace=${replace}`,
+        const hashQuery = planHash ? `&plan_hash=${encodeURIComponent(planHash)}` : '';
+        const resp = await fetch(`/api/csv/import/accounts?dry_run=${dryRun ? 1 : 0}&replace=${replace}${hashQuery}`,
             { method: 'POST', body: fd, headers: { 'X-Slowbooks-Desktop': '1' } });
         if (!resp.ok) throw new Error(await API.responseError(resp, 'Import failed'));
         return resp.json();
@@ -649,10 +658,18 @@ const App = {
         e.preventDefault();
         const form = e.target;
         App._chartImportForm = form;
+        const file = form.file.files[0];
+        const replace = form.replace.checked;
+        const requestId = (App._chartImportRequestId || 0) + 1;
+        App._chartImportRequestId = requestId;
+        App.invalidateChartImportPreview();
         const box = $('#chart-import-preview');
         box.innerHTML = '<p class="hint">Reading the file…</p>';
         try {
             const plan = await App._postChartImport(form, true);
+            if (requestId !== App._chartImportRequestId ||
+                form.file.files[0] !== file || form.replace.checked !== replace) return;
+            App._chartImportPreview = { form, file, replace, planHash: plan.plan_hash };
             const label = { create: 'Create', update: 'Update', skip: 'Skip', deactivate: 'Deactivate', keep: 'Keep', error: 'Error' };
             const rows = plan.rows.map(r => `<tr>
                 <td>${label[r.action] || r.action}</td>
@@ -672,7 +689,7 @@ const App = {
                     <thead><tr><th scope="col">Action</th><th scope="col">Number</th><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Detail</th></tr></thead>
                     <tbody>${rows}</tbody></table></div>`;
             const apply = $('#chart-import-apply');
-            apply.hidden = writes === 0;
+            apply.hidden = writes === 0 || plan.errors.length > 0 || plan.row_errors > 0;
             apply.textContent = `Import ${writes} change${writes === 1 ? '' : 's'}`;
         } catch (err) {
             box.innerHTML = `<p style="color:var(--danger);">${escapeHtml(err.message)}</p>`;
@@ -681,10 +698,17 @@ const App = {
     },
 
     async applyChartImport() {
+        const preview = App._chartImportPreview;
         const form = App._chartImportForm;
-        if (!form) return;
+        if (!preview || !form || preview.form !== form ||
+            form.file.files[0] !== preview.file || form.replace.checked !== preview.replace) {
+            App.invalidateChartImportPreview();
+            toast('The file or options changed — preview the import again', 'error');
+            return;
+        }
         try {
-            const done = await App._postChartImport(form, false);
+            const done = await App._postChartImport(form, false, preview.planHash);
+            if (done.dry_run) throw new Error('The import plan has errors — preview and correct the file');
             closeModal();
             toast(`Chart imported: ${done.created} created, ${done.updated} updated${done.replace ? `, ${done.deactivated} deactivated` : ''}`);
             App.navigate('#/accounts');

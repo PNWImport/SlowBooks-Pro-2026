@@ -1,5 +1,7 @@
 # TODO / Working Notes
 
+> **Note (2026-10-05):** This file is a historical record of the pre-intake branch state and is kept as written. The branch has since absorbed upstream 2.19.0, with Alembic migration head `m3heads2026105` and a fresh full-suite run of 6,187 passed / 46 skipped.
+
 Internal scratchpad. Not user-facing — the README and CHANGELOG don't
 link here on purpose.
 
@@ -29,7 +31,7 @@ under `[Unreleased]` and move its entry down to the archive.
 
 ## Upstream intake and PR preparation — September 14
 
-Release target: **2.18.0 (unreleased)**, following upstream 2.17.3.
+Release target: the branch now follows upstream 2.19.0 (merged); the local changes remain unreleased.
 
 Final preparation refresh: upstream main still `a1022f8`; retained Docker image
 now includes the import-reference boundary fix. Live PostgreSQL boundary/replay

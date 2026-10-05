@@ -140,8 +140,12 @@ def test_pending_deposit_partial_allocation_and_completion(
         == 404
     )
     assert client.post("/api/deposits", json={**body, "total": 0}).status_code == 400
-    # The amount-only form (no line_ids) is still accepted.
-    assert client.post("/api/deposits", json={**body, "total": 5}).status_code == 200
+    # The amount-only form (no line_ids) is still accepted, but only up to
+    # the money actually waiting in Undeposited Funds — both payments are
+    # deposited by now, so a further $5 would overdraw it.
+    overdraw = client.post("/api/deposits", json={**body, "total": 5})
+    assert overdraw.status_code == 400
+    assert "exceeds pending Undeposited Funds" in overdraw.json()["detail"]
 
 
 def test_deposit_requires_undeposited_funds_account(client, db_session):

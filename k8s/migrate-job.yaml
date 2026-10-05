@@ -33,7 +33,7 @@ spec:
       # ready; wait (up to ~5 min) instead of spending the Job's retries.
       initContainers:
         - name: wait-for-db
-          image: slowbooks:2.18.0
+          image: slowbooks:2.19.0
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args:
@@ -51,7 +51,7 @@ spec:
             readOnlyRootFilesystem: true
       containers:
         - name: migrate
-          image: slowbooks:2.18.0
+          image: slowbooks:2.19.0
           imagePullPolicy: IfNotPresent
           # Bypass the entrypoint: no server, just schema + seed.
           command: ["/bin/sh", "-c"]  # Alpine image: busybox sh, no bash

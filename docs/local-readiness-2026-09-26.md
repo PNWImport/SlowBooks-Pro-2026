@@ -1,5 +1,7 @@
 # Local readiness checklist — September 26, 2026
 
+> **Note (2026-10-05):** This file is a historical record of the pre-intake branch state and is kept as written. The branch has since absorbed upstream 2.19.0, with Alembic migration head `m3heads2026105` and a fresh full-suite run of 6,187 passed / 46 skipped.
+
 Local review only: no PR, issue, workflow dispatch, commit, push or merge.
 This checklist mirrors the repository's GitHub checks and the gates recorded
 in [validation](validation.md) and the [September 20 checklist](local-readiness-2026-09-20.md),

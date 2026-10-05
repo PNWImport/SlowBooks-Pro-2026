@@ -256,6 +256,32 @@ def create_deposit(data: DepositCreate, db: Session = Depends(get_db)):
             )
     else:
         total = _q(data.total or 0)
+        if total <= 0:
+            raise HTTPException(
+                status_code=400, detail="Deposit amount must be positive"
+            )
+        # The legacy amount-only form names no payments, so the only guard
+        # against overdrawing Undeposited Funds (or two deposits taking the
+        # same money at once) is the fund account's own balance, read under
+        # a row lock. The lock is portable to PostgreSQL; SQLite's write
+        # serialization still protects its single-file runtime.
+        db.query(Account).filter(Account.id == uf_id).with_for_update().one()
+        uf_lines = db.query(TransactionLine).filter(TransactionLine.account_id == uf_id)
+        available = sum(
+            (
+                Decimal(str(line.debit or 0)) - Decimal(str(line.credit or 0))
+                for line in uf_lines
+            ),
+            Decimal("0"),
+        )
+        if total > available:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Deposit exceeds pending Undeposited Funds balance of "
+                    f"${available:.2f}"
+                ),
+            )
 
     if total <= 0:
         raise HTTPException(status_code=400, detail="Deposit amount must be positive")

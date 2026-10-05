@@ -1,5 +1,7 @@
 # Validation — 2026-09-07
 
+> **Note (2026-10-05):** This file is a historical record of the pre-intake branch state and is kept as written. The branch has since absorbed upstream 2.19.0, with Alembic migration head `m3heads2026105` and a fresh full-suite run of 6,187 passed / 46 skipped.
+
 Maintainer record for `claude/main-branch-protection-2tqh90`, starting at
 `25126f25635d3ece42ec38a9b25304112484b154`. This records local validation;
 it is not a public-release certification or a completed hosted CI run.

@@ -46,7 +46,7 @@ spec:
       # verify-full, mount a CA-issued pair from a Secret at /tls instead.
       initContainers:
         - name: tls-cert
-          image: slowbooks:2.18.0
+          image: slowbooks:2.19.0
           imagePullPolicy: IfNotPresent
           command: ["python", "-c"]
           args:

@@ -30,7 +30,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: slowbooks
-          image: slowbooks:2.18.0
+          image: slowbooks:2.19.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

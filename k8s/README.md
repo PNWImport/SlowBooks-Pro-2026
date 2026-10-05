@@ -33,7 +33,7 @@ change one deliberately the test tells you which assumption you just broke.
 
 ## Deploy
 
-**1. Build and push the image.** The manifests reference `slowbooks:2.18.0`;
+**1. Build and push the image.** The manifests reference `slowbooks:2.19.0`;
 point them at your registry via `images:` in `kustomization.yaml`.
 
 ```bash

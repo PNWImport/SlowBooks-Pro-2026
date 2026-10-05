@@ -17,7 +17,7 @@ on what the software does, not on what sprint shipped what.
   with a masked view and a password prompt to show full numbers.
 - Refuse migration journal references over 100 characters before posting, preventing inconsistent replay identity handling across database backends.
 
-Target version: **2.18.0**, following upstream 2.17.3. These branch changes are not yet released.
+This branch now follows upstream 2.19.0 (2.18.0 through 2.19.0 are merged in, see the released sections below). The local changes in this section remain unreleased.
 
 - Incorporate upstream through `90ba2b7` (2.16.2–2.17.3): payments, credits and
   bill payments refuse other parties' documents with named messages; invoice
@@ -240,6 +240,723 @@ Target version: **2.18.0**, following upstream 2.17.3. These branch changes are 
 - Corrected CT/MN paid-leave caps; added regression and migration checks.
 - Bound high-growth transaction lists and eliminate N+1 loads for time/job,
   journals, recurring invoices, payables, payroll benefits, and remittances.
+
+### v2.19.0 — Type to find it
+
+**The pickers search as you type**, as QuickBooks' do. Type part of a name
+into a customer, vendor, item, account, employee, job, class or fund picker,
+or any list of 15 or more, and the list narrows to what matches: "harb"
+finds Harbor Light Bakery, "6500" finds 6500 Rent or Lease. Every word typed
+has to appear in the name; names that start with it come first, and the
+matching part is in bold. Enter, Tab or a click takes the highlighted name,
+Escape backs out, and a name typed in full is taken when you leave the box
+(#207).
+- "+ New Customer" and "+ New Vendor" stay in the list. Chosen after typing
+  a name that isn't there, the quick add opens with that name filled in.
+- A required picker left empty stops the save with "Choose one from the
+  list." A read-only sign-in sees the pickers locked, as before.
+- Screen readers hear each picker by its label (#198), how many names match
+  as you type, and the highlighted one. The list follows the WAI-ARIA 1.2
+  combobox pattern, and its text meets AA contrast in both themes.
+- Behind the box the picker is still the same `<select>`: every form reads it
+  as before, and whatever changes it shows in the box.
+
+**Windows builds pin pythonnet 3.2.0** (#208), the library pywebview's window
+runs on. pywebview asks for it unpinned, so 2.18.1 was built on 3.1.0 and
+2.18.2 on 3.2.0; every build now gets the version the gate ran.
+
+No schema change. 545 operations.
+
+### v2.18.2 — Every field says its name
+
+**A screen reader says what each field is.** Most forms put a label beside its
+field without tying the two, so a screen reader said "combo box" where it
+should have said "Customer", and a grid of inputs (a budget, a batch of
+payments, opening balances) had no names at all: in 2.18.1, 495 fields on 22
+of 53 pages and 625 in 91 of 125 dialogs had no name a screen reader could
+say (#198). Every field has one now, wherever a page or dialog draws it:
+- a form's label is tied to its field, so clicking the label also puts the
+  cursor in the field, and a required field is read as required rather than
+  as "star";
+- a label written just before its field ("Deposit To:", From and To) is tied
+  to it;
+- a field in a table is named from its column and its row: the row's
+  first words where it has some ("Jan, 6500 Rent or Lease", "Payment,
+  1001"), else its line ("Qty, line 2");
+- a checkbox that starts a row says what ticking it does ("Pay invoice
+  1001", "Pay Lena Ortiz", and on the reconcile screen "Cleared", with the
+  line's date, payee and amount);
+- fields with the same label in different parts of a screen are in groups
+  named after their headings, so a screen reader can tell them apart: New
+  Customer's Billing Address and Shipping Address, each Settings section
+  (PayPal, Square and QuickBooks Online each have an Environment), and the
+  four tax forms' Year;
+- the few fields with nothing beside them to borrow from (the status and
+  other filters, file choosers, the job page's period) are named where
+  they're drawn;
+- a field whose only words are its placeholder, like the search boxes and
+  a quick add's Email and Phone, takes them as its name. Chromium read
+  placeholders as names already, but WebKit, and so VoiceOver on the Mac,
+  doesn't.
+
+A browser test sweeps every page, every dialog, the reconcile screen and a
+nonprofit's own pages for a field with no name, a field named only by its
+placeholder, and two fields with one name in one group.
+
+**An import that hit errors says so.** The QuickBooks Interop page ended every
+import with a green "Imported 0 records" and "Import complete", even when the
+only result was an error in the red box below. An import that comes back
+with errors now shows a red "Imported N records, M errors: see the list
+below", and the status bar says "Import finished with errors" (#197). The
+report-CSV import on the same page did the same, and is fixed too.
+
+**Claude and Grok come first in the AI provider list** (Settings → AI
+Insights) and in the sentence above it, side by side, as the docs and the
+website list them (#200). An install that hasn't chosen a provider starts on
+Claude; a saved choice is kept. Claude's models move to the current
+generation: Opus 5.5, Sonnet 5.5 and Haiku 4.5, with Sonnet 5.5 the default
+(it was Sonnet 4.6). A model you saved before is kept, shown as Custom.
+
+**Docs.** The accessibility statement (`docs/accessibility.md`) describes
+2.18's contrast work and how it's checked; `docs/development.md` counts the
+app's 64 page routes.
+
+No schema change. 545 operations.
+
+### v2.18.1 — Names from QuickBooks come across clean
+
+**A name QuickBooks had put in quotes kept them.** QuickBooks writes a field
+that holds a comma inside double quotes (`"JONES, BOB"`, `"99,250.02"`) and
+a quote mark within one twice. The IIF import kept the quotes as part of the
+value, so a customer or vendor whose name has a comma was listed with quote
+marks around it. They come off now (#195, @TheLocalW).
+
+**ALL-CAPS names can come in as normal capitalization.** Many QuickBooks
+users typed every name in capitals. When a file has names in ALL CAPS,
+**Validate** now shows a few of them as they would import and offers
+**Change ALL-CAPS names to normal capitalization**: `BOB JONES` becomes
+`Bob Jones` and `ACME TOOLING, INC.` becomes `ACME Tooling, Inc.`, with
+initials, legal forms and web addresses kept as they are written
+(`CVS Pharmacy`, `Wells Fargo Bank, N.A.`, `Amazon.com`). It is off unless
+you tick it, because no word list knows every initialism a business uses,
+and the examples are your own names, so you can see first. It covers
+customer, vendor and account names; item names are kept as typed, since
+they are often part numbers, and nothing already in your books is renamed.
+From @TheLocalW (#195), who also added `tools/clean_iif.py`: for source
+installs, it writes a cleaned copy of an export with the same rules.
+
+Fixed in review, before it shipped:
+
+- The renaming reached the list rows but not the transactions that name
+  them: a bill for `ACME TOOLING, INC.` could not find the vendor imported as
+  `ACME Tooling, Inc.`, and an invoice or payment for `BOB JONES` made a
+  second customer. A name is now rewritten everywhere the file uses it.
+- Re-importing a list that an earlier version had imported made a second copy
+  of every ALL-CAPS name. **A name in a file now matches the customer, vendor
+  or account already in your books whatever its case**, as QuickBooks treats
+  names, box ticked or not; `ACME CO` beside an existing `Acme Co` used to
+  make a second one. So a transactions file imported after its lists finds
+  every name, however it spells it. Item names still match exactly.
+- The list of initials held ordinary words ("BANK OF AMERICA" read "BANK of
+  America", "NEW YORK LIFE" read "New YORK Life") and read a bank's `NA`
+  (National Association) as "N/A". Initials beside a full stop, `&` or `/`
+  keep their capitals (`N.A.`, `AT&T`, `A/R`), and `MCDONALD'S` reads
+  `McDonald's`.
+- `tools/clean_iif.py` keeps a file's Windows line endings and a Windows-1252
+  file's encoding.
+
+**A line posted to a sub-account imports.** QuickBooks names a sub-account
+by its path (`Automobile Expense:Gasoline`) on a transaction, while the list
+import keeps it under its own name with its parent linked, and the path was
+never looked up: every bill, invoice or deposit line posted to a sub-account
+was refused as "account ... not found". The path finds it now, in any case.
+One under a different parent is not taken: a line for `Automobile:Gas` is
+still refused rather than posted to `Utilities:Gas`. Re-importing a list also
+counted each job already there as a customer imported; it doesn't. Both
+turned up while testing the samples for this release, and predate it.
+
+**A second import says what it skipped.** Importing the same file twice adds
+nothing, rightly, but the result counted only the bills, deposits and sales
+receipts it skipped, and labelled the count "imported": "Duplicates skipped:
+1 imported" for a bill, an invoice and a payment (both QA agents, 2.18.1
+gate). Every document type counts what it skips now, shown as "Already here,
+skipped". A payment for a customer who isn't in the books, and an invoice or
+estimate with no customer name, vanished without a word; each is an error
+naming the document now.
+
+**The permit form's format note covered the boxes above it** (#194,
+@cnbarry1). On Add Reseller Permit, the state's note under State and Permit
+number (for Washington, "9 digits…") was drawn over both boxes, and a click
+on their lower part landed on the note. It has a row of its own now, and a
+longer note wraps within it.
+
+**API.** `POST /api/iif/import` takes a form field `retitle_names` (default
+false). `POST /api/iif/validate` reports `caps_names` and up to six
+`caps_name_examples` (`{name, becomes}`), and the import result reports
+`names_changed`. 545 operations, unchanged.
+
+No schema change.
+
+### v2.18.0 — Around the ledger
+
+Two of the QA agents each started a brand-new company and ran it for a day
+as its owner would, through the screens: skytech on Windows (a sign shop,
+771 recorded steps) and macbase1 on macOS (a bakery). Every figure was
+checked by hand against the ledger. The ledger held — every trial balance
+balanced and every account they rebuilt matched to the cent. What they found
+was around it: figures that were never kept up to date, postings a person
+couldn't see, flows that couldn't be finished from the screen, and tax forms
+mapped wrong. Seventy-four findings between them, sixty-eight once the
+overlaps were merged, and this release fixes every one — along with
+twenty-nine more that fixing them turned up. The release gate's own run
+found more, fixed here too — the largest, that companies on one desktop
+shared their uploaded files. And @Sciumo's QuickBooks Online work (#192)
+and a longer reach for SimpleFIN bank feeds are in it.
+
+#### Money that was wrong
+
+**Pay Sales Tax never worked.** Every attempt was refused with "date: Input
+should be None" — a field named `date` hid the date type. It records the
+payment now, and only from a bank or credit card account (the list used to
+offer Accounts Receivable and Inventory).
+
+**Tax paid to a supplier reduced the sales tax owed to the state.** A
+purchase order started at the company's *selling* tax rate, and turning it
+into a bill debited that tax to Sales Tax Payable, netting it against the
+tax collected from customers. macbase1's bakery collected $59.57 and Pay
+Sales Tax offered $0.33. Tax on a purchase is now part of what the purchase
+cost: it is spread over the bill's lines, to the cent, and posts with them.
+Purchase orders start at no tax. *If your books were entered on an earlier
+version,* the Sales Tax report now names the supplier tax sitting in Sales
+Tax Payable and gives the one journal entry that moves it.
+
+**Purchases with no account were booked as advertising.** A bill line with
+no account fell back to account 6000, which the standard chart names
+Advertising & Marketing — a bakery's flour and a sign shop's panels. A line
+now posts where someone said: the account on the line, the item's, or the
+vendor's default; a line none of them names is refused with a sentence
+saying what to choose. Enter Bill has an Account column, To Bill asks for an
+account per line, and cost-of-goods accounts can be chosen for vendors,
+expenses and card charges.
+
+**Schedule C counted expenses as income.** Lines 10, 13, 15, 17 and 18
+contain "Line 1", and a substring test moved office expense, depreciation,
+insurance and more into gross income. Lines are matched exactly now, the
+mapping follows the standard chart, and cost of goods lands on line 4. Net
+profit equals the P&L.
+
+**Customer and vendor balances always read $0.00** — on the Customer Center,
+the customer page, the Vendor list and both CSV exports. They are worked out
+from the open documents and unapplied credits whenever they're shown.
+
+**Money a customer paid could disappear from view.** Receive Payment didn't
+apply a payment to anything unless each amount was typed by hand, and the
+leftover could never be applied later; A/R Aging ignored it and disagreed
+with the balance sheet. Typing the amount now fills the invoices oldest
+first; leaving money unapplied is a choice with its own box; a customer's
+credits are listed on Receive Payment, the customer page and the payment,
+with Apply; and A/R Aging, Income by Customer and the dashboard all tie to
+account 1100. Foreign-currency invoices count at the amount the ledger
+booked.
+
+**Foreign-currency money is counted at what the ledger booked.** A/R Aging,
+A/P Aging, customer and vendor balances, statements, Income by Customer, the
+analytics charts and the assistant all count a EUR invoice at its booked
+dollars, and every aging report now equals its control account. A
+foreign-currency invoice can be paid from Receive Payment, which offers the
+currency and asks for the rate on the payment date (it could only be paid
+through the API).
+
+**A deposited payment could be voided out from under its deposit,** driving
+Undeposited Funds negative — even after the deposit was reconciled. A
+deposit now records the payments it took; a payment in a deposit can't be
+voided until the deposit is, and never once it is reconciled. Deposits can
+be voided from Make Deposits.
+
+**Adding a bank feed could count the opening balance twice.** The statement
+balance was posted even when the account already had it. It is now compared
+with the books: equal posts nothing, different asks before posting only the
+difference.
+
+**Email All Overdue said "Sent 2 statements" when nothing went out,** and
+counted draft invoices as overdue. It counts what was sent and names who
+didn't get one. Collection letters had the same fault.
+
+**Time tracking couldn't be used.** Entries showed 0.00 hours, saving landed
+on "Page not found", draft entries could never be approved, and a pay run
+from approved time paid an hourly employee $0.00 without a word. All fixed;
+a pay run that would pay someone nothing is refused and names them, and the
+W-3, 940 and 941 count only employees who were paid.
+
+**The Cash Flow statement put customer receipts under Investing** and
+supplier and payroll payments under Financing. It is built the standard way
+now, from net income, and its net change equals the change in cash.
+
+**A pay stub didn't add up.** An Oregon employee's stub listed the state
+income tax twice, the company's own share of some state premiums appeared
+as the employee's deductions, and the year-to-date column was guessed from
+the labels: Total Deductions read $548.53 where $404.06 was withheld. Every
+line now adds up to what was withheld, each line has its own year to date,
+and the stub says "OR Income Tax".
+
+**A typed exchange rate could be replaced.** Choosing a currency looks up
+the day's rate; a rate typed before that answer arrived was overwritten a
+few seconds later, and the invoice booked at the looked-up rate without a
+word (850 EUR at a typed 1.10 posted as $968.80). A typed rate is kept.
+
+**Tax forms produced nothing in the Mac app.** W-2, W-3, 940, 941 and the
+New-Hire Report open in the viewer as invoices do. The 941 works lines 5a–5d
+from the rates and puts the rounding difference on line 7.
+
+#### Each company's files, in its own company file
+
+**Companies on one desktop shared their files.** Every company wrote its
+logo, attachments, employee documents and waiting receipt scans into one
+folder, and nothing in a file's name said whose it was. A second company's
+logo printed on the first company's invoices; its invoice 1 "receipt.pdf"
+replaced the first company's, and deleting it left the first with nothing;
+its employee #1's W-4 opened from the first company's employee #1; an
+updated W-4.pdf replaced the original; a deleted document stayed on disk;
+every company's dashboard listed every company's pending scans; and a
+backup carried none of it. A company's files are now kept in its own
+database: a backup carries them, a second file with the same name is a
+second document, and deleting one deletes its bytes (overwritten, not left
+in the file's free space).
+
+- Upgrading copies each company's files in from the shared folder the first
+  time the company opens on 2.18. Nothing there recorded whose a file was,
+  so a copied logo or attachment says it came from the folder earlier
+  versions shared (upload it again if it isn't yours), and a file that
+  wasn't there is named, without a download or a size. The shared folder
+  is left where it was until every company on the install has been opened
+  on 2.18; then an administrator can remove it from Settings → Files from
+  earlier versions, and a document deleted in the app leaves no old copy
+  behind.
+- **Security.** The shared folder was published at `/static/uploads/`,
+  which needs no sign-in: on a Server Edition, `--serve-lan` or Docker
+  install, anyone who could reach the server could fetch a company's logo,
+  attachments and employee documents (W-4s, I-9s) at addresses that were
+  easy to guess. Nothing is served from it now; a company's files come
+  from signed-in routes. A read-only sign-in could also download an
+  employee's documents through the attachment routes, and a bookkeeper
+  could delete one; employee documents are now reached only through the HR
+  routes, which are the administrator's. And any sign-in could download a
+  backup, which is the whole company, sign-in password hashes included:
+  only an administrator can now.
+- **Employees' portal links** were kept in the company file as issued, so a
+  copy of it, or a backup, held every employee's working link, and a link
+  signs in as that employee, the bank account their pay goes to included.
+  A link is now kept as a digest the portal checks and a copy encrypted
+  with the payroll key, which is kept outside the company file. Links
+  already sent keep working, and Copy Link still shows them.
+
+#### Purchases
+
+- Bills and purchase orders have Save PDF and Print; purchase orders have a
+  View; a bill lists its payments, each with View, Print Check and Void.
+- A bill takes its vendor's terms and a due date from them; bills made from
+  a PO before this release get the due date their terms give.
+- The PO, bill and vendor credit forms show line amounts and totals as you
+  type, fill an item's cost when it's picked, and won't save at $0.00.
+- Prices to four places on bills, purchase orders, vendor credits and items
+  ($0.045 a box).
+- A vendor can be made inactive. An expense, a bill payment or a pay run
+  that would overdraw a bank account asks first.
+- A/P Aging is in home currency, nets vendor credits and bill-payment money
+  not yet applied, and equals account 2000.
+
+#### Sales documents
+
+- Credit memos and recurring schedules fill an item's price and show a
+  total; credit memos start at the company's tax rate (or the credited
+  invoice's) and have View, Save PDF and Print.
+- A document that adds up to $0.00 asks before it saves, and a no-charge
+  invoice starts Paid (a recurring schedule for $0.00 is refused).
+- Duplicating an invoice keeps its currency, rate and job; changing an
+  invoice's or estimate's customer or rate re-totals its tax.
+- Foreign-currency invoices say which currency they're in, on screen, in
+  lists and on the PDF.
+- Settings' invoice prefix, next invoice number and invoice footer are used.
+- Converting an estimate makes today's invoice, due by the customer's terms,
+  addressed to the customer.
+- Addresses print without a dangling comma, and with the country abroad; the
+  invoice header no longer wraps dates and terms, a statement's dates and
+  totals stay on one line, and a negative amount prints "-$10.00", not
+  "$-10.00".
+- Email Invoice fills in the customer's email and thanks them once.
+- A due date before the invoice date, or a schedule ending before it starts,
+  is refused.
+- A counter sale needs no customer (Walk-in Customer). Unit prices take four
+  decimal places. Saving past a customer's credit limit asks first.
+- **Tax rates take four decimal places** — New York City's 8.875%, or
+  7.0625% — on every document and in Settings, and are kept exactly: the
+  forms took two, and a rate was stored to four places of the fraction, so
+  8.875% became 8.88% ($88.80 on $1,000 instead of $88.75). The forms now
+  work tax out to the cent exactly as the server saves it (a purchase
+  order at 8.25% on $102.00 showed $8.41 and saved $8.42), and a purchase
+  order whose only change is its rate re-totals. A default saved earlier
+  with more decimals shows rounded to four instead of holding back Save
+  Settings.
+
+#### Customers, payments and statements
+
+- Receive Payment lists draft invoices too, and no longer offers Print Check
+  for money received. An invoice shows the customer's credit with Apply
+  Credit.
+- The customer statement is one list in date order, each line describing its
+  document.
+- Income by Customer shows sales before tax, with tax in its own column.
+- Customers get the company's default terms, a Tax exempt box and an Active
+  box; a negative credit limit is refused.
+- Make Deposits names each sales receipt and check.
+- Batch Payments, Receive Payment, Pay Bills, the credit screens and the
+  credit-limit check see every open invoice and bill; they read only the
+  newest 500, so once a company had more, an older unpaid one never
+  appeared (#191). Every list page that shows only the newest (Invoices,
+  Bills, Estimates, Sales Receipts, Credit Memos, Purchase Orders,
+  Payments, Vendor Credits, Payroll) says so and offers Show all, and a
+  bank account's review queue shows every line waiting.
+- Receive Payment and Apply Credit name an Apply amount that is more than
+  its invoice's balance, instead of reading "Fully allocated" while the
+  save is refused.
+- The dashboard's A/R Aging card shows the report's own figures — the
+  buckets, credits not yet applied, and a total equal to Total Receivables
+  — and an invoice counts as overdue only while something is owed on it.
+
+#### Banking and the books
+
+- Reconciliations go forward only; Finish says what's out of balance; a
+  completed reconciliation has a report and PDF.
+- A category picked in the bank review list is kept; Add all categorised
+  uses it.
+- Bank CSV import reads any file with a date, a description and an amount,
+  and asks which column is which when it can't tell.
+- The register shows bill payments' check numbers, keeps its place on
+  refresh, and every line opens its document (deposits and bill payments
+  have views of their own).
+- Registering a fixed asset posts its purchase (paid from an account, on a
+  bill already entered, or owned before the books began); salvage above cost
+  is refused.
+- An unbalanced journal entry says by how much, in dollars, and a journal
+  entry can no longer be voided twice.
+
+#### Payroll and tax forms
+
+- Each employee on a pay run has a Stub PDF naming the company and the
+  employee; the Employee column stays in view while the table scrolls, and
+  an Other column makes every row add up to Net.
+- Tax forms, pay stubs and the New-Hire Report save under names that say
+  what they are and whose (W-2_2026_Lena-Ortiz.pdf, 941_2026_Q3.pdf,
+  Pay-Stub_2026-10-01_Lena-Ortiz.pdf). Onboarding offers the New-Hire
+  Report as its PDF, not raw data.
+- A vendor marked "1099 Vendor: Yes" reaches the 1099-NEC and 1096, which
+  the Tax Forms page now prints.
+- The Sales Tax report nets credit memos and checks itself against Sales Tax
+  Payable, and says how much old supplier tax lowered that balance.
+- SSN last 4, pay rate and work state are checked, in words.
+- A garnishment order is ended, not deleted: End order stops it being
+  withheld and keeps its record.
+
+#### Settings, sign-in and backups
+
+- Settings refuses a tax rate outside 0–100%, a next number that isn't a
+  whole number, and the like, in words; Save Settings stays in reach and
+  leaving with unsaved changes asks first; the closing date shows whether
+  one is set, clears in one click (on the Mac too), and says what is saved
+  rather than what is typed.
+- The closing-date override password is asked for and works; five wrong
+  passwords lock it for ten minutes, and the fifth answer says so.
+- A new company opens on setup with its name filled in; the unlock screen
+  names the company and, in the desktop app, offers "Choose a different
+  company →" from the moment the app starts (the Mac app's first screen
+  never had it).
+- Backups are named for their company, listed per company, and can be
+  restored from Settings — with a safety copy first and a second question
+  for another company's backup. After a rename, Restore names the company
+  as it is now, and restoring an older backup renames the company list's
+  entry at once.
+- An opt-in setting asks for the password each time SlowBooks Pro starts.
+- A sign-in belongs to the company it was made in. A session signed in to
+  one company opened another signed in, that company's own password never
+  asked, when the app was pointed at it from outside or a Switch company…
+  failed to sign out; it now asks for that company's password, and Switch
+  company… stops if signing out fails.
+- A refused form says what to fix in a sentence, not validator text, and a
+  message stays long enough to read (three seconds for a few words, more
+  for more, at least six for an error; hovering holds it, a click closes
+  it).
+- A read-only sign-in isn't offered what it can't do. Edit, Mark Sent,
+  Void, Duplicate, file choosers and every other write are hidden on pages
+  and in dialogs, where the server refused them after the form was filled
+  in; Settings, Quick Entry and Batch Payments show locked, with a sentence
+  saying why; Payroll and HR opened by their address say they are the
+  administrator's, and the Audit Log that it isn't open to a read-only
+  sign-in; Alt+N, Alt+P and Alt+Q say it is read-only. It can read
+  an invoice's payment link but no longer makes one, and leaves Settings
+  without being asked to save.
+- The company logo is the administrator's to change, like every other
+  setting, and Settings can remove it.
+- A bookkeeper isn't offered the administrator's controls either, which
+  the server refused after the form was filled in: Settings shows the
+  company settings locked, with "Company settings are changed by an
+  administrator."; backups, new company files, and connecting to,
+  importing from and disconnecting from QuickBooks Online say they are the
+  administrator's; Migrate Data says so from the sidebar on. The AI
+  Insights settings are the administrator's now too: the key is a
+  company-wide credential, and the endpoint receives the dashboard's
+  figures.
+- Opening an email template in Settings no longer saves the whole page:
+  its Edit button submitted the Settings form, saving an administrator's
+  unfinished edits behind the editor.
+- **Docker: saved passwords survive an upgrade.** With no settings key
+  configured, the key for saved passwords and API keys lived inside the
+  container, so recreating it for an upgrade made a new one: every saved
+  secret stopped decrypting, and every page that reads the settings failed.
+  The key now comes from `PAYROLL_ENCRYPTION_SECRET`, which a Docker install
+  keeps in `.env`. A secret that can't be decrypted reads as not set (what
+  uses it stops, and nothing is let through without it), and Settings names
+  each one and where to enter it again.
+- **Docker: Create Backup works.** Every backup on a Docker install failed
+  with "Permission denied", and so did every logo and attachment upload,
+  since 2.0: the volumes docker compose mounts were created owned by root,
+  and the app runs as a user of its own. The image now gives them to that
+  user, and an existing install's volumes, left empty by those failures,
+  take the right owner when 2.18 starts.
+- A disabled button looks disabled (it drew at full colour and did
+  nothing), and the QuickBooks Online page says why Import is unavailable.
+
+#### Import, export, lists and search
+
+- Every CSV export opens correctly in Excel (UTF-8 byte-order mark) and
+  writes money to the cent ("-20.00", not "-20.0"); the IIF export is
+  written for QuickBooks (Windows-1252), at home-currency amounts, a sales
+  receipt goes across once, and a blank state or ZIP is left out rather
+  than written as "None".
+- Re-importing our own export no longer creates `'=HYPERLINK…` duplicates; a
+  CSV row is checked like the form, and blank terms take the company
+  default.
+- One active item per name; items can be made inactive; the item form offers
+  only income accounts, and no nonprofit accounts in a business company —
+  whose chart no longer starts with 4400 In-Kind Contributions (it is added
+  when a company becomes a nonprofit).
+- Account numbers are digits. Search finds documents by amount. Read-only
+  sign-ins see no "+ New" buttons.
+- Report PDFs print the company name as written; Save PDF files documents
+  under Documents and reports under Reports, named once, and a download
+  named after a customer keeps its accents.
+- The toolbar's Home, Quick Entry and Reports move the address with the
+  page, so Back and the sidebar link of the page you left work; a form
+  dialog keeps every field in view beside a very long customer name, and
+  the Estimate form's line table fits the dialog at 1280 wide.
+- Desktop app: the PDF window has **Open in** your PDF app and **Show in
+  folder**; the IIF export and file attachments save instead of failing or
+  opening as text, and an attachment you open is saved with the documents,
+  not the reports; upload and import refusals read as sentences.
+
+#### QuickBooks Online (#192, @Sciumo)
+
+- **Journal entries and posted ledger activity import.** Import from QBO
+  now brings journal entries, and the posted activity of QBO's accrual
+  General Ledger (purchases, deposits, transfers, invoices, payments and
+  journals), each validated as a balanced entry before a batch posts and
+  rolled back whole if any fails. The two paths share their mappings, so
+  nothing posts twice, and an invoice or payment that is already a posted
+  SlowBooks document is not posted again. A foreign-currency journal
+  balances in its own currency and converts the way the rest of the books
+  do. Imported journals are listed on Journal Entries and linked from the
+  bank registers. Sales receipts keep each line's item, quantity and rate
+  (they arrived as one amount at rate 0.00, in 2.17 too), and invoices and
+  receipts bring QBO's sales tax: each line's taxable flag and the rate, or
+  QBO's tax amount where no single rate reproduces it, kept through an
+  edit.
+- **Changes on either side.** Anything the import brought in voids and edits
+  here like any other document: SlowBooks reverses the import's entry, an
+  edited invoice posts its own (and brings its imported payments with it),
+  and a later import leaves it as it is here. A transaction edited or voided
+  in QuickBooks Online (or a journal deleted there) is brought up to date on
+  the next import; one that can't be — a closed period, a reconciled line,
+  an invoice paid here past QBO's new total — is named in the log and
+  skipped, and never stops the rest.
+- **A live import log.** An import runs in the background with a log under
+  the controls — every query, check, posting, skip and error, with the
+  document and account it concerns, an Errors filter, elapsed time and
+  counts — that survives leaving the page. One import runs per company;
+  a restore waits for it; the books stay writable between its steps; and
+  it works when the Docker image runs several worker processes. An idle
+  page with no import reads as ready, not "Connection interrupted".
+- **Connecting from the desktop app** opens Intuit's sign-in in your
+  browser. **When the redirect can't reach SlowBooks,** an administrator
+  can complete the connection by pasting Intuit's callback address (or the
+  code and Realm ID from Intuit's OAuth Playground). Starting an import or
+  a connection is administrator-only.
+- **Discounts and bundles.** A QBO discount comes across on its invoice or
+  sales receipt as a line on a Discount item that posts to QBO's discount
+  account, with tax worked out before or after it as QBO had it; a bundle
+  comes across as the lines of its items. Exporting such a document back
+  sends QBO a discount, not a negative sale, and a Discount item's line
+  takes a negative price on the invoice form.
+- **Exporting keeps QuickBooks Online up to date.** A document sent from
+  here that changes here is updated in QBO on the next export, and one
+  voided here is voided there; sales receipts go as QBO sales receipts;
+  each line carries its tax code, and several discounts go as QBO's one
+  discount with a note. Export no longer sends back QBO's own documents
+  (after an import it sent QBO's sales receipts back as new invoices and
+  payments, counting each sale twice) or anything voided here before it
+  went. Records an earlier release sent are left as they went.
+- **Paging and inactive accounts.** Every entity imports all its pages;
+  inactive QBO accounts come in inactive; QBO bank and card accounts get a
+  Banking identity; a subcustomer mapped to a job resolves through its
+  parent.
+
+#### Invoices and bank feeds
+
+- **Show company logo on invoices** — in Settings and on the invoice form,
+  on by default; it governs the invoice PDF, Print and the emailed PDF
+  alike (#192). Only an administrator can change it.
+- **Fetch older history** reaches a SimpleFIN feed back 3, 6 or 12 months —
+  as far as the provider keeps (the SimpleFIN Bridge about 90 days,
+  BankSync a year) — in 85-day slices the Bridge accepts, skipping what is
+  already imported (#181, tested with BankSync by @cnbarry1).
+- The update notice stays on for desktop installs; `SLOWBOOKS_UPDATE_CHECK=0`
+  in `.env` turns it off. Stripe's own SDK telemetry is off.
+
+#### Accessibility
+
+- Text meets WCAG AA contrast in both themes everywhere it is drawn: every
+  page, 142 dialogs, the sign-in and setup screens, pop-up messages and the
+  PDF window. Muted text, the status bar, buttons, badges, notes and the
+  colours pages wrote in by hand now come from theme colours that pass; the
+  look is the same, a shade darker or lighter only as far as AA needs.
+  Semi-transparent text is measured as it is painted, and charts' lines,
+  bars and colour keys meet 3:1 in both themes (the light theme had the dark
+  theme's bright colours, as faint as 1.5:1). This clears the contrast list
+  the macOS release gate had carried for several releases.
+
+#### For API clients and agents
+
+- `POST /api/bills`, `POST /api/vendor-credits` and PO convert-to-bill: a
+  line with an amount and no account (none on the line, the item or the
+  vendor) is a 400; convert-to-bill takes an optional `lines: [{line_id,
+  account_id}]`.
+- Tax on a bill, PO→bill or vendor credit no longer touches 2200.
+- An invoice, credit memo, duplicate or estimate conversion that adds up to
+  $0.00 is a 409 (`code: zero_total`) unless the request sends
+  `allow_zero_total: true`; a recurring template for $0.00 is a 400.
+- 422 responses carry a plain `message` on each error.
+- A payment, batch line or credit-memo application reaches only its own
+  customer's invoices; a batch payment is in the home currency.
+- New: `GET /api/bills/{id}/pdf`, `/api/purchase-orders/{id}/pdf`,
+  `/api/credit-memos/{id}/pdf` (and `/print-preview`); `POST
+  /api/payments/{id}/apply`; `GET /api/customers/{id}/credits`; `GET
+  /api/deposits`, `POST /api/deposits/{id}/void`; `GET
+  /api/banking/ledger-balance`; `PATCH /api/banking/transactions/{id}`;
+  `POST /api/fixed-assets/{id}/post-purchase`; `GET
+  /api/banking/reconciliations/{id}/report` (and `/pdf`); `GET
+  /api/deposits/{id}`, `GET /api/bill-payments/{id}`; `POST
+  /api/backups/restore` now reachable from Settings; `GET` on the
+  W-2/W-3/940/941 PDFs; `POST /api/deductions/garnishments/{id}/end` (DELETE
+  is a 405); `POST /api/qbo/import-runs`, `GET
+  /api/qbo/import-runs/latest`, `POST /api/qbo/connect-manual`
+  (administrators); `POST /api/simplefin/sync` takes an optional
+  `{"history_months": 1-24}`; `GET` and `DELETE /api/uploads/logo`, `GET
+  /api/uploads/logo/{id}`, `GET /portal/logo`, `GET
+  /api/settings/unreadable-secrets`, `GET`/`DELETE /api/uploads/legacy`.
+  545 operations.
+- A company's files are served from its database: an attachment's
+  `file_path` is `stored_files/<id>`, attachments and employee documents
+  carry `from_shared_folder` and `missing`, and `POST /api/uploads/logo`
+  answers with the logo's address (`/api/uploads/logo/<id>`).
+  `/static/uploads/` is a 404. The generic attachment routes answer 404 for
+  an employee document and refuse a record type that takes no attachments.
+- Administrator-only (403 otherwise): downloading a backup, uploading or
+  removing the logo, `PUT /api/analytics/ai-config` and its `/test`, and
+  `POST /api/qbo/disconnect`. `GET /api/payments/payment-link/{id}` from a
+  read-only sign-in is a 403 for an invoice with no payment link yet.
+- A session signed in to another company is a 401 (`/api/auth/status`
+  answers `authenticated: false`); sign in to this one. An attachment or
+  employee document the upgrade found missing has `file_size: null`.
+- New: `GET /api/settings/unreadable-secrets` names the saved secrets no
+  key on the install decrypts. `GET /api/uploads/legacy` (administrators)
+  says what the folder earlier versions shared still holds and which
+  companies still need it; `DELETE /api/uploads/legacy` removes its files,
+  or answers 409 naming those companies. `GET
+  /api/employees/{id}/portal-token` answers `portal_token: null` with a
+  `note` when the link's stored copy can't be decrypted (the link still
+  works).
+- Income by Customer `total_sales` excludes tax (new `total_tax`);
+  `/api/checks/print` takes `bill_payment_id` only.
+- A document `tax_rate` is a fraction kept to six places (8.875% is
+  0.08875) and comes back that way; a NaN or Infinity anywhere in a request
+  is a 422, not a 500.
+- `GET /api/invoices` and `GET /api/bills` take `open_only=true` (what can
+  still be paid or credited, filtered on the server; page with `skip`);
+  items carry `is_discount`.
+- `GET /api/auth/status` has `desktop`; `GET /api/system` has
+  `update_check_enabled`; CSV money columns are written to the cent;
+  tax-form, pay-stub and New-Hire Report PDFs have descriptive file names.
+- The QBO per-entity import routes (`POST /api/qbo/import`,
+  `/api/qbo/import/{entity}`) are for API clients; the page uses the
+  background import.
+
+#### What you'll notice after upgrading
+
+- A bill line with no account (and none on its item or vendor) is refused
+  instead of booked to Advertising — give your vendors a default expense
+  account.
+- A pay run that would pay someone $0.00 is refused and names them; approve
+  their time or leave them off.
+- Account numbers are digits; a customer CSV's terms must be ones the form
+  offers.
+- **If your books were entered on an earlier version:** the Sales Tax report
+  shows any supplier tax an older release posted to Sales Tax Payable, and
+  the entry that corrects it; bills made from a purchase order get their due
+  dates; deposits made earlier are matched to the oldest waiting payments,
+  so Make Deposits may list different waiting lines for a company with a
+  partly deposited batch.
+- Total Receivables on the dashboard is the A/R Aging total as of today, so
+  an invoice dated in the future isn't in it until its date.
+- A tax rate with more than two decimals sent through the API before 2.18
+  was stored rounded to four places of the fraction on PostgreSQL; those
+  documents keep the rounded rate (SQLite files kept the full rate, and it
+  now reads back as sent).
+- A company's logo, attachments and employee documents move into its
+  company file the first time it opens on 2.18, so the file and its backups
+  grow by their size. A logo or attachment marked as copied from the shared
+  folder may be another company's: upload yours again. A receipt scan
+  waiting to be attached when you upgrade isn't carried over (scans expire
+  after a day); scan it again.
+- **Docker:** keep both volumes mounted when 2.18 first starts. Any files
+  in `slowbooks_uploads` are copied into the database (your database
+  backups carry them from then on), and `slowbooks_backups` becomes
+  writable, so Create Backup works. If you saved an email password, payment
+  keys, a QuickBooks Online connection or a bank feed, copy the settings key
+  out of the running container before upgrading
+  (`docker compose exec slowbooks cat /app/.slowbooks-master.key`) and put
+  it in `.env` as `SETTINGS_ENCRYPTION_KEY=...`; otherwise Settings asks for
+  them again after the upgrade.
+- A bookkeeper can no longer change the logo or the AI Insights settings,
+  disconnect QuickBooks Online, or download a backup.
+
+#### For developers
+
+- The test suite runs in a data folder of its own: it never reads the
+  machine's companies or the checkout's `.env`, and writes nothing into
+  `app/static`. #192's node test suites run under pytest.
+- A browser test signs in read-only and visits every page and dialog
+  beside an administrator; any write it is offered fails the test.
+- A write control a read-only sign-in can't use is marked `data-write`
+  where it is built.
+- `python -m app.services.encryption rewrap` also re-encrypts the saved
+  settings when their key is derived from `PAYROLL_ENCRYPTION_SECRET`.
+
+#### Schema
+
+Six migrations: sales line prices to four places, deposits remember their
+payments, purchase and item prices to four places (which also gives old
+PO-made bills their due dates), document tax rates to four places of a
+percent, each company's files in its own database, and employees' portal
+links kept as a digest and an encrypted copy. An existing company file
+upgrades when it opens.
 
 ### v2.17.3 — Payments land on the right account
 

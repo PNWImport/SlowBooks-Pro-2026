@@ -53,6 +53,38 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
+**v2.19 — Type to find it.** The pickers search as you type, as QuickBooks'
+do: a customer, vendor, item, account, employee, job or class picker, or any
+long list, narrows to what matches ("6500" finds 6500 Rent or Lease), and
+"+ New Customer" opens its quick add with the name you typed. Screen readers
+hear the picker's name, the number of matches and the highlighted one.
+
+**v2.18 — Around the ledger.** Two of the QA agents each ran a brand-new
+company for a day through the screens and checked every figure against the
+ledger; this release fixes all sixty-eight things they found around it.
+Pay Sales Tax works, supplier tax is part of a purchase's cost instead of
+reducing the tax owed, Schedule C keeps expenses in expenses, customer and
+vendor balances show what is owed, a customer's leftover payment can be
+applied later, and every aging report ties to the balance sheet. Time
+tracking works end to end, tax forms open in the Mac app, foreign-currency
+invoices can be paid from the screen, and backups are kept and restored per
+company. It also brings @Sciumo's QuickBooks Online import of journal
+entries and posted ledger activity, with a live import log (#192), a switch
+for the company logo on invoices, and **Fetch older history** for SimpleFIN
+bank feeds — up to a year where the provider keeps it (#181). Tax rates take
+four decimal places (8.875%), and the payment screens see every open invoice
+and bill, not just the newest 500 (#191). Each company now keeps its logo,
+attachments and employee documents in its own company file: companies on
+one desktop shared them, and a server published them without a sign-in.
+2.18.1 imports QuickBooks names without the quote marks QuickBooks puts
+around a name with a comma, offers to bring ALL-CAPS names in as normal
+capitalization (#195, @TheLocalW), imports the lines QuickBooks posts to a
+sub-account, and keeps the permit form's format note off its boxes (#194,
+@cnbarry1). 2.18.2 gives every form field a name a screen reader can say
+(#198), says so when an import comes back with errors (#197), and lists
+Claude and Grok first among the AI providers, with Claude on Sonnet 5.5
+(#200).
+
 **v2.17 — Your ledger, in a spreadsheet.** Trial Balance and General Ledger
 save as a CSV and a printable PDF, and Profit & Loss and Balance Sheet gain
 the CSV — amounts as plain numbers, ready to sum. The general ledger carries
@@ -80,7 +112,7 @@ hledger's account list. A dry run shows every row's fate first; existing and
 control accounts are renamed in place, never duplicated. Asked for by
 @tresero (#139, #161).
 
-**2.18.0 — Unreleased branch updates** (not yet in the installer downloads):
+**Branch updates after upstream 2.19.0 — unreleased** (upstream 2.19.0 is merged; the work below is not yet in the installer downloads):
 
 - **Payroll and HR:** expanded contractor runs, schedules, locations, retro pay,
   benefits and workers' comp; employee portal time submission, corrected deposit
@@ -98,10 +130,12 @@ control accounts are renamed in place, never duplicated. Asked for by
 **Local validation — September 26, 2026:** 4,959 Linux tests (SQLite plus a
 PostgreSQL 17 migration database), none failing after stale migration-head
 pins were updated; 18 documented skips; all 32 frontend tests passed. A copy of
-an existing PostgreSQL company upgraded to 2.18.0 and passed a 28-step live
+an existing PostgreSQL company upgraded to the 2.18.0 build and passed a 28-step live
 HTTP walkthrough; browser acceptance remains open. Detailed evidence and
 remaining release gates are recorded in [current validation](docs/validation.md);
 this is not release certification.
+
+**Latest full-suite run — October 5, 2026:** 6,187 passed, 46 skipped (Playwright and PostgreSQL-only tests) on the branch with upstream 2.19.0 merged; Alembic head `m3heads2026105`.
 
 **Still required before public release:** accessibility remediation and
 keyboard/screen-reader testing, deployment-specific capacity acceptance,
