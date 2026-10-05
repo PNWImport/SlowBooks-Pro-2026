@@ -110,6 +110,9 @@ separately tested Intel build is available.
 
 ## Option 1: Docker (Windows, macOS, Linux)
 
+> Putting it on a cloud server for your own company? [docs/cloud-hosting.md](docs/cloud-hosting.md)
+> is the whole recipe: one VPS, Docker, a proxy with a real certificate, backups off the box.
+
 **Recommended for Linux servers and Intel Macs.** One command, no
 dependency headaches. Note: multi-user over the LAN does **not** require
 Docker — Server Edition runs from the signed Windows installer (see

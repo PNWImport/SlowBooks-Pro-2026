@@ -164,7 +164,7 @@ const AnalyticsPage = {
       (a, b) => b[1] - a[1],
     );
     if (entries.length === 0) {
-      return '<div class="analytics-empty">No paid invoices this period.</div>';
+      return `<div class="analytics-empty">${Terms.text('No paid invoices this period.')}</div>`;
     }
     const rows = entries
       .map(
@@ -349,6 +349,13 @@ const AnalyticsPage = {
     if (!this.state.aiActions) this._loadAiActions();
 
     // Charts
+    this._redrawCharts();
+  },
+
+  // Also called on a theme toggle: canvas ink is painted with the theme that
+  // was active at creation, so the charts are rebuilt rather than restyled.
+  _redrawCharts() {
+    if (!document.getElementById("chart-ar-aging")) return; // page not on screen
     if (this.state.data && typeof Chart !== "undefined") {
       this._destroyCharts();
       this._renderRevenueChart();
@@ -956,3 +963,4 @@ const AnalyticsPage = {
     return Object.values(obj || {}).reduce((a, b) => a + (Number(b) || 0), 0);
   },
 };
+document.addEventListener("slowbooks:themechange", () => AnalyticsPage._redrawCharts());

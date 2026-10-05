@@ -2,19 +2,19 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel
-from app.schemas.common import StrictModel
+from pydantic import BaseModel, Field
+from app.schemas.common import Money, StrictModel
 
 
 class BudgetCreate(StrictModel):
     account_id: int
     year: int
-    month: int
-    amount: Decimal = Decimal("0")
+    month: int = Field(ge=1, le=12)
+    amount: Money = Decimal("0")
 
 
 class BudgetUpdate(BaseModel):
-    amount: Optional[Decimal] = None
+    amount: Optional[Money] = None
 
 
 class BudgetResponse(BaseModel):

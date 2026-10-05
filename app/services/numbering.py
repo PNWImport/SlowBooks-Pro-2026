@@ -17,6 +17,7 @@ from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 
 from app.models.credit_memos import CreditMemo
+from app.models.vendor_credits import VendorCredit
 from app.models.estimates import Estimate
 from app.models.invoices import Invoice
 from app.models.purchase_orders import PurchaseOrder
@@ -69,6 +70,12 @@ def next_invoice_number(db: Session) -> str:
 def next_credit_memo_number(db: Session) -> str:
     return next_document_number(
         db, CreditMemo.memo_number, prefix="CM-", first=1, pad=4
+    )
+
+
+def next_vendor_credit_number(db: Session) -> str:
+    return next_document_number(
+        db, VendorCredit.credit_number, prefix="VC-", first=1, pad=4
     )
 
 

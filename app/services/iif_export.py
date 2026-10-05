@@ -2,10 +2,9 @@
 # IIF Export Service — Intuit Interchange Format (Tab-Delimited)
 # Generates .iif files compatible with QuickBooks Pro 2003 (Build 12.0.3190)
 #
-# IIF format spec reverse-engineered from:
-#   1. Intuit SDK documentation (QBFC 5.0, qbXML 4.0 IIF appendix)
-#   2. QB2003 Pro Revision R7 disc (mounted /mnt from sr1)
-#   3. File > Utilities > Export menu in QB2003 (observed output format)
+# IIF format from the published Intuit SDK documentation (QBFC 5.0, qbXML
+# 4.0 IIF appendix) and the files QuickBooks Pro 2003 itself writes from
+# File > Utilities > Export.
 #
 # Format rules:
 #   - Tab-delimited fields, \r\n line endings (Windows)
@@ -653,9 +652,10 @@ def export_bills(db: Session, date_from: date = None, date_to: date = None) -> s
     each SPL the expense debit (positive); the importer reads abs() so
     either sign re-imports."""
     from app.models.bills import Bill, BillStatus
-    from app.services.accounting import get_ap_account_id
+    from app.services.control_accounts import find
 
-    ap_name = _resolve_account_name(db, get_ap_account_id(db)) or "Accounts Payable"
+    # Display name only: an export must not fail because a chart is odd.
+    ap_name = _resolve_account_name(db, find(db, "2000")) or "Accounts Payable"
     q = (
         db.query(Bill)
         .options(joinedload(Bill.vendor), joinedload(Bill.lines))
@@ -780,11 +780,9 @@ def export_sales_receipts(
     and the tax line (negative) — the shape the importer creates a paid
     invoice + same-day payment from."""
     from app.models.payments import Payment
-    from app.services.accounting import get_undeposited_funds_id
+    from app.services.control_accounts import find
 
-    default_dep = (
-        _resolve_account_name(db, get_undeposited_funds_id(db)) or "Undeposited Funds"
-    )
+    default_dep = _resolve_account_name(db, find(db, "1200")) or "Undeposited Funds"
     q = (
         db.query(Invoice)
         .options(

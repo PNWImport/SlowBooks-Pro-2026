@@ -14,11 +14,14 @@ const App = {
         '/vendors':       { page: 'vendors',         label: 'Vendor Center',      render: () => VendorsPage.render() },
         '/items':         { page: 'items',           label: 'Item List',          render: () => ItemsPage.render() },
         '/invoices':      { page: 'invoices',        label: 'Create Invoices',    render: () => InvoicesPage.render() },
+        '/invoices/:id':  { page: 'invoices',        label: 'Invoice',            render: (id) => App.renderDocument(InvoicesPage, id) },
         '/sales-receipts': { page: 'sales-receipts', label: 'Enter Sales Receipts', render: () => SalesReceiptsPage.render() },
         '/in-kind-gifts': { page: 'in-kind-gifts',   label: 'In-Kind Gifts',      render: () => InKindPage.render() },
         '/estimates':     { page: 'estimates',       label: 'Create Estimates',   render: () => EstimatesPage.render() },
         '/payments':      { page: 'payments',        label: 'Receive Payments',   render: () => PaymentsPage.render() },
-        '/banking':       { page: 'banking',         label: 'Bank Accounts',      render: () => BankingPage.render() },
+        '/payments/:id':  { page: 'payments',        label: 'Payment',            render: (id) => App.renderDocument(PaymentsPage, id) },
+        '/banking':       { page: 'banking',         label: 'Banking',            render: () => BankingPage.render() },
+        '/banking/:id':   { page: 'banking',         label: 'Register',           render: (id) => BankingPage.renderRegister(id) },
         '/accounts':      { page: 'accounts',        label: 'Chart of Accounts',  render: () => App.renderAccounts() },
         '/reports':       { page: 'reports',         label: 'Report Center',      render: () => ReportsPage.render() },
         '/settings':      { page: 'settings',        label: 'Company Settings',   render: () => SettingsPage.render() },
@@ -29,7 +32,10 @@ const App = {
         // Phase 2: Accounts Payable
         '/purchase-orders': { page: 'purchase-orders', label: 'Purchase Orders',  render: () => PurchaseOrdersPage.render() },
         '/bills':         { page: 'bills',           label: 'Bills',              render: () => BillsPage.render() },
+        '/bills/:id':     { page: 'bills',           label: 'Bill',               render: (id) => App.renderDocument(BillsPage, id) },
         '/credit-memos':  { page: 'credit-memos',    label: 'Credit Memos',       render: () => CreditMemosPage.render() },
+        '/vendor-credits': { page: 'vendor-credits', label: 'Vendor Credits', render: () => VendorCreditsPage.render() },
+        '/vendor-credits/:id': { page: 'vendor-credits', label: 'Vendor Credit', render: (id) => VendorCreditsPage.view(id) },
         // Phase 3: Productivity
         '/recurring':     { page: 'recurring',       label: 'Recurring Invoices', render: () => RecurringPage.render() },
         '/batch-payments': { page: 'batch-payments', label: 'Batch Payments',     render: () => BatchPaymentsPage.render() },
@@ -55,8 +61,10 @@ const App = {
         '/analytics':     { page: 'analytics',       label: 'Analytics & AI',     render: () => AnalyticsPage.render() },
         // Phase 9: Forum Bug Fixes & Missing Features
         '/journal':       { page: 'journal',         label: 'Journal Entries',    render: () => JournalPage.render() },
+        '/journal/:id':   { page: 'journal',         label: 'Journal Entry',      render: (id) => App.renderDocument(JournalPage, id) },
         '/deposits':      { page: 'deposits',        label: 'Make Deposits',      render: () => DepositsPage.render() },
-        '/check-register': { page: 'check-register', label: 'Check Register',     render: () => CheckRegisterPage.render() },
+        // The Check Register page is the Banking register now (2.10); old bookmarks land there.
+        '/check-register': { page: 'banking',         label: 'Banking',            render: () => BankingPage.render() },
         '/cc-charges':    { page: 'cc-charges',      label: 'CC Charges',         render: () => CCChargesPage.render() },
         '/expenses':      { page: 'expenses',        label: 'Enter Expenses',     render: () => ExpensesPage.render() },
         // Phase 10: Quick Wins + Medium Effort Features
@@ -88,6 +96,13 @@ const App = {
         '/xero-import':   { page: 'migrate',         label: 'Migrate Data',       render: () => MigrationPage.render('xero') },
         '/myob-import':   { page: 'migrate',         label: 'Migrate Data',       render: () => MigrationPage.render('myob') },
         '/opening-balances': { page: 'opening-balances', label: 'Opening Balances', render: () => OpeningBalancesPage.render() },
+    },
+
+    async renderDocument(page, id) {
+        if (!/^[1-9]\d*$/.test(String(id))) throw new Error('Invalid document ID');
+        const html = await page.render();
+        await page.view(id);
+        return html;
     },
 
     async navigate(hash) {
@@ -160,6 +175,11 @@ const App = {
         localStorage.setItem('slowbooks-theme', next);
         const btn = $('#theme-toggle');
         if (btn) btn.innerHTML = next === 'dark' ? '&#9788;' : '&#9790;';
+        // Canvas ink is painted, not styled: a chart on screen keeps the old
+        // theme's axis and grid colours until it is redrawn (1.06:1 on the
+        // dashboard trend — skytech, 2.16.0 gate). Pages that draw charts
+        // listen for this and redraw.
+        document.dispatchEvent(new CustomEvent('slowbooks:themechange', { detail: { theme: next } }));
     },
 
     loadTheme() {
@@ -171,12 +191,25 @@ const App = {
         }
     },
 
+    // Inactive accounts are hidden by default — that is the point of
+    // deactivating one. But they must be reachable, or deactivating is a
+    // one-way trip with no way back to the row (issue #139).
+    _showInactiveAccounts: false,
+
+    toggleInactiveAccounts() {
+        App._showInactiveAccounts = !App._showInactiveAccounts;
+        App.navigate('#/accounts');
+    },
+
     async renderAccounts() {
         const accounts = await API.get('/accounts');
         const grouped = {};
+        let inactiveCount = 0;
         for (const a of accounts) {
             if (!grouped[a.account_type]) grouped[a.account_type] = [];
-            if (a.is_active !== false) grouped[a.account_type].push(a);
+            const inactive = a.is_active === false;
+            if (inactive) inactiveCount++;
+            if (!inactive || App._showInactiveAccounts) grouped[a.account_type].push(a);
         }
 
         const typeOrder = ['asset', 'liability', 'equity', 'income', 'cogs', 'expense'];
@@ -186,10 +219,14 @@ const App = {
         let html = `
             <div class="page-header">
                 <h2>Chart of Accounts</h2>
-                <button class="btn btn-primary" onclick="App.showAccountForm()">New Account</button>
+                <div>
+                    ${inactiveCount ? `<button class="btn btn-sm btn-secondary" onclick="App.toggleInactiveAccounts()">${App._showInactiveAccounts ? 'Hide' : 'Show'} ${inactiveCount} inactive</button> ` : ''}
+                    <button class="btn btn-secondary" onclick="App.showChartImport()">Import…</button>
+                    <button class="btn btn-primary" onclick="App.showAccountForm()">New Account</button>
+                </div>
             </div>
             <div class="table-container"><table>
-                <thead><tr><th scope="col" style="width:80px;">Number</th><th scope="col">Name</th><th scope="col" style="width:100px;">Type</th><th scope="col" class="amount" style="width:100px;">Balance</th><th scope="col" style="width:60px;">Actions</th></tr></thead>
+                <thead><tr><th scope="col" style="width:80px;">Number</th><th scope="col">Name</th><th scope="col" style="width:100px;">Type</th><th scope="col" class="amount" style="width:100px;">Balance</th><th scope="col" style="width:190px;">Actions</th></tr></thead>
                 <tbody>`;
 
         for (const type of typeOrder) {
@@ -197,13 +234,18 @@ const App = {
             if (accts.length === 0) continue;
             html += `<tr style="background:linear-gradient(180deg, #e8ecf2 0%, #dde2ea 100%);"><td colspan="5" style="font-weight:700; color:var(--qb-navy); font-size:11px; padding:4px 10px;">${typeNames[type]}</td></tr>`;
             for (const a of accts) {
-                html += `<tr>
+                const inactive = a.is_active === false;
+                html += `<tr${inactive ? ' style="opacity:.55;"' : ''}>
                     <td style="font-family:var(--font-mono);">${escapeHtml(a.account_number || '')}</td>
-                    <td>${a.is_system ? '' : ''}<strong>${escapeHtml(a.name)}</strong></td>
+                    <td><strong>${escapeHtml(a.name)}</strong>${a.is_control ? ` <span class="badge-control" title="${escapeHtml(a.control_purpose || 'the software finds this account by its number')}">control</span>` : ''}${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}</td>
                     <td>${a.account_type}</td>
                     <td class="amount">${formatCurrency(a.balance)}</td>
                     <td class="actions">
-                        ${!a.is_system ? `<button class="btn btn-sm btn-secondary" onclick="App.showAccountForm(${a.id})">Edit</button>` : ''}
+                        <button class="btn btn-sm btn-secondary" onclick="App.showAccountForm(${a.id})">Edit</button>
+                        ${inactive
+                            ? `<button class="btn btn-sm btn-secondary" onclick="App.setAccountActive(${a.id}, true)">Reactivate</button>`
+                            : `<button class="btn btn-sm btn-secondary" onclick="App.setAccountActive(${a.id}, false)">Deactivate</button>`}
+                        ${a.is_control ? '' : `<button class="btn btn-sm btn-secondary" onclick="App.deleteAccount(${a.id})">Delete</button>`}
                     </td>
                 </tr>`;
             }
@@ -217,15 +259,28 @@ const App = {
         if (id) acct = await API.get(`/accounts/${id}`);
 
         const types = ['asset','liability','equity','income','cogs','expense'];
+        // A control account is found by its number when a document posts, so the
+        // number and the type are fixed and the API refuses to change them (400).
+        // Renaming is allowed and is the point — say so instead of hiding the form.
+        const locked = !!acct.is_control;
+        const lockNote = locked
+            ? `<div class="form-group full-width"><div class="hint hint--locked">
+                   <strong>${escapeHtml(acct.account_number || '')} ${escapeHtml(acct.name)} is a control account.</strong>
+                   The software finds it by its number to post ${escapeHtml(acct.control_purpose || 'part of the books')},
+                   so the number and type cannot change — a document that could not find it would have nowhere to post.
+                   <em>You can rename it.</em>
+               </div></div>`
+            : '';
         openModal(id ? 'Edit Account' : 'New Account', `
             <form onsubmit="App.saveAccount(event, ${id})">
                 <div class="form-grid">
+                    ${lockNote}
                     <div class="form-group"><label>Account Number</label>
-                        <input name="account_number" value="${escapeHtml(acct.account_number || '')}"></div>
+                        <input name="account_number" value="${escapeHtml(acct.account_number || '')}"${locked ? ' readonly disabled' : ''}></div>
                     <div class="form-group"><label>Name *</label>
                         <input name="name" required value="${escapeHtml(acct.name)}"></div>
                     <div class="form-group"><label>Type *</label>
-                        <select name="account_type">
+                        <select name="account_type"${locked ? ' disabled' : ''}>
                             ${types.map(t => `<option value="${t}" ${acct.account_type===t?'selected':''}>${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('')}
                         </select></div>
                     <div class="form-group full-width"><label>Description</label>
@@ -236,6 +291,161 @@ const App = {
                     <button type="submit" class="btn btn-primary">${id ? 'Update' : 'Create'} Account</button>
                 </div>
             </form>`);
+    },
+
+    // Import a chart of accounts from a file (#139 / #161). Dry run first:
+    // the server answers with the plan and writes nothing; the second post,
+    // with the same file and the same options, applies exactly that plan.
+    showChartImport() {
+        openModal('Import Chart of Accounts', `
+            <form onsubmit="App.previewChartImport(event)">
+                <p class="hint" style="margin-bottom:10px;">
+                    A CSV in the columns the export writes (Number, Name, Type, optional Parent and
+                    Description), any spreadsheet with those headers, or hledger's account list
+                    (<code>hledger accounts</code>, <code>accounts --types</code>, or
+                    <code>balance -O csv</code>). Accounts you already have are matched by number or
+                    name and renamed to the file's names; the control accounts the software posts to by
+                    number are kept and renamed, never duplicated.
+                    <a href="/static/downloads/chart-of-accounts-template.csv" download>Download a template</a>
+                    with the columns and a few example rows.
+                </p>
+                <div class="form-group"><label>File</label>
+                    <input type="file" name="file" accept=".csv,.txt,.journal" required
+                        onchange="App.invalidateChartImportPreview()"></div>
+                <div class="form-group">
+                    <label style="display:flex; gap:8px; align-items:flex-start; font-weight:normal;">
+                        <input type="checkbox" name="replace" style="margin-top:2px;"
+                            onchange="App.invalidateChartImportPreview()">
+                        <span>Replace the seeded chart: deactivate every account the file does not name
+                        that has never been used. Control accounts and accounts with history stay.</span>
+                    </label>
+                </div>
+                <div id="chart-import-preview"></div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Preview</button>
+                    <button type="button" class="btn btn-primary" id="chart-import-apply" hidden
+                        onclick="App.applyChartImport()">Import</button>
+                </div>
+            </form>`);
+    },
+
+    invalidateChartImportPreview() {
+        App._chartImportPreview = null;
+        const apply = $('#chart-import-apply');
+        if (apply) apply.hidden = true;
+    },
+
+    async _postChartImport(form, dryRun, planHash = null) {
+        const fd = new FormData();
+        fd.append('file', form.file.files[0]);
+        const replace = form.replace.checked ? 1 : 0;
+        const hashQuery = planHash ? `&plan_hash=${encodeURIComponent(planHash)}` : '';
+        const resp = await fetch(`/api/csv/import/accounts?dry_run=${dryRun ? 1 : 0}&replace=${replace}${hashQuery}`,
+            { method: 'POST', body: fd, headers: { 'X-Slowbooks-Desktop': '1' } });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || 'Import failed');
+        return data;
+    },
+
+    async previewChartImport(e) {
+        e.preventDefault();
+        const form = e.target;
+        App._chartImportForm = form;
+        const file = form.file.files[0];
+        const replace = form.replace.checked;
+        const requestId = (App._chartImportRequestId || 0) + 1;
+        App._chartImportRequestId = requestId;
+        App.invalidateChartImportPreview();
+        const box = $('#chart-import-preview');
+        box.innerHTML = '<p class="hint">Reading the file…</p>';
+        try {
+            const plan = await App._postChartImport(form, true);
+            if (requestId !== App._chartImportRequestId ||
+                form.file.files[0] !== file || form.replace.checked !== replace) return;
+            App._chartImportPreview = { form, file, replace, planHash: plan.plan_hash };
+            const label = { create: 'Create', update: 'Update', skip: 'Skip', deactivate: 'Deactivate', keep: 'Keep', error: 'Error' };
+            const rows = plan.rows.map(r => `<tr>
+                <td>${label[r.action] || r.action}</td>
+                <td style="font-family:var(--font-mono);">${escapeHtml(r.number || '')}</td>
+                <td>${escapeHtml(r.name)}</td>
+                <td>${escapeHtml(r.type || '')}</td>
+                <td style="font-size:11px; color:var(--text-muted);">${escapeHtml([...(r.changes || []), r.note].filter(Boolean).join('; '))}</td>
+            </tr>`).join('');
+            const errs = plan.errors.map(x => `<li>${escapeHtml(x)}</li>`).join('');
+            const writes = plan.created + plan.updated + plan.deactivated;
+            box.innerHTML = `
+                <p style="margin:8px 0;"><strong>${plan.created} to create, ${plan.updated} to update,
+                ${plan.skipped} already there${plan.replace ? `, ${plan.deactivated} to deactivate, ${plan.kept} kept` : ''}.</strong>
+                Nothing has been written yet.</p>
+                ${errs ? `<ul style="color:var(--danger); font-size:11px; margin:0 0 8px 16px;">${errs}</ul>` : ''}
+                <div class="table-container" style="max-height:320px; overflow:auto;"><table>
+                    <thead><tr><th scope="col">Action</th><th scope="col">Number</th><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Detail</th></tr></thead>
+                    <tbody>${rows}</tbody></table></div>`;
+            const apply = $('#chart-import-apply');
+            apply.hidden = writes === 0 || plan.errors.length > 0 || plan.row_errors > 0;
+            apply.textContent = `Import ${writes} change${writes === 1 ? '' : 's'}`;
+        } catch (err) {
+            box.innerHTML = `<p style="color:var(--danger);">${escapeHtml(err.message)}</p>`;
+            $('#chart-import-apply').hidden = true;
+        }
+    },
+
+    async applyChartImport() {
+        const preview = App._chartImportPreview;
+        const form = App._chartImportForm;
+        if (!preview || !form || preview.form !== form ||
+            form.file.files[0] !== preview.file || form.replace.checked !== preview.replace) {
+            App.invalidateChartImportPreview();
+            toast('The file or options changed — preview the import again', 'error');
+            return;
+        }
+        try {
+            const done = await App._postChartImport(form, false, preview.planHash);
+            if (done.dry_run) throw new Error('The import plan has errors — preview and correct the file');
+            closeModal();
+            toast(`Chart imported: ${done.created} created, ${done.updated} updated${done.replace ? `, ${done.deactivated} deactivated` : ''}`);
+            App.navigate('#/accounts');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async setAccountActive(id, active) {
+        try {
+            await API.put(`/accounts/${id}`, { is_active: active });
+            toast(active ? 'Account reactivated' : 'Account deactivated — it is hidden from new entries');
+            App.navigate('#/accounts');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // Only the id crosses into the attribute. It used to carry the name as
+    // well, via JSON.stringify inside a double-quoted onclick — so the JSON's
+    // own first quote closed the attribute, the handler was the fragment
+    // `App.deleteAccount(5, `, and clicking raised a SyntaxError. Silently:
+    // no request, no toast, no dialog, on EVERY row, because the break is in
+    // the quoting rather than in any particular name.
+    //
+    // Found at the GUI by both QA agents on the 2.12.0 gate. @skytech checked
+    // launcher.log and established that this application had never issued a
+    // single DELETE /api/accounts/* — the button was not being refused, it
+    // never asked. Nothing automated caught it: the endpoint is correct and
+    // well covered, and no test rendered the row and clicked it.
+    //
+    // The name is looked up here instead. An attribute that carries only
+    // numbers cannot be broken by punctuation in somebody's data.
+    async deleteAccount(id) {
+        let name = `account ${id}`;
+        try {
+            name = (await API.get(`/accounts/${id}`)).name || name;
+        } catch (err) { /* fall back to the id in the prompt */ }
+        // Deleting is for an account that was never used. Anything with
+        // history, or anything the books resolve by number, is refused by
+        // the server with a reason — deactivating is the answer there.
+        if (!confirm(`Delete "${name}"? This only works if nothing has ever posted to it. If it has history, deactivate it instead.`)) return;
+        try {
+            await API.del(`/accounts/${id}`);
+            toast('Account deleted');
+            App.navigate('#/accounts');
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     async saveAccount(e, id) {
@@ -337,10 +547,13 @@ const App = {
         const formData = new FormData();
         formData.append('file', form.file.files[0]);
         try {
-            const resp = await fetch(`/api/csv/import/${entity}`, { method: 'POST', body: formData });
+            // The chart import is a dry run by default; this page applies directly.
+            const query = entity === 'accounts' ? '?dry_run=0' : '';
+            const resp = await fetch(`/api/csv/import/${entity}${query}`, { method: 'POST', body: formData });
             const data = await resp.json();
             if (!resp.ok) throw new Error(data.detail || 'Import failed');
-            let html = `<div style="color:var(--success); font-size:11px;">Imported ${data.imported} ${entity}.</div>`;
+            const n = data.created ?? data.imported ?? 0;
+            let html = `<div style="color:var(--success); font-size:11px;">Imported ${n} ${entity === 'accounts' ? 'accounts' : entity}${data.updated ? `, updated ${data.updated}` : ''}${data.skipped ? `, ${data.skipped} already there` : ''}.</div>`;
             if (data.errors && data.errors.length > 0) {
                 html += `<div style="color:var(--danger); font-size:11px; margin-top:6px;">Errors:<br>${data.errors.map(e => escapeHtml(e)).join('<br>')}</div>`;
             }
@@ -591,7 +804,7 @@ const App = {
             }
         });
 
-        // Start clock — CMainFrame::OnTimer() at 1-second interval (WM_TIMER id=1)
+        // Start clock — refresh once a minute
         App.updateClock();
         setInterval(App.updateClock, 60000);
 
@@ -619,11 +832,16 @@ const App = {
             let res = await fetch('/api/system', { credentials: 'same-origin' });
             if (!res.ok) return;
             const info = await res.json();
-            const versionEl = $('#app-version');
-            if (versionEl && info.version) {
-                versionEl.textContent = info.server_mode
-                    ? `v${info.version} · Server`
-                    : `v${info.version}`;
+            const label = info.version
+                ? (info.server_mode ? `v${info.version} · Server` : `v${info.version}`)
+                : null;
+            if (label) {
+                // The version now shows at the top of the sidebar as well as
+                // in the footer — knowing which version you are running is
+                // half of "is there a newer one".
+                [$('#app-version'), $('#app-version-footer')].forEach(el => {
+                    if (el) el.textContent = label;
+                });
             }
             if (info.server_mode) {
                 // Serving the LAN: the deployment announces itself.
@@ -661,8 +879,12 @@ const App = {
             if (!res.ok) return;
             const check = await res.json();
             if (!check.update_available || !check.download_url) return;
-            const footer = $('#sidebar-footer');
-            if (!footer || footer.querySelector('.update-badge')) return;
+            // Top of the sidebar, not the footer: in the footer this was
+            // only seen by someone who scrolled the whole menu, so people
+            // stayed on old versions without knowing. Deliberately a quiet
+            // banner rather than a dialog — visible on open, never blocking.
+            const mount = $('#sidebar-update') || $('#sidebar-footer');
+            if (!mount || mount.querySelector('.update-badge')) return;
             const link = document.createElement('a');
             // External URL: pywebview hands target="_blank" links that leave
             // 127.0.0.1 to the system browser (see desktop_shim.js).
@@ -670,8 +892,12 @@ const App = {
             link.target = '_blank';
             link.rel = 'noopener';
             link.className = 'update-badge';
-            link.textContent = `⬆ Update available — v${check.latest_version}`;
-            footer.prepend(link);
+            link.title = `You are on v${info.version || '?'} — opens the download page`;
+            link.innerHTML =
+                `<span class="update-badge__arrow" aria-hidden="true">&#8593;</span>`
+                + `<span class="update-badge__text">Version ${escapeHtml(check.latest_version)} is available`
+                + `<span class="update-badge__cta">See what changed &rarr;</span></span>`;
+            mount.appendChild(link);
         } catch (e) { /* offline or pre-auth — footer stays as shipped */ }
     },
 };

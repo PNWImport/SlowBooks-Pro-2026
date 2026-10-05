@@ -4,7 +4,7 @@ from decimal import Decimal
 from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 from typing import Optional
 from sqlalchemy.exc import IntegrityError
 from app.schemas.credit_memos import CreditMemoResponse
@@ -16,6 +16,7 @@ from app.models.items import Item
 from app.schemas.invoices import InvoiceResponse
 from app.services.accounting import (
     create_journal_entry,
+    reversing_lines,
     get_ar_account_id,
     get_default_income_account_id,
     get_sales_tax_account_id,
@@ -24,8 +25,12 @@ from app.services.accounting import (
 from app.services.numbering import next_invoice_number
 from app.services.settings_service import get_all_settings as get_settings
 from app.services.closing_date import check_closing_date
+from app.services.control_accounts import MissingControlAccount
 
 from app.routes.invoices._router import router
+from app.routes.invoices.helpers import _due_date_from_terms
+from app.services.donor_documents import document_label
+from app.services.terminology import document_reference, terms_from_db
 
 
 @router.post("/{invoice_id}/void", response_model=InvoiceResponse)
@@ -61,21 +66,12 @@ def void_invoice(invoice_id: int, db: Session = Depends(get_db)):
             .filter(TransactionLine.transaction_id == invoice.transaction_id)
             .all()
         )
-        reverse_lines = []
-        for ol in original_lines:
-            reverse_lines.append(
-                {
-                    "account_id": ol.account_id,
-                    "debit": ol.credit,  # swap debit/credit
-                    "credit": ol.debit,
-                    "description": f"VOID: {ol.description or ''}",
-                }
-            )
+        reverse_lines = reversing_lines(original_lines)
         if reverse_lines:
             create_journal_entry(
                 db,
                 invoice.date,
-                f"VOID Invoice #{invoice.invoice_number}",
+                f"VOID {document_label(invoice, terms_from_db(db))} #{invoice.invoice_number}",
                 reverse_lines,
                 source_type="invoice_void",
                 source_id=invoice.id,
@@ -84,27 +80,36 @@ def void_invoice(invoice_id: int, db: Session = Depends(get_db)):
                 reference=invoice.invoice_number,
             )
 
-    # ---- Phase 11: reverse inventory movements ----
-    # Pass the ORIGINAL (invoice, id) so reverse_sale looks up the sale's
-    # historical unit_cost — this keeps the reversal balanced even if
-    # avg_cost moved between the sale and the void.
-    from app.services.inventory_service import reverse_sale
+    # Late fees have separate postings; reverse each on its own posting date
+    # so voiding does not leave fee A/R behind or backdate a later fee reversal.
+    from app.models.transactions import Transaction
 
-    for line in invoice.lines:
-        if not line.item_id:
-            continue
-        item = db.query(Item).filter(Item.id == line.item_id).first()
-        if item and item.track_inventory:
-            reverse_sale(
+    late_fees = (
+        db.query(Transaction)
+        .filter(
+            Transaction.source_type == "late_fee", Transaction.source_id == invoice.id
+        )
+        .all()
+    )
+    for fee in late_fees:
+        check_closing_date(db, fee.date)
+        fee_lines = reversing_lines(fee.lines)
+        if fee_lines:
+            create_journal_entry(
                 db,
-                item,
-                quantity=Decimal(str(line.quantity)),
+                fee.date,
+                f"VOID Late fee - {document_label(invoice, terms_from_db(db))} #{invoice.invoice_number}",
+                fee_lines,
                 source_type="invoice_void",
                 source_id=invoice.id,
-                original_source_type="invoice",
-                original_source_id=invoice.id,
-                txn_date=invoice.date,
+                class_id=fee.class_id,
+                job_id=fee.job_id,
+                reference=invoice.invoice_number,
             )
+
+    from app.services.inventory_hooks import reverse_sale_for_invoice
+
+    reverse_sale_for_invoice(db, invoice, txn_date=invoice.date)
 
     invoice.status = InvoiceStatus.VOID
     invoice.balance_due = Decimal("0")
@@ -138,6 +143,7 @@ def mark_invoice_sent(invoice_id: int, db: Session = Depends(get_db)):
 @router.post("/apply-late-fees")
 def apply_late_fees(db: Session = Depends(get_db)):
     """Apply late fees to overdue invoices past the grace period."""
+    words = terms_from_db(db)
     from app.models.transactions import Transaction
 
     settings_dict = get_settings(db)
@@ -180,7 +186,12 @@ def apply_late_fees(db: Session = Depends(get_db)):
         db.add(late_fee_account)
         db.flush()
 
-    ar_id = get_ar_account_id(db)
+    try:
+        ar_id = get_ar_account_id(db)
+    except MissingControlAccount:
+        raise HTTPException(
+            status_code=400, detail="Accounts Receivable (1100) not found"
+        )
     if not ar_id:
         raise HTTPException(
             status_code=400, detail="Accounts Receivable (1100) not found"
@@ -210,23 +221,24 @@ def apply_late_fees(db: Session = Depends(get_db)):
                 "account_id": ar_id,
                 "debit": fee_amount,
                 "credit": Decimal("0"),
-                "description": f"Late fee - Invoice #{inv.invoice_number}",
+                "description": f"Late fee - {document_label(inv, words)} #{inv.invoice_number}",
             },
             {
                 "account_id": late_fee_account.id,
                 "debit": Decimal("0"),
                 "credit": fee_amount,
-                "description": f"Late fee - Invoice #{inv.invoice_number}",
+                "description": f"Late fee - {document_label(inv, words)} #{inv.invoice_number}",
             },
         ]
         create_journal_entry(
             db,
             today,
-            f"Late fee - Invoice #{inv.invoice_number}",
+            f"Late fee - {document_label(inv, words)} #{inv.invoice_number}",
             journal_lines,
             source_type="late_fee",
             source_id=inv.id,
             class_id=inv.class_id,
+            job_id=inv.job_id,
         )
 
         # Update invoice totals (add to subtotal too so total == subtotal + tax_amount)
@@ -241,7 +253,7 @@ def apply_late_fees(db: Session = Depends(get_db)):
 
 class WriteOffRequest(StrictModel):
     date: dt_date
-    amount: Optional[Decimal] = None  # default: the whole open balance
+    amount: Optional[Money] = None  # default: the whole open balance
     memo: Optional[str] = None
 
 
@@ -284,7 +296,10 @@ def write_off_invoice(
 
     ar_id = get_ar_account_id(db)
     bad_debt_id = get_bad_debt_account_id(db)
-    memo = data.memo or f"Write-off: Invoice #{inv.invoice_number}"
+    memo = (
+        data.memo
+        or f"Write-off: {document_label(inv, terms_from_db(db))} #{inv.invoice_number}"
+    )
     cm = None
     for _ in range(10):
         cm = CreditMemo(
@@ -330,7 +345,10 @@ def write_off_invoice(
     txn = create_journal_entry(
         db,
         data.date,
-        f"Credit Memo {cm.memo_number} - write-off of Invoice #{inv.invoice_number}",
+        f"Credit Memo {cm.memo_number} - write-off of "
+        + document_reference(
+            document_label(inv, terms_from_db(db)), inv.invoice_number
+        ),
         [
             {
                 "account_id": bad_debt_id,
@@ -365,6 +383,7 @@ def write_off_invoice(
 @router.post("/{invoice_id}/duplicate", response_model=InvoiceResponse, status_code=201)
 def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
     """Duplicate — copy the invoice under a new number."""
+    words = terms_from_db(db)
     original = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not original:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -372,14 +391,13 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
     new_number = next_invoice_number(db)
     today = date.today()
 
-    # Parse terms for due date
-    due_date = today + timedelta(days=30)
-    if original.terms:
-        try:
-            days = int(original.terms.lower().replace("net ", ""))
-            due_date = today + timedelta(days=days)
-        except ValueError:
-            pass
+    due_date = _due_date_from_terms(today, original.terms)
+    # A fresh sale copies document lines, not separately assessed late fees.
+    # Line amounts are kept; tax follows the customer as they stand today.
+    from app.services.accounting import compute_line_totals, taxed_copy_lines
+
+    copied = taxed_copy_lines(original.lines, original.customer)
+    subtotal, tax_amount, total = compute_line_totals(copied, original.tax_rate)
 
     new_invoice = Invoice(
         invoice_number=new_number,
@@ -398,21 +416,23 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
         ship_city=original.ship_city,
         ship_state=original.ship_state,
         ship_zip=original.ship_zip,
-        subtotal=original.subtotal,
+        subtotal=subtotal,
         tax_rate=original.tax_rate,
-        tax_amount=original.tax_amount,
-        total=original.total,
-        balance_due=original.total,
+        tax_amount=tax_amount,
+        total=total,
+        balance_due=total,
         is_pledge=original.is_pledge,
         fair_value_amount=original.fair_value_amount,
         fair_value_description=original.fair_value_description,
         notes=original.notes,
         class_id=original.class_id,
+        job_id=original.job_id,
     )
+    face = document_label(new_invoice, words)
     db.add(new_invoice)
     db.flush()
 
-    for oline in original.lines:
+    for oline, cline in zip(original.lines, copied):
         new_line = InvoiceLine(
             invoice_id=new_invoice.id,
             item_id=oline.item_id,
@@ -421,6 +441,10 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
             rate=oline.rate,
             amount=oline.amount,
             class_name=oline.class_name,
+            class_id=oline.class_id,
+            job_id=oline.job_id,
+            cost_code_id=oline.cost_code_id,
+            is_taxable=cline.is_taxable,
             line_order=oline.line_order,
         )
         db.add(new_line)
@@ -438,7 +462,7 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
                 "account_id": ar_id,
                 "debit": Decimal(str(new_invoice.total)),
                 "credit": Decimal("0"),
-                "description": f"Invoice #{new_number}",
+                "description": document_reference(face, new_number),
             }
         )
         # Credit income for each line
@@ -457,6 +481,9 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
                     "debit": Decimal("0"),
                     "credit": line_amount,
                     "description": oline.description or "",
+                    "class_id": oline.class_id,
+                    "job_id": oline.job_id,
+                    "cost_code_id": oline.cost_code_id,
                 }
             )
         # Credit sales tax if any
@@ -474,11 +501,12 @@ def duplicate_invoice(invoice_id: int, db: Session = Depends(get_db)):
         txn = create_journal_entry(
             db,
             today,
-            f"Invoice #{new_number} - {customer.name if customer else ''}",
+            document_reference(face, new_number, customer.name if customer else ""),
             journal_lines,
             source_type="invoice",
             source_id=new_invoice.id,
             class_id=new_invoice.class_id,
+            job_id=new_invoice.job_id,
             reference=new_number,
         )
         new_invoice.transaction_id = txn.id

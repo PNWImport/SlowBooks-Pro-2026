@@ -10,10 +10,19 @@
 
 import glob
 import os
+import sys
+from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
+
+# Embed the existing app version without importing/starting the application.
+sys.path.insert(0, SPECPATH)
+import version_info as _version_info  # noqa: E402
+
+VERSION_FILE = os.path.join(SPECPATH, "version_info.txt")
+_version_info.write(Path(ROOT, "app", "__init__.py"), Path(VERSION_FILE))
 
 
 def _tree(src_rel, dest):
@@ -46,6 +55,7 @@ datas += _tree("migrations", "migrations")
 # portable copy can register the startup task without downloading anything:
 #   _internal\scripts\windows\serveredition-install.ps1
 datas += _tree("scripts/windows", "scripts/windows")
+datas += [(os.path.join(ROOT, "scripts", "repair-schema.py"), "scripts")]
 
 # The WeasyPrint DLL set staged by CI (empty when building without it, so a
 # local `pyinstaller SlowBooksPro.spec` still produces a testable bundle).
@@ -67,6 +77,11 @@ hiddenimports = (
         # alembic.ini logging config
         "logging.config",
         "sqlalchemy.dialects.sqlite",
+        # WeasyPrint is imported lazily since #121 (so the suite runs on a
+        # machine without the native stack). PyInstaller's scanner does walk
+        # function-level imports, but the PDF engine is not something to
+        # leave to "usually" — name it, so its hook always fires.
+        "weasyprint",
     ]
 )
 
@@ -104,6 +119,7 @@ exe = EXE(
     upx=False,
     console=False,  # GUI app: no console window (launcher logs to file)
     icon="slowbookspro.ico",
+    version=VERSION_FILE,
 )
 coll = COLLECT(
     exe,

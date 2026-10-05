@@ -8,18 +8,18 @@ uvicorn[standard]>=0.32.0,<1.0
 starlette>=1.0.1,<2.0
 
 # Database
-sqlalchemy>=2.0.40,<3.0
+sqlalchemy>=2.0.40,<2.1  # 2.1 made postgresql:// mean psycopg (v3), which is not installed: every fresh Docker image failed to import (2026-09-25). Move deliberately, with the gate.
 alembic>=1.16.0,<2.0
-psycopg2-binary==2.9.12  # 2.9.10+ ships Python 3.13 wheels; 2.9.9 forces source build on slim images
+psycopg2-binary==2.9.13  # 2.9.10+ ships Python 3.13 wheels; 2.9.9 forces source build on slim images
 
 # Validation + settings
 pydantic>=2.11.0,<3.0
 pydantic-settings>=2.10.0,<3.0
-python-dotenv==1.2.2  # CVE-2026-28684 — set_key()/unset_key() symlink following; we only use load_dotenv() but bumping anyway
+python-dotenv==1.2.3  # CVE-2026-28684 — set_key()/unset_key() symlink following; we only use load_dotenv() but bumping anyway
 
 # Templating + PDF
 jinja2==3.1.6
-weasyprint==69.0  # 68.1 affected by CVE-2026-49452 (CSS injection via presentational hints)
+weasyprint==70.0  # 69.0 affected by CVE-2026-55073 (write_pdf bypassed url_fetcher); 68.1 by CVE-2026-49452
 pydyf==0.12.1
 
 # Form upload parsing
@@ -58,3 +58,6 @@ httpx>=0.27.0,<1.0
 argon2-cffi>=23.1.0,<26.0
 itsdangerous>=2.1.0,<3.0  # Starlette SessionMiddleware signer
 slowapi>=0.1.9,<1.0
+# `limits` imports this client when RATE_LIMIT_STORAGE_URI is redis://. Keep it
+# in the production image so multi-worker deployments do not fail at startup.
+redis>=5.0,<9.0

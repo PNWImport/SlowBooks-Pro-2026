@@ -22,10 +22,13 @@ import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.accounts import Account
+from app.models.transactions import Transaction
 from app.services.accounting import _q, create_journal_entry
+from app.services.safe_errors import DataProblem
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +57,7 @@ def parse_amount(raw: str) -> Decimal:
     try:
         value = Decimal(raw)
     except InvalidOperation:
-        raise ValueError(f"unparseable amount: {raw!r}")
+        raise DataProblem(f"unparseable amount: {raw!r}")
     return -value if negative else value
 
 
@@ -65,7 +68,7 @@ def parse_date(raw: str, formats: tuple[str, ...]):
             return datetime.strptime(raw, fmt).date()
         except ValueError:
             continue
-    raise ValueError(f"unparseable date: {raw!r}")
+    raise DataProblem(f"unparseable date: {raw!r}")
 
 
 def sniff_reader(csv_text: str) -> csv.DictReader:
@@ -84,7 +87,33 @@ def strip_code_suffix(name: str) -> str:
 # ── The engine ───────────────────────────────────────────────────────────
 
 
-def dry_run_bundle(db: Session, bundle: dict, parsers: dict, source_label: str) -> dict:
+def _group_reference(group: list[dict]) -> str | None:
+    first = group[0]
+    ref = first.get("journal") or first.get("reference") or None
+    return str(ref) if ref else None
+
+
+def already_imported(db: Session, source_type: str | None) -> set[str]:
+    """References this source has already posted. A second click on Import —
+    the reporter of #169 clicked four times — must not double the books."""
+    if not source_type:
+        return set()
+    rows = (
+        db.query(Transaction.reference)
+        .filter(Transaction.source_type == source_type)
+        .filter(Transaction.reference.isnot(None))
+        .all()
+    )
+    return {r[0] for r in rows}
+
+
+def dry_run_bundle(
+    db: Session,
+    bundle: dict,
+    parsers: dict,
+    source_label: str,
+    source_type: str | None = None,
+) -> dict:
     """Validate a bundle {kind: csv_text}. Nothing is written."""
     errors: list[str] = []
     warnings: list[str] = []
@@ -116,8 +145,51 @@ def dry_run_bundle(db: Session, bundle: dict, parsers: dict, source_label: str) 
     known |= {strip_code_suffix(a["name"]) for a in accounts}
     known |= {a.name.lower() for a in db.query(Account).all()}
 
+    # A journal whose every line is 0.00 "balances" — and then posts nothing.
+    # That is what an unrecognised amount column looks like from here: the
+    # dry run passed 14,372 journals and the import wrote none (#169; the
+    # same shape as 2.11.1's Wave report fix, which fixed the headers and not
+    # the hole). A file with amounts we could not read is refused, by name.
+    empty = [
+        g
+        for g in journals
+        if g and all(r["debit"] == 0 and r["credit"] == 0 for r in g)
+    ]
+    if journals and len(empty) == len(journals):
+        header = (bundle["gl"].lstrip("\ufeff").splitlines() or [""])[0]
+        errors.append(
+            f"Every one of the {len(journals)} journals came out as 0.00 — the "
+            f"debit / credit columns in the ledger file were not recognised, so "
+            f"nothing would be imported. The file's header row is: {header[:300]}"
+        )
+    elif empty:
+        refs = [
+            str(g[0].get("journal") or g[0].get("reference") or g[0]["date"])
+            for g in empty[:5]
+        ]
+        warnings.append(
+            f"{len(empty)} journal(s) have no amounts and will be skipped "
+            f"(first: {', '.join(refs)})"
+        )
+
+    seen = already_imported(db, source_type)
+    duplicates = [g for g in journals if g and _group_reference(g) in seen]
+    if duplicates:
+        warnings.append(
+            f"{len(duplicates)} of the {len(journals)} journals are already in "
+            f"the books from an earlier import (same transaction id) and will "
+            f"be skipped, not imported twice"
+        )
+
     simulated: dict[str, Decimal] = {}
     for group in journals:
+        reference = _group_reference(group) if group else None
+        # Never truncate source identities: distinct journals can share a
+        # prefix, and PostgreSQL enforces the reference column's limit.
+        if reference and len(reference) > 100:
+            errors.append(
+                "Journal reference exceeds 100 characters; nothing will be imported"
+            )
         total = sum(r["debit"] - r["credit"] for r in group)
         # Must be EXACT: create_journal_entry() rejects any non-zero
         # imbalance, so a tolerance here only defers the failure to the
@@ -187,6 +259,7 @@ def dry_run_bundle(db: Session, bundle: dict, parsers: dict, source_label: str) 
         "warnings": warnings,
         "accounts": len(accounts),
         "journals": len(journals),
+        "duplicate_journals": len(duplicates),
         "opening_balances": opening_balances,
     }
 
@@ -195,7 +268,17 @@ def run_import_bundle(
     db: Session, bundle: dict, parsers: dict, source_type: str, source_label: str
 ) -> dict:
     """Execute the import. Refuses when the dry-run fails."""
-    verdict = dry_run_bundle(db, bundle, parsers, source_label)
+    # Serialize import writers BEFORE their duplicate/opening-balance reads.
+    # Locking accounts only at posting time is too late: both requests may
+    # already have decided the same source journal is new. Transaction-scoped
+    # locks release on either commit or rollback, including failed imports.
+    conn = db.connection()
+    if conn.dialect.name == "postgresql":
+        conn.execute(text("SELECT pg_advisory_xact_lock(7264014)"))
+    elif conn.dialect.name == "sqlite":
+        if not getattr(conn.connection.driver_connection, "in_transaction", False):
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
+    verdict = dry_run_bundle(db, bundle, parsers, source_label, source_type)
     if not verdict["ok"]:
         return {**verdict, "imported_accounts": 0, "imported_journals": 0}
 
@@ -245,7 +328,14 @@ def run_import_bundle(
                     "description": f"Opening balance — {acct.name}",
                 }
             )
-        if ob_lines:
+        opening_desc = f"{source_label} migration — opening balances"
+        already_opened = (
+            db.query(Transaction.id)
+            .filter(Transaction.source_type == "opening_balance")
+            .filter(Transaction.description == opening_desc)
+            .first()
+        )
+        if ob_lines and not already_opened:
             create_journal_entry(
                 db,
                 first_date - timedelta(days=1),
@@ -256,7 +346,12 @@ def run_import_bundle(
             )
 
     posted = 0
+    duplicates = 0
+    seen = already_imported(db, source_type)
     for group in journals:
+        if group and _group_reference(group) in seen:
+            duplicates += 1
+            continue
         lines = []
         for row in group:
             # Exact name first (disambiguated duplicates keep their code
@@ -302,7 +397,15 @@ def run_import_bundle(
         posted += 1
 
     db.commit()
-    return {**verdict, "imported_accounts": created, "imported_journals": posted}
+    return {
+        **verdict,
+        "imported_accounts": created,
+        "imported_journals": posted,
+        # journals the file held that posted nothing (all-zero lines)
+        "skipped_journals": len([g for g in journals if g]) - posted - duplicates,
+        # journals an earlier import already posted (same reference)
+        "duplicate_journals": duplicates,
+    }
 
 
 def build_code_map(accounts: list[dict]) -> dict[str, str]:
@@ -319,14 +422,19 @@ def build_code_map(accounts: list[dict]) -> dict[str, str]:
 
 # Filename fragments shared by every source's bundle classifier; dialects
 # can extend (e.g. Wave/GnuCash "transactions" exports are the GL).
+#
+# GL fragments are checked before "account"/"acct": Wave's own export for
+# this bundle's GL file is literally named "Account Transactions.csv", and
+# with "account" checked first that unambiguously-GL file matched "coa"
+# instead, before "transaction" ever got a look.
 BASE_FILE_KINDS = (
     ("chart", "coa"),
-    ("account", "coa"),
-    ("acct", "coa"),  # real users type "acct_tree"
     ("general", "gl"),
     ("ledger", "gl"),
     ("journal", "gl"),
     ("transaction", "gl"),
+    ("account", "coa"),
+    ("acct", "coa"),  # real users type "acct_tree"
     ("trial", "tb"),
 )
 

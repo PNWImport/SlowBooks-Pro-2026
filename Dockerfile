@@ -3,7 +3,7 @@
 # Runs on Linux, macOS, and Windows via Docker Desktop
 # ============================================================================
 
-FROM python:3.13-slim AS base
+FROM python:3.13-alpine AS base
 
 # ---- Python 3.13 performance env ----
 # Don't write .pyc at runtime (we pre-compile at build time below)
@@ -14,28 +14,37 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONHASHSEED=random \
     PYTHONMALLOC=pymalloc
 
-# System dependencies for WeasyPrint (PDF generation) and PostgreSQL client (backup/restore)
-# tesseract-ocr + poppler-utils: receipt intake (Tier 2 OCR) — per the design doc,
-# Docker/native installs add the system package; never bundled into the signed installers.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libcairo2 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgdk-pixbuf-2.0-0 \
-    libffi-dev \
-    libjpeg62-turbo \
-    libpng16-16 \
+# System dependencies for WeasyPrint (PDF generation), PostgreSQL backup and
+# OCR. Alpine's supported packages materially reduce the runtime image CVE
+# surface while retaining the same cairo/pango, Poppler and Tesseract tools.
+RUN apk upgrade --no-cache \
+    && apk add --no-cache \
+    cairo \
+    pango \
+    fontconfig \
+    ttf-dejavu \
+    gdk-pixbuf \
+    libffi \
+    libjpeg-turbo \
+    libpng \
     libxml2 \
-    libxslt1.1 \
-    postgresql-client \
+    libxslt \
+    postgresql17-client \
     tesseract-ocr \
-    poppler-utils \
-    && rm -rf /var/lib/apt/lists/*
+    tesseract-ocr-data-eng \
+    poppler-utils
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir -r requirements.txt \
+    # pip is a build tool, not an application runtime dependency. Removing it
+    # also removes its vendored packages from the release image's CVE surface.
+    && rm -rf /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.13 \
+        /usr/local/lib/python3.13/site-packages/pip \
+        /usr/local/lib/python3.13/site-packages/pip-*.dist-info \
+        /usr/local/lib/python3.13/ensurepip
 
 COPY . .
 
@@ -45,7 +54,7 @@ RUN python -m compileall -q -j 0 /usr/local/lib/python3.13/site-packages /app ||
 
 RUN chmod +x docker-entrypoint.sh
 
-RUN useradd -m -u 1000 slowbooks \
+RUN adduser -D -u 1000 slowbooks \
     && mkdir -p /app/backups /app/app/static/uploads \
     && chown -R slowbooks:slowbooks /app
 USER slowbooks

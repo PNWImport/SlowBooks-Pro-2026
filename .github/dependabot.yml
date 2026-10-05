@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # Workflow actions are pinned to commit SHAs with the release tag in a
+  # comment; Dependabot updates both together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    ignore:
+      # 2.1 makes postgresql:// mean psycopg (v3), which is not installed;
+      # every fresh Docker image failed to start (2026-09-25). Move deliberately.
+      - dependency-name: sqlalchemy
+        versions: [">=2.1"]
+      # CI pins ruff below 0.7 so lint results stay stable; upgrade with a
+      # dedicated reformat/lint pass.
+      - dependency-name: ruff
+        versions: [">=0.7"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

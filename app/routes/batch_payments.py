@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 from typing import Optional
 
 from app.database import get_db
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/batch-payments", tags=["batch_payments"])
 class BatchAllocation(StrictModel):
     customer_id: int
     invoice_id: int
-    amount: float
+    amount: Money
 
 
 class BatchPaymentCreate(StrictModel):
@@ -51,6 +51,10 @@ def create_batch_payment(data: BatchPaymentCreate, db: Session = Depends(get_db)
     # Group allocations by customer
     by_customer = {}
     for alloc in data.allocations:
+        if alloc.amount <= 0:
+            raise HTTPException(
+                status_code=400, detail="Allocation amounts must be positive"
+            )
         if alloc.customer_id not in by_customer:
             by_customer[alloc.customer_id] = []
         by_customer[alloc.customer_id].append(alloc)
@@ -92,6 +96,17 @@ def create_batch_payment(data: BatchPaymentCreate, db: Session = Depends(get_db)
             if not invoice:
                 raise HTTPException(
                     status_code=404, detail=f"Invoice {alloc.invoice_id} not found"
+                )
+            # Each line's payment is recorded for its customer_id, so the
+            # invoice must be that customer's (#189). The batch is one commit:
+            # a refused line writes nothing for any customer.
+            if invoice.customer_id != customer_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Invoice {invoice.invoice_number} does not belong to "
+                        f"customer {customer.name}."
+                    ),
                 )
             if Decimal(str(alloc.amount)) > invoice.balance_due:
                 raise HTTPException(

@@ -39,6 +39,18 @@ def test_build_context_excludes_local_secrets_and_customer_data():
     } <= patterns
 
 
+def test_runtime_image_removes_pip_module_and_launchers():
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    for runtime_only_path in (
+        "/usr/local/bin/pip",
+        "/usr/local/bin/pip3",
+        "/usr/local/bin/pip3.13",
+        "/usr/local/lib/python3.13/site-packages/pip",
+        "/usr/local/lib/python3.13/ensurepip",
+    ):
+        assert runtime_only_path in dockerfile
+
+
 def test_gitignore_excludes_local_secrets_and_runtime_state():
     patterns = set((ROOT / ".gitignore").read_text().splitlines())
     assert {

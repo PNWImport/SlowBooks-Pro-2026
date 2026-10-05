@@ -3,7 +3,6 @@
 # then marks the estimate CONVERTED. PDFs are rendered with WeasyPrint.
 # ============================================================================
 
-from datetime import timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,7 +11,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
-from app.routes.invoices.helpers import resolve_line_taxable
+from app.routes.invoices.helpers import _due_date_from_terms, resolve_line_taxable
 from app.routes._helpers import clamp_pagination
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
@@ -30,6 +29,8 @@ from app.services.accounting import (
     get_default_income_account_id,
     get_sales_tax_account_id,
 )
+from app.services.donor_documents import document_label
+from app.services.terminology import document_reference, terms_from_db
 
 router = APIRouter(prefix="/api/estimates", tags=["estimates"])
 
@@ -140,9 +141,8 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
         )
         db.add(line)
 
-    numeric_part = estimate_number.removeprefix(
-        get_settings(db).get("estimate_prefix", "E-")
-    )
+    estimate_prefix = str(get_settings(db).get("estimate_prefix") or "E-")
+    numeric_part = str(estimate_number or "").removeprefix(estimate_prefix)
     if numeric_part.isdigit():
         set_setting(db, "estimate_next_number", str(int(numeric_part) + 1))
 
@@ -192,6 +192,13 @@ def update_estimate(
         tax_rate = data.tax_rate if data.tax_rate is not None else estimate.tax_rate
         resolve_line_taxable(db, data.lines, estimate.customer)
         subtotal, tax_amount, total = compute_line_totals(data.lines, tax_rate)
+        estimate.subtotal = subtotal
+        estimate.tax_amount = tax_amount
+        estimate.total = total
+    elif data.tax_rate is not None:
+        subtotal, tax_amount, total = compute_line_totals(
+            estimate.lines, estimate.tax_rate
+        )
         estimate.subtotal = subtotal
         estimate.tax_amount = tax_amount
         estimate.total = total
@@ -252,6 +259,7 @@ def estimate_print_preview(estimate_id: int, db: Session = Depends(get_db)):
 @router.post("/{estimate_id}/convert", response_model=InvoiceResponse)
 def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
     """Convert to invoice — deep-copies all fields and lines."""
+    words = terms_from_db(db)
     from app.services.closing_date import check_closing_date
 
     estimate = (
@@ -272,11 +280,14 @@ def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
     # Parse terms for due date
     settings = get_settings(db)
     terms = settings.get("default_terms", "Net 30")
-    try:
-        days = int(terms.lower().replace("net ", ""))
-    except ValueError:
-        days = 30
-    due_date = estimate.date + timedelta(days=days)
+    due_date = _due_date_from_terms(estimate.date, terms)
+
+    # A new invoice gets the customer's CURRENT tax treatment, computed —
+    # not the estimate's stored tax (see taxed_copy_lines).
+    from app.services.accounting import compute_line_totals, taxed_copy_lines
+
+    copied = taxed_copy_lines(estimate.lines, estimate.customer)
+    subtotal, tax_amount, total = compute_line_totals(copied, estimate.tax_rate)
 
     invoice = Invoice(
         invoice_number=invoice_number,
@@ -290,19 +301,20 @@ def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
         bill_city=estimate.bill_city,
         bill_state=estimate.bill_state,
         bill_zip=estimate.bill_zip,
-        subtotal=estimate.subtotal,
+        subtotal=subtotal,
         tax_rate=estimate.tax_rate,
-        tax_amount=estimate.tax_amount,
-        total=estimate.total,
-        balance_due=estimate.total,
+        tax_amount=tax_amount,
+        total=total,
+        balance_due=total,
         class_id=estimate.class_id,
         job_id=estimate.job_id,
         notes=estimate.notes,
     )
+    face = document_label(invoice, words)
     db.add(invoice)
     db.flush()
 
-    for eline in estimate.lines:
+    for eline, cline in zip(estimate.lines, copied):
         iline = InvoiceLine(
             invoice_id=invoice.id,
             item_id=eline.item_id,
@@ -313,7 +325,7 @@ def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
             class_name=eline.class_name,
             job_id=eline.job_id,
             cost_code_id=eline.cost_code_id,
-            is_taxable=eline.is_taxable,
+            is_taxable=cline.is_taxable,
             line_order=eline.line_order,
         )
         db.add(iline)
@@ -336,7 +348,7 @@ def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
                 "account_id": ar_id,
                 "debit": Decimal(str(invoice.total)),
                 "credit": Decimal("0"),
-                "description": f"Invoice #{invoice_number}",
+                "description": document_reference(face, invoice_number),
             }
         )
         # Credit income for each line item
@@ -355,6 +367,8 @@ def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
                     "debit": Decimal("0"),
                     "credit": line_amount,
                     "description": eline.description or "",
+                    "job_id": eline.job_id,
+                    "cost_code_id": eline.cost_code_id,
                 }
             )
         # Credit sales tax if any
@@ -372,7 +386,7 @@ def convert_to_invoice(estimate_id: int, db: Session = Depends(get_db)):
         txn = create_journal_entry(
             db,
             estimate.date,
-            f"Invoice #{invoice_number} - {customer.name if customer else ''}",
+            document_reference(face, invoice_number, customer.name if customer else ""),
             journal_lines,
             source_type="invoice",
             source_id=invoice.id,

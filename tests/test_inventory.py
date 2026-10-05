@@ -11,6 +11,8 @@ Exercises the perpetual-inventory engine end-to-end:
 
 from decimal import Decimal
 
+import pytest
+
 from app.models.items import Item, ItemType, InventoryMovement, MovementType
 from app.models.contacts import Vendor
 from app.models.transactions import TransactionLine
@@ -18,6 +20,69 @@ from app.models.transactions import TransactionLine
 # -------------------------------------------------------------------------
 # Helpers
 # -------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("initial_tracking", [False, True])
+def test_invoice_void_uses_recorded_stock_after_tracking_change(
+    client, db_session, seed_accounts, seed_customer, initial_tracking
+):
+    item = _mk_tracked_item(db_session, seed_accounts)
+    item.track_inventory = initial_tracking
+    db_session.commit()
+    invoice = _create_invoice_for_inventory(client, seed_customer.id, item.id, 2, "25")
+    response = client.put(
+        f"/api/items/{item.id}", json={"track_inventory": not initial_tracking}
+    )
+    assert response.status_code == 200, response.text
+    response = client.post(f"/api/invoices/{invoice['id']}/void")
+    assert response.status_code == 200, response.text
+    db_session.expire_all()
+    assert db_session.get(Item, item.id).quantity_on_hand == 0
+
+
+@pytest.mark.parametrize("change_account", [False, True])
+@pytest.mark.parametrize("edited_quantity", [0, 1, 4])
+def test_invoice_void_reverses_all_historical_cogs_after_edit(
+    client, db_session, seed_accounts, seed_customer, change_account, edited_quantity
+):
+    item = _mk_tracked_item(db_session, seed_accounts)
+    vendor = _seed_vendor(db_session)
+    _create_bill_for_inventory(client, vendor.id, item.id, 10, "10")
+    invoice = _create_invoice_for_inventory(client, seed_customer.id, item.id, 2, "25")
+    _create_bill_for_inventory(client, vendor.id, item.id, 8, "30", bill_number="B-2")
+    response = client.put(
+        f"/api/invoices/{invoice['id']}",
+        json={
+            "lines": [{"item_id": item.id, "quantity": edited_quantity, "rate": "25"}]
+        },
+    )
+    assert response.status_code == 200, response.text
+    if change_account:
+        response = client.put(
+            f"/api/items/{item.id}", json={"asset_account_id": seed_accounts["1000"].id}
+        )
+        assert response.status_code == 200, response.text
+    response = client.post(f"/api/invoices/{invoice['id']}/void")
+    assert response.status_code == 200, response.text
+    db_session.expire_all()
+    assert db_session.get(Item, item.id).quantity_on_hand == Decimal("18")
+    from app.models.transactions import Transaction
+
+    rows = (
+        db_session.query(TransactionLine)
+        .join(Transaction)
+        .filter(
+            Transaction.source_type.in_(["invoice", "invoice_edit", "invoice_void"]),
+            Transaction.source_id == invoice["id"],
+        )
+        .all()
+    )
+    balances = {}
+    for line in rows:
+        balances[line.account_id] = (
+            balances.get(line.account_id, Decimal("0")) + line.debit - line.credit
+        )
+    assert all(value == 0 for value in balances.values()), balances
 
 
 def _mk_tracked_item(db_session, accounts, name="Widget", rate="25.00"):

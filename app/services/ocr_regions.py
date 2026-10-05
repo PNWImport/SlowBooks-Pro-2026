@@ -48,7 +48,7 @@ def _load_image(data: bytes):
         img = Image.open(io.BytesIO(data))
         img.load()
     except Exception as exc:
-        raise RegionError(f"Could not read the stored scan image: {exc}") from exc
+        raise RegionError("Could not read the stored scan image") from exc
     img = ImageOps.exif_transpose(img)  # phone photos carry rotation in EXIF
     return img
 

@@ -9,6 +9,8 @@ Live-audit revealed several routes silently accepted bad data:
 These tests pin those each to a 4xx response with a useful detail.
 """
 
+import pytest
+
 
 def _vendor(db_session, name="V"):
     from app.models.contacts import Vendor
@@ -208,6 +210,50 @@ def test_payment_rejects_negative_allocation(
         },
     )
     assert r.status_code == 400, r.text
+
+
+@pytest.mark.parametrize("amount", ["0.001", "0.005", "1.001"])
+@pytest.mark.parametrize("side", ["customer", "vendor"])
+def test_payments_reject_fractional_cents(
+    client, db_session, seed_accounts, seed_customer, amount, side
+):
+    if side == "customer":
+        endpoint = "/api/payments"
+        body = {
+            "customer_id": seed_customer.id,
+            "date": "2026-05-01",
+            "amount": amount,
+            "allocations": [],
+        }
+    else:
+        vendor = _vendor(db_session, name=f"Fractional {amount}")
+        endpoint = "/api/bill-payments"
+        body = {
+            "vendor_id": vendor.id,
+            "date": "2026-05-01",
+            "amount": amount,
+            "allocations": [],
+        }
+    response = client.post(endpoint, json=body)
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.parametrize("amount", [0, -1])
+def test_bill_payment_rejects_nonpositive_amount(
+    client, db_session, seed_accounts, amount
+):
+    vendor = _vendor(db_session, name=f"Invalid payment {amount}")
+    response = client.post(
+        "/api/bill-payments",
+        json={
+            "vendor_id": vendor.id,
+            "date": "2026-05-01",
+            "amount": amount,
+            "allocations": [],
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert "positive" in response.text.lower()
 
 
 # ---------------------------------------------------------------------------

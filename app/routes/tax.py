@@ -5,7 +5,7 @@
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -67,6 +67,9 @@ def list_mappings(db: Session = Depends(get_db)):
 
 @router.post("/mappings", response_model=TaxMappingResponse, status_code=201)
 def create_mapping(data: TaxMappingCreate, db: Session = Depends(get_db)):
+    account = db.query(Account).filter(Account.id == data.account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
     existing = (
         db.query(TaxCategoryMapping)
         .filter(TaxCategoryMapping.account_id == data.account_id)
@@ -82,8 +85,6 @@ def create_mapping(data: TaxMappingCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(existing)
     resp = TaxMappingResponse.model_validate(existing)
-    acct = db.query(Account).filter(Account.id == existing.account_id).first()
-    if acct:
-        resp.account_name = acct.name
-        resp.account_number = acct.account_number
+    resp.account_name = account.name
+    resp.account_number = account.account_number
     return resp

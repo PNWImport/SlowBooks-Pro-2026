@@ -12,6 +12,7 @@
 # the NACHA export.
 # ============================================================================
 
+from decimal import Decimal
 import enum
 
 from sqlalchemy import (
@@ -45,7 +46,7 @@ class ContractorPayRun(Base):
     pay_date = Column(Date, nullable=False)
     memo = Column(String(200), nullable=True)
     status = Column(Enum(ContractorRunStatus), default=ContractorRunStatus.DRAFT)
-    total_amount = Column(Numeric(12, 2), default=0)
+    total_amount = Column(Numeric(15, 2), default=Decimal("0"))
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -68,7 +69,7 @@ class ContractorPayment(Base):
         index=True,
     )
     vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False, index=True)
-    amount = Column(Numeric(12, 2), nullable=False, default=0)
+    amount = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
     description = Column(String(200), nullable=True)
 
     run = relationship("ContractorPayRun", back_populates="payments")

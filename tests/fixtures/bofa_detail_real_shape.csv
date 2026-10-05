@@ -1,0 +1,10 @@
+Description,,Summary Amt.
+Beginning balance as of 01/01/2026,,"1,000.00"
+Total credits,,"1,250.00"
+Total debits,,"-250.00"
+Ending balance as of 01/31/2026,,"2,000.00"
+
+Date,Description,Amount,Running Bal.
+01/01/2026,Beginning balance as of 01/01/2026,,"1,000.00"
+01/20/2026,"SYNTHETIC PAYOR, LLC CREDIT","1,250.00","2,250.00"
+01/22/2026,SYNTHETIC DEBIT,-250.00,"2,000.00"

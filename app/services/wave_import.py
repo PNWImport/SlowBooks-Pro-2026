@@ -99,6 +99,14 @@ def _map_type(raw: str):
 classify_filename = make_classifier()
 
 
+def _has_two_column_pair(row: dict) -> bool:
+    """True when the file has its own debit and credit columns."""
+    heads = {(k or "").strip().lstrip("\ufeff").lower() for k in row}
+    return any(h.startswith("debit") for h in heads) and any(
+        h.startswith("credit") for h in heads
+    )
+
+
 def parse_coa(csv_text: str) -> tuple[list[dict], list[str]]:
     accounts, errors = [], []
     for i, row in enumerate(sniff_reader(csv_text), start=2):
@@ -124,16 +132,58 @@ def parse_coa(csv_text: str) -> tuple[list[dict], list[str]]:
 def parse_gl(csv_text: str) -> tuple[list[dict], list[str]]:
     rows, errors = [], []
     for i, row in enumerate(sniff_reader(csv_text), start=2):
-        account = field(row, "account name", "account")
+        # Wave's "Account Transactions" report — a plain export any Wave
+        # user can pull with no plan restrictions — uses "ACCOUNT NUMBER"
+        # as the header over what is actually the account name for every
+        # data row (the numeric-code use of that column is vanishingly
+        # rare in practice), and suffixes its money columns with
+        # "(In Business Currency)". Neither matched below, so every row
+        # silently parsed as account="" / debit=credit=0: the dry-run
+        # "balanced" only because everything was zero, and the GL-account
+        # check failed once, deduped, on the empty name.
+        account = field(row, "account name", "account", "account number")
         date_raw = field(row, "transaction date", "date")
         if not account and not date_raw:
             continue
         try:
-            debit = parse_amount(field(row, "debit amount", "debit"))
-            credit = parse_amount(field(row, "credit amount", "credit"))
-            if debit == 0 and credit == 0:
+            # Wave's full export ("Get all transactions" -> accounting.csv)
+            # heads its sides "Debit Amount (Two Column Approach)" and
+            # "Credit Amount (Two Column Approach)". Neither was an alias, so
+            # every line read 0 / 0 (#169).
+            debit = parse_amount(
+                field(
+                    row,
+                    "debit amount (two column approach)",
+                    "debit amount",
+                    "debit",
+                    "debit (in business currency)",
+                )
+            )
+            credit = parse_amount(
+                field(
+                    row,
+                    "credit amount (two column approach)",
+                    "credit amount",
+                    "credit",
+                    "credit (in business currency)",
+                )
+            )
+            # accounting.csv ALSO carries "Amount (One column)", signed by
+            # what the amount does to the account (a sale is positive on the
+            # bank line and on the income line), not by side. Reading it as
+            # "positive = debit" made every journal unbalanced by debit +
+            # credit. It is only a side-signed fallback for exports that have
+            # no two-column pair at all.
+            if debit == 0 and credit == 0 and not _has_two_column_pair(row):
                 # Single signed Amount column: positive = debit
-                signed = parse_amount(field(row, "amount (one column)", "amount"))
+                signed = parse_amount(
+                    field(
+                        row,
+                        "amount (one column)",
+                        "amount",
+                        "amount (in business currency)",
+                    )
+                )
                 if signed > 0:
                     debit = signed
                 elif signed < 0:
@@ -194,7 +244,7 @@ _PARSERS = {"coa": parse_coa, "gl": parse_gl, "tb": parse_tb}
 
 
 def dry_run(db: Session, bundle: dict) -> dict:
-    return dry_run_bundle(db, bundle, _PARSERS, LABEL)
+    return dry_run_bundle(db, bundle, _PARSERS, LABEL, "wave_import")
 
 
 def run_import(db: Session, bundle: dict) -> dict:

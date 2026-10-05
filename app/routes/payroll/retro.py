@@ -58,6 +58,8 @@ def retro_pay_apply(data: RetroPayRequest, db: Session = Depends(get_db)):
         )
 
     emp = db.query(Employee).filter(Employee.id == data.employee_id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
     emp.pay_rate = Decimal(str(data.new_rate))
 
     pay_date = data.pay_date or date.today()

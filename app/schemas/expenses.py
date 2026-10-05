@@ -1,9 +1,8 @@
 from datetime import date as dt_date
-from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, Field
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 
 class ExpenseCreate(StrictModel):
@@ -15,7 +14,7 @@ class ExpenseCreate(StrictModel):
     payee: Optional[str] = Field(None, max_length=200)
     expense_account_id: int
     paid_from_account_id: int
-    amount: Decimal
+    amount: Money
     reference: Optional[str] = Field(None, max_length=100)
     memo: Optional[str] = None
     class_id: Optional[int] = None

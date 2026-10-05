@@ -1,4 +1,5 @@
 import logging
+from html import escape
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
@@ -59,6 +60,7 @@ def ar_aging(as_of_date: date = Query(default=None), db: Session = Depends(get_d
                 "over_60": Decimal(0),
                 "over_90": Decimal(0),
                 "total": Decimal(0),
+                "unapplied_credits": Decimal(0),
             }
 
         days = (as_of_date - inv.due_date).days if inv.due_date else 0
@@ -73,21 +75,52 @@ def ar_aging(as_of_date: date = Query(default=None), db: Session = Depends(get_d
             aging[cid]["over_90"] += bal
         aging[cid]["total"] += bal
 
+    from app.models.credit_memos import CreditMemo, CreditMemoStatus
+
+    credits = (
+        db.query(CreditMemo)
+        .filter(CreditMemo.status != CreditMemoStatus.VOID)
+        .filter(CreditMemo.date <= as_of_date)
+        .filter(CreditMemo.balance_remaining > 0)
+        .all()
+    )
+    for credit in credits:
+        cid = credit.customer_id
+        if cid not in aging:
+            aging[cid] = {
+                "customer_name": customer_names.get(cid, "Unknown"),
+                "customer_id": cid,
+                "current": Decimal(0),
+                "over_30": Decimal(0),
+                "over_60": Decimal(0),
+                "over_90": Decimal(0),
+                "total": Decimal(0),
+                "unapplied_credits": Decimal(0),
+            }
+        amount = Decimal(str(credit.balance_remaining))
+        aging[cid]["unapplied_credits"] += amount
+        aging[cid]["current"] -= amount
+        aging[cid]["total"] -= amount
+
+    columns = (
+        "current",
+        "over_30",
+        "over_60",
+        "over_90",
+        "total",
+        "unapplied_credits",
+    )
     items = list(aging.values())
-    totals = {
-        "customer_name": "TOTAL",
-        "customer_id": 0,
-        "current": sum(i["current"] for i in items),
-        "over_30": sum(i["over_30"] for i in items),
-        "over_60": sum(i["over_60"] for i in items),
-        "over_90": sum(i["over_90"] for i in items),
-        "total": sum(i["total"] for i in items),
-    }
+    for item in items:
+        item.setdefault("unapplied_credits", Decimal(0))
+    totals = {"customer_name": "TOTAL", "customer_id": 0}
+    for key in columns:
+        totals[key] = sum(item[key] for item in items)
     # Convert Decimals to float for JSON
     for item in items:
-        for k in ("current", "over_30", "over_60", "over_90", "total"):
+        for k in columns:
             item[k] = float(item[k])
-    for k in ("current", "over_30", "over_60", "over_90", "total"):
+    for k in columns:
         totals[k] = float(totals[k])
 
     return {"as_of_date": as_of_date.isoformat(), "items": items, "totals": totals}
@@ -130,25 +163,22 @@ def income_by_customer(
         by_customer[cid]["total_paid"] += inv.amount_paid
         by_customer[cid]["total_balance"] += inv.balance_due
 
-    items = sorted(
-        by_customer.values(), key=lambda x: float(x["total_sales"]), reverse=True
-    )
+    items = sorted(by_customer.values(), key=lambda x: x["total_sales"], reverse=True)
+    grand_sales = sum((i["total_sales"] for i in items), Decimal("0"))
+    grand_paid = sum((i["total_paid"] for i in items), Decimal("0"))
+    grand_balance = sum((i["total_balance"] for i in items), Decimal("0"))
     for item in items:
         item["total_sales"] = float(item["total_sales"])
         item["total_paid"] = float(item["total_paid"])
         item["total_balance"] = float(item["total_balance"])
 
-    grand_sales = sum(i["total_sales"] for i in items)
-    grand_paid = sum(i["total_paid"] for i in items)
-    grand_balance = sum(i["total_balance"] for i in items)
-
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "items": items,
-        "total_sales": grand_sales,
-        "total_paid": grand_paid,
-        "total_balance": grand_balance,
+        "total_sales": float(grand_sales),
+        "total_paid": float(grand_paid),
+        "total_balance": float(grand_balance),
     }
 
 
@@ -178,6 +208,7 @@ def customer_statement_pdf(
     payments = (
         db.query(Payment)
         .filter(Payment.customer_id == customer_id)
+        .filter(Payment.is_voided.isnot(True))
         .filter(Payment.date <= as_of_date)
         .order_by(Payment.date)
         .all()
@@ -238,6 +269,7 @@ def batch_email_statements(db: Session = Depends(get_db)):
             payments = (
                 db.query(Payment)
                 .filter(Payment.customer_id == cid)
+                .filter(Payment.is_voided.isnot(True))
                 .filter(Payment.date <= as_of_date)
                 .order_by(Payment.date)
                 .all()
@@ -259,7 +291,7 @@ def batch_email_statements(db: Session = Depends(get_db)):
                 db=db,
                 to_email=customer.email,
                 subject=f"Account Statement — {settings.get('company_name', 'Our Company')}",
-                html_body=f"<p>Dear {customer.name},</p><p>Please find your account statement attached.</p><p>{settings.get('company_name', '')}</p>",
+                html_body=f"<p>Dear {escape(customer.name)},</p><p>Please find your account statement attached.</p><p>{escape(settings.get('company_name') or '')}</p>",
                 attachment_bytes=pdf_bytes,
                 attachment_name=f"Statement_{customer.name}.pdf",
                 entity_type="statement",
@@ -321,7 +353,7 @@ def collection_letters(data: CollectionLetterRequest, db: Session = Depends(get_
         for inv in invs:
             inv.days_overdue = (today - inv.due_date).days if inv.due_date else 0
 
-        total_due = sum(float(inv.balance_due) for inv in invs)
+        total_due = sum((inv.balance_due for inv in invs), Decimal("0"))
 
         try:
             pdf_bytes = generate_collection_letter_pdf(
@@ -339,7 +371,7 @@ def collection_letters(data: CollectionLetterRequest, db: Session = Depends(get_
                     db=db,
                     to_email=customer.email,
                     subject=f"{type_labels.get(letter_type, 'Collection Notice')} — {settings.get('company_name', '')}",
-                    html_body=f"<p>Dear {customer.name},</p><p>Please see the attached collection notice regarding your outstanding balance of ${total_due:,.2f}.</p>",
+                    html_body=f"<p>Dear {escape(customer.name)},</p><p>Please see the attached collection notice regarding your outstanding balance of ${total_due:,.2f}.</p>",
                     attachment_bytes=pdf_bytes,
                     attachment_name=f"Collection_{letter_type}day_{customer.name}.pdf",
                     entity_type="collection",

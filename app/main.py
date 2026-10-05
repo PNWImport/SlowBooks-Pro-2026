@@ -31,6 +31,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exception_handlers import http_exception_handler
 
 from app.services import storage
+from app.services.control_accounts import MissingControlAccount
 from app.services.rate_limit import limiter
 
 from app.routes import (
@@ -53,7 +54,13 @@ from app.routes import (
 from app.routes import audit, search
 
 # Phase 2: Accounts Payable
-from app.routes import purchase_orders, bills, bill_payments, credit_memos
+from app.routes import (
+    purchase_orders,
+    bills,
+    bill_payments,
+    credit_memos,
+    vendor_credits,
+)
 
 # Phase 3: Productivity
 from app.routes import recurring, batch_payments
@@ -98,7 +105,7 @@ from app.routes import provider_payments, public
 from app.routes import qbo
 
 # Phase 9: Forum Bug Fixes & Missing Features
-from app.routes import journal, deposits, cc_charges, checks, expenses
+from app.routes import journal, deposits, cc_charges, checks, expenses, transfers
 
 # Phase 10: Quick Wins + Medium Effort Features
 from app.routes import bank_rules, budgets, attachments, email_templates
@@ -209,6 +216,7 @@ def _run_startup_security_checks():
                 "host without a TLS proxy (docs/tls-proxy-setup.md)."
             )
             _warn_on_proxy_misconfiguration()
+            _refuse_a_database_behind_head()
             _create_missing_tables()
             return
 
@@ -239,7 +247,67 @@ def _run_startup_security_checks():
         _warn_on_proxy_misconfiguration()
 
     # Only after the cheap checks pass do we open a DB connection.
+    _refuse_a_database_behind_head()
     _create_missing_tables()
+
+
+def _refuse_a_database_behind_head() -> None:
+    """Prevent create_all() from half-upgrading a database behind Alembic."""
+    from sqlalchemy import inspect as _inspect, text as _text
+
+    try:
+        inspector = _inspect(engine)
+        if not inspector.has_table("alembic_version"):
+            return
+        with engine.connect() as conn:
+            row = conn.execute(_text("SELECT version_num FROM alembic_version")).first()
+        current = row[0] if row else None
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "could not read alembic_version; skipping the migration-head check"
+        )
+        return
+    if current is None:
+        return
+
+    try:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        root = Path(__file__).resolve().parent.parent
+        cfg = Config(str(root / "alembic.ini"))
+        cfg.set_main_option("script_location", str(root / "migrations"))
+        head = ScriptDirectory.from_config(cfg).get_current_head()
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "could not determine the migration head; skipping the check"
+        )
+        return
+
+    if head and current != head:
+        from app.services.schema_repair import looks_half_upgraded, repair_command
+
+        if looks_half_upgraded(engine):
+            remedy = (
+                "A server has already been started against this database while it "
+                "was behind, so `alembic upgrade head` will fail on a table that "
+                "already exists. Repair it with:\n"
+                f"    {repair_command()} --database-url <url>\n"
+                "which drops only the empty tables left behind and then upgrades. "
+                "Take a copy first."
+            )
+        else:
+            remedy = (
+                "Run `alembic upgrade head` against it first. (The desktop app and "
+                "the Docker entrypoint both do this for you; a self-managed "
+                "deployment must run it as its own step.)"
+            )
+        raise RuntimeError(
+            f"FATAL: this database is at migration '{current}' and this build "
+            f"expects '{head}'. Starting anyway would create the new tables "
+            f"without altering the existing ones and without moving the revision, "
+            f"after which migrations could never run on it again. {remedy}"
+        )
 
 
 def _create_missing_tables() -> None:
@@ -329,6 +397,30 @@ async def lifespan(app: FastAPI):
         warn_if_manifest_missing()
     except Exception:
         pass  # a diagnostic, never a reason not to boot
+    # Issue #119: say once, at boot, if this company's chart is missing an
+    # account the posting code resolves by number. Before 2.10.1 the first
+    # symptom was a document that looked saved and never reached the ledger;
+    # now the posting refuses, and this is the warning that gets ahead of it.
+    # A diagnostic, never fatal — refusing to boot would lock an operator out
+    # of the very chart they need to repair.
+    try:
+        from app.services.control_accounts import missing as _missing_controls
+
+        _db = SessionLocal()
+        try:
+            gaps = _missing_controls(_db)
+        finally:
+            _db.close()
+        if gaps:
+            logging.getLogger(__name__).warning(
+                "chart of accounts is missing %d control account(s): %s — "
+                "documents that need them will be refused (409) until they are "
+                "restored with these exact numbers",
+                len(gaps),
+                ", ".join(f"{n} {name}" for n, name in gaps),
+            )
+    except Exception:
+        pass  # a diagnostic, never a reason not to boot
     # At-rest upgrade: encrypt any legacy plaintext credential rows (SMTP,
     # payment, QBO, SimpleFIN secrets) on first boot after upgrading.
     try:
@@ -381,12 +473,37 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
+def _company_terms():
+    """Read the current company's vocabulary; fall back safely on errors."""
+    from app.services.terminology import Terms, terms_from_db
+    import app.database as database
+
+    try:
+        db = database.SessionLocal()
+        try:
+            return terms_from_db(db)
+        finally:
+            db.close()
+    except Exception:
+        return Terms("business")
+
+
 async def _method_not_allowed_handler(request: Request, exc: StarletteHTTPException):
     """A bare 405 on DELETE /api/<doc>/<id> names nothing. Posted documents
     are never deleted — they are voided, which keeps the audit trail and
     reverses the ledger — and the void route exists one segment further
     down. Say so in the body (2.9.0 gate: an agent rebuilt a whole fixture
     to work around a 405 that could have pointed at POST .../void)."""
+    if isinstance(exc.detail, str) and exc.detail and exc.status_code != 405:
+        terms = _company_terms()
+        if terms.is_nonprofit:
+            worded = terms.text(exc.detail)
+            if worded != exc.detail:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    headers=exc.headers,
+                    content={"detail": worded},
+                )
     if exc.status_code == 405 and request.method == "DELETE":
         candidate = request.url.path.rstrip("/") + "/void"
         # The spec is the flat, cached view of every mounted router.
@@ -409,6 +526,20 @@ async def _method_not_allowed_handler(request: Request, exc: StarletteHTTPExcept
 
 
 app.add_exception_handler(StarletteHTTPException, _method_not_allowed_handler)
+
+
+async def _missing_control_account_handler(
+    request: Request, exc: MissingControlAccount
+):
+    logging.getLogger(__name__).warning(
+        "Posting refused: control account %s (%s) is missing", exc.number, exc.name
+    )
+    return JSONResponse(
+        status_code=409, content={"detail": _company_terms().text(exc.user_text)}
+    )
+
+
+app.add_exception_handler(MissingControlAccount, _missing_control_account_handler)
 
 # gzip responses larger than 1 KB. Analytics JSON payloads compress ~70%,
 # which is a big win over LAN for /api/analytics/dashboard and friends.
@@ -581,6 +712,17 @@ _AUTH_EXEMPT_EXACT = {
     "/analytics",  # redirect to SPA hash route
     "/favicon.ico",
     "/api/stripe/webhook",  # legacy alias — Stripe auth via signature
+    # Intuit's OAuth redirect lands the browser back here directly from
+    # accounts.intuit.com — a cross-site top-level navigation, so a
+    # SameSite=Strict session cookie is never attached (browsers withhold
+    # Strict cookies on any cross-site request, no exceptions). Session-
+    # gating this route made every QBO connection attempt dead-end on
+    # {"detail": "Not authenticated"} before qbo_service.handle_callback
+    # ever ran. Safe to exempt: the flow already carries its own CSRF
+    # protection independent of the session — get_auth_url() stores a
+    # random `state` token server-side and handle_callback() rejects any
+    # callback whose `state` doesn't match (see app/services/qbo_service.py).
+    "/api/qbo/callback",
 }
 # Provider payment routes that are public by design:
 #   - webhook: the provider's signature is the authentication
@@ -874,6 +1016,7 @@ app.include_router(purchase_orders.router)
 app.include_router(bills.router)
 app.include_router(bill_payments.router)
 app.include_router(credit_memos.router)
+app.include_router(vendor_credits.router)
 # Phase 3: Productivity
 app.include_router(recurring.router)
 app.include_router(batch_payments.router)
@@ -911,6 +1054,7 @@ app.include_router(analytics.router)
 # Phase 9: Forum Bug Fixes & Missing Features
 app.include_router(journal.router)
 app.include_router(deposits.router)
+app.include_router(transfers.router)
 app.include_router(cc_charges.router)
 app.include_router(expenses.router)
 app.include_router(checks.router)

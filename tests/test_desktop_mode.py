@@ -9,6 +9,7 @@
 #   - the SQLite branch of backup_service (snapshot / restore / list)
 # ============================================================================
 
+from contextlib import closing
 import json
 import os
 import sqlite3
@@ -164,7 +165,7 @@ def test_create_company_migrates_and_registers(data_dir):
     assert db_file.exists()
 
     # The file went through real migrations: version-stamped and populated.
-    with sqlite3.connect(db_file) as conn:
+    with closing(sqlite3.connect(db_file)) as conn, conn:
         tables = {
             r[0]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -176,7 +177,7 @@ def test_create_company_migrates_and_registers(data_dir):
         (count,) = conn.execute("SELECT COUNT(*) FROM accounts").fetchone()
         assert count > 0
 
-    manifest = json.loads((data_dir / "companies.json").read_text())
+    manifest = json.loads((data_dir / "companies.json").read_text(encoding="utf-8"))
     assert manifest["companies"] == [
         {"name": "Acme Consulting", "file": "acme-consulting.db"}
     ]
@@ -250,7 +251,7 @@ def test_companies_api_uses_manifest_in_sqlite_mode(client, data_dir):
 def sqlite_live_db(tmp_path, monkeypatch):
     """A file-backed 'live' database plus an isolated BACKUP_DIR."""
     live = tmp_path / "company.db"
-    with sqlite3.connect(live) as conn:
+    with closing(sqlite3.connect(live)) as conn, conn:
         conn.execute("CREATE TABLE t (v TEXT)")
         conn.execute("INSERT INTO t VALUES ('original')")
     backup_dir = tmp_path / "backups"
@@ -268,7 +269,7 @@ def test_sqlite_create_backup_snapshots_file(sqlite_live_db, db_session):
 
     snapshot = backup_dir / result["filename"]
     assert snapshot.exists()
-    with sqlite3.connect(snapshot) as conn:
+    with closing(sqlite3.connect(snapshot)) as conn, conn:
         assert conn.execute("SELECT v FROM t").fetchone() == ("original",)
 
     listed = backup_service.list_backup_files()
@@ -288,12 +289,12 @@ def test_backups_in_same_second_preserve_both_snapshots(
     monkeypatch.setattr(backup_service, "datetime", FrozenDateTime)
     live, backup_dir = sqlite_live_db
     first = backup_service.create_backup(db_session)
-    with sqlite3.connect(live) as conn:
+    with closing(sqlite3.connect(live)) as conn, conn:
         conn.execute("UPDATE t SET v = 'changed'")
     second = backup_service.create_backup(db_session)
     assert first["success"] and second["success"]
     assert first["filename"] != second["filename"]
-    with sqlite3.connect(backup_dir / first["filename"]) as conn:
+    with closing(sqlite3.connect(backup_dir / first["filename"])) as conn, conn:
         assert conn.execute("SELECT v FROM t").fetchone() == ("original",)
 
 
@@ -302,13 +303,13 @@ def test_sqlite_restore_backup_overwrites_live_db(sqlite_live_db, db_session):
     created = backup_service.create_backup(db_session)
     assert created["success"]
 
-    with sqlite3.connect(live) as conn:
+    with closing(sqlite3.connect(live)) as conn, conn:
         conn.execute("UPDATE t SET v = 'changed'")
 
     result = backup_service.restore_backup(db_session, created["filename"])
     assert result["success"], result
 
-    with sqlite3.connect(live) as conn:
+    with closing(sqlite3.connect(live)) as conn, conn:
         assert conn.execute("SELECT v FROM t").fetchone() == ("original",)
 
 
@@ -411,7 +412,7 @@ def test_webview_cache_purged_on_version_change(tmp_path):
     assert not cache.exists()
     assert not code_cache.exists()
     assert cookies.read_bytes() == b"keep me"  # logins survive
-    assert (storage / "app-version.txt").read_text().strip() == "9.9.9"
+    assert (storage / "app-version.txt").read_text(encoding="utf-8").strip() == "9.9.9"
 
     # Same version again: marker short-circuits, nothing recreated/deleted
     probe = profile / "Cache"
@@ -422,7 +423,7 @@ def test_webview_cache_purged_on_version_change(tmp_path):
     # New version purges again
     desktop_launcher._purge_stale_webview_cache(storage, "10.0.0")
     assert not probe.exists()
-    assert (storage / "app-version.txt").read_text().strip() == "10.0.0"
+    assert (storage / "app-version.txt").read_text(encoding="utf-8").strip() == "10.0.0"
 
 
 def test_env_file_follows_data_dir_override(tmp_path, monkeypatch):

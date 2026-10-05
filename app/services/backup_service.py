@@ -224,7 +224,8 @@ def create_backup(db: Session, notes: str = None, backup_type: str = "manual") -
             timeout=300,
         )
         if result.returncode != 0:
-            return {"success": False, "error": result.stderr}
+            logger.error("PostgreSQL backup failed: %s", result.stderr)
+            return {"success": False, "error": "PostgreSQL backup failed. Check logs."}
 
         file_size = filepath.stat().st_size
 

@@ -402,7 +402,8 @@ const JobsPage = {
 
     sourceLabel(t) {
         return { invoice: T('Invoice'), bill: 'Bill', expense: 'Expense', cc_charge: 'Card charge', manual: 'Journal',
-            credit_memo: 'Credit memo', sales_receipt: 'Sales receipt', deposit: 'Deposit', check: 'Check',
+            credit_memo: 'Credit memo', vendor_credit: 'Vendor credit', vendor_credit_void: 'Void vendor credit',
+            sales_receipt: 'Sales receipt', deposit: 'Deposit', check: 'Check',
             job_cost: `${T('Job')} cost`, job_cost_void: `Void ${T('Job').toLowerCase()} cost`, expense_void: 'Void expense', bill_void: 'Void bill' }[t] || (t || 'Entry');
     },
 

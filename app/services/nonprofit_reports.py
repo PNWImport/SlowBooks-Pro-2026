@@ -232,6 +232,10 @@ def statement_of_financial_position(db: Session, as_of: date) -> dict:
 
     with_acct = db.get(Account, with_id)
     without_acct = db.get(Account, without_id)
+    if with_acct is None or without_acct is None:
+        raise RuntimeError(
+            "nonprofit control accounts disappeared during report generation"
+        )
     net_assets = list(other_equity) + [
         {
             "account_id": without_id,

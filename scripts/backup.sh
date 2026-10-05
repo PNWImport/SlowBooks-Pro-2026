@@ -1,10 +1,7 @@
 #!/bin/bash
 set -eo pipefail
 # ============================================================================
-# Decompiled from qbw32.exe!CBackupManager::DoBackup()  Offset: 0x00248000
-# Original backed up the .QBW file (Btrieve database) to a user-specified
-# location. It also created a .QBB file which was just a renamed ZIP.
-# We use pg_dump because PostgreSQL > Pervasive PSQL in every measurable way.
+# Server Edition backup: pg_dump the company database to a dated file.
 # ============================================================================
 
 BACKUP_DIR="${BACKUP_DIR:-$HOME/bookkeeper-backups}"
@@ -21,18 +18,14 @@ echo "Database: $DB_NAME"
 echo "Backup to: $BACKUP_FILE"
 echo ""
 
-pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$BACKUP_FILE"
-
-if [ $? -eq 0 ]; then
+if pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$BACKUP_FILE"; then
     SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
     echo "Backup completed: $BACKUP_FILE ($SIZE)"
 
     # Keep only last 30 backups
-    BACKUP_COUNT=$(ls -1 "$BACKUP_DIR"/bookkeeper_*.sql.gz 2>/dev/null | wc -l)
-    if [ "$BACKUP_COUNT" -gt 30 ]; then
-        ls -1t "$BACKUP_DIR"/bookkeeper_*.sql.gz | tail -n +31 | xargs rm -f
-        echo "Pruned old backups (kept 30 most recent)"
-    fi
+    find "$BACKUP_DIR" -maxdepth 1 -type f -name 'bookkeeper_*.sql.gz' \
+        -printf '%T@ %p\0' | sort -z -nr | tail -z -n +31 | cut -z -d ' ' -f 2- \
+        | xargs -0 -r rm -f --
 else
     echo "ERROR: Backup failed!"
     rm -f "$BACKUP_FILE"

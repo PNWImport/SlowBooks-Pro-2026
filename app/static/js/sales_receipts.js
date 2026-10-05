@@ -110,7 +110,7 @@ const SalesReceiptsPage = {
             API.get('/accounts'),
             API.get('/settings'),
         ]);
-        const bankAccts = accounts.filter(a => a.account_type === 'asset');
+        const bankAccts = accounts.filter(a => a.bank_kind === 'bank');
 
         const sr = {
             date: todayISO(),
@@ -298,6 +298,7 @@ const SalesReceiptsPage = {
     },
 
     customerSelected(customerId) {
+        setTimeout(() => SalesReceiptsPage.recalc(), 0);
         const form = $('#sr-new-customer-form');
         if (!form) return;
         form.style.display = customerId === '__new__' ? 'block' : 'none';
@@ -344,6 +345,7 @@ const SalesReceiptsPage = {
         const tbody = $('#sr-lines');
         const idx = SalesReceiptsPage.lineCount++;
         tbody.insertAdjacentHTML('beforeend', SalesReceiptsPage.lineRowHtml(idx, {}, SalesReceiptsPage._items));
+        SalesReceiptsPage.recalc();
     },
 
     removeLine(idx) {
@@ -366,6 +368,7 @@ const SalesReceiptsPage = {
     },
 
     recalc() {
+        TaxExempt.enforce(SalesReceiptsPage._customers, $('#sr-customer-select')?.value, $('#sr-lines'));
         let subtotal = 0, taxable = 0;
         $$('#sr-lines tr').forEach(row => {
             const qty = parseFloat(row.querySelector('.line-qty')?.value) || 0;

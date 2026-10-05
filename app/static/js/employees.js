@@ -421,14 +421,7 @@ const EmployeesPage = {
 
     _copyPortalLink(url) {
         if (!url) { toast('No portal URL yet — generate a token first.', 'error'); return; }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(url).then(
-                () => toast('Portal link copied to clipboard'),
-                () => toast('Couldn\'t copy — select the link and copy manually.', 'error'),
-            );
-        } else {
-            toast('Clipboard API unavailable — select the URL above and copy manually.', 'error');
-        }
+        return copyToClipboard(url, 'Portal link');
     },
 
     _emailPortalLink(url) {

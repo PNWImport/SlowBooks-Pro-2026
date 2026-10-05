@@ -31,6 +31,10 @@ def download_paystub(run_id: int, stub_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Pay stub not found")
     run = db.query(PayRun).filter(PayRun.id == run_id).first()
     emp = db.query(Employee).filter(Employee.id == stub.employee_id).first()
+    if not run or not emp:
+        raise HTTPException(
+            status_code=409, detail="Pay stub references missing payroll data"
+        )
 
     ytd = employee_ytd(db, stub.employee_id, run.pay_date.year)
     company = {

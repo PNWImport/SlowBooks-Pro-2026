@@ -1,16 +1,21 @@
 from datetime import date as dt_date, datetime
 from decimal import Decimal
 from typing import Optional
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.schemas.common import StrictModel, TaxRateFloat, validate_non_negative_line
+from app.schemas.common import (
+    Money,
+    StrictModel,
+    TaxRateFloat,
+    validate_non_negative_line,
+)
 
 
 class CreditMemoLineCreate(StrictModel):
     item_id: Optional[int] = None
     description: Optional[str] = None
     quantity: float = 1
-    rate: float = 0
+    rate: Money = Decimal("0")
     line_order: int = 0
 
     @model_validator(mode="after")
@@ -32,7 +37,7 @@ class CreditMemoLineResponse(BaseModel):
 
 class CreditApplicationCreate(StrictModel):
     invoice_id: int
-    amount: float
+    amount: Money = Field(gt=0)
 
 
 class CreditMemoCreate(StrictModel):

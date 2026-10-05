@@ -77,6 +77,7 @@ const EstimatesPage = {
     _customers: [],
 
     customerSelected(customerId) {
+        setTimeout(() => EstimatesPage.recalc(), 0);
         if (customerId === '__new__') {
             const form = $('#est-new-customer-form');
             if (form) form.style.display = 'block';
@@ -161,7 +162,7 @@ const EstimatesPage = {
                     ${classGroup}${jobGroup}
                 </div>
                 <h3 style="margin:16px 0 8px; font-size:14px; color:var(--gray-600);">Line Items</h3>
-                <table class="line-items-table">
+                <div class="table-container table-container--scroll"><table class="line-items-table">
                     <thead><tr>
                         <th scope="col">Item</th><th scope="col">Description</th>${CostCodes.headHtml()}<th scope="col" title='Unit cost (budget side)'>Cost</th><th scope="col" class="col-qty">Qty</th>
                         <th scope="col" class="col-rate">Rate</th><th scope="col" title="Sales tax applies to this line">Tax</th><th scope="col" class="col-amount">Amount</th><th scope="col" class="col-actions"></th>
@@ -169,7 +170,7 @@ const EstimatesPage = {
                     <tbody id="est-lines">
                         ${est.lines.map((l, i) => EstimatesPage.lineRowHtml(i, l, items)).join('')}
                     </tbody>
-                </table>
+                </table></div>
                 <button type="button" class="btn btn-sm btn-secondary" style="margin-top:8px;" onclick="EstimatesPage.addLine()">+ Add Line</button>
                 <div class="invoice-totals" id="est-totals">
                     <div class="total-row"><span class="label">Subtotal</span><span class="value" id="est-subtotal">$0.00</span></div>
@@ -182,19 +183,19 @@ const EstimatesPage = {
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">${id ? 'Update' : 'Create'} Estimate</button>
                 </div>
-            </form>`);
+            </form>`, { wide: true });
         EstimatesPage.recalc();
     },
 
     lineRowHtml(idx, line, items) {
         const itemOpts = items.map(i => `<option value="${i.id}" ${line.item_id==i.id?'selected':''}>${escapeHtml(i.name)}</option>`).join('');
         return `<tr data-eline="${idx}">
-            <td><select class="line-item" onchange="EstimatesPage.itemSelected(${idx})">
+            <td><select class="line-item" style="min-width:150px" onchange="EstimatesPage.itemSelected(${idx})">
                 <option value="">--</option>${itemOpts}</select></td>
             <td><input class="line-desc" value="${escapeHtml(line.description || '')}"></td>
-            <td><input class="line-qty" type="number" step="0.01" value="${line.quantity || 1}" oninput="EstimatesPage.recalc()"></td>
             ${CostCodes.cellHtml('line-cost-code', line.cost_code_id || null)}
             <td><input class="line-unit-cost" type="number" step="0.01" value="${line.unit_cost ?? ''}" placeholder="cost" title="Unit cost (budget side); rate is what you charge"></td>
+            <td><input class="line-qty" type="number" step="0.01" value="${line.quantity || 1}" oninput="EstimatesPage.recalc()"></td>
             <td><input class="line-rate" type="number" step="0.01" value="${line.rate || 0}" oninput="EstimatesPage.recalc()"></td>
             <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" ${line.is_taxable === false ? '' : 'checked'} onchange="EstimatesPage.recalc()"></td>
             <td class="col-amount line-amount">${formatCurrency((line.quantity||1) * (line.rate||0))}</td>
@@ -206,6 +207,7 @@ const EstimatesPage = {
         const tbody = $('#est-lines');
         const idx = EstimatesPage.lineCount++;
         tbody.insertAdjacentHTML('beforeend', EstimatesPage.lineRowHtml(idx, {}, EstimatesPage._items));
+        EstimatesPage.recalc();
     },
 
     removeLine(idx) {
@@ -221,6 +223,10 @@ const EstimatesPage = {
         if (item) {
             row.querySelector('.line-desc').value = item.description || item.name;
             row.querySelector('.line-rate').value = item.rate;
+            // the item's standard cost is the budget side of the line; blank
+            // when the item carries none, and the user can overwrite it
+            const cost = row.querySelector('.line-unit-cost');
+            if (cost) cost.value = item.cost && Number(item.cost) !== 0 ? item.cost : '';
             const tax = row.querySelector('.line-taxable');
             if (tax) tax.checked = item.is_taxable !== false;
             EstimatesPage.recalc();
@@ -228,6 +234,7 @@ const EstimatesPage = {
     },
 
     recalc() {
+        TaxExempt.enforce(EstimatesPage._customers, $('#est-customer-select')?.value, $('#est-lines'));
         let subtotal = 0, taxable = 0;
         $$('#est-lines tr').forEach(row => {
             const qty = parseFloat(row.querySelector('.line-qty')?.value) || 0;
@@ -239,7 +246,7 @@ const EstimatesPage = {
             if (amountCell) amountCell.textContent = formatCurrency(amount);
         });
         const taxPct = parseFloat($('[name="tax_rate"]')?.value) || 0;
-        const tax = subtotal * (taxPct / 100);
+        const tax = taxable * (taxPct / 100);
         if ($('#est-subtotal')) $('#est-subtotal').textContent = formatCurrency(subtotal);
         if ($('#est-tax')) $('#est-tax').textContent = formatCurrency(tax);
         if ($('#est-total')) $('#est-total').textContent = formatCurrency(subtotal + tax);

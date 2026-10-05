@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.items import Item, MovementType
+from app.models.items import Item, InventoryMovement, MovementType
 from app.services.inventory_service import (
     record_sale,
     reverse_sale,
@@ -40,6 +40,10 @@ def post_sale_for_invoice(db: Session, invoice, txn_date=None) -> None:
     """
     date_to_use = txn_date or invoice.date
     ref = getattr(invoice, "invoice_number", None) or f"inv#{invoice.id}"
+    from app.services.donor_documents import document_label
+    from app.services.terminology import terms_from_db
+
+    terms = terms_from_db(db)
     for line in invoice.lines:
         item = _get_item(db, line.item_id)
         if item and item.track_inventory:
@@ -49,7 +53,7 @@ def post_sale_for_invoice(db: Session, invoice, txn_date=None) -> None:
                 quantity=Decimal(str(line.quantity)),
                 source_type="invoice",
                 source_id=invoice.id,
-                memo=f"Invoice {ref}",
+                memo=f"{document_label(invoice, terms)} {ref}",
                 txn_date=date_to_use,
             )
 
@@ -60,26 +64,57 @@ def reverse_sale_for_invoice(
     txn_date=None,
     memo: str = "Sale reversal",
 ) -> None:
-    """Reverse every SALE movement originally booked against this invoice.
+    """Undo recorded sales and edit returns using their original postings.
 
-    Used by void_invoice and (via update_invoice) when an edit needs to
-    recompute from scratch. Passes original_source to reverse_sale so
-    historical unit_cost is used for the reversal JE — keeps the GL balanced
-    even if avg_cost has drifted.
+    A void must not depend on today's item settings, current invoice lines,
+    or the latest sale cost. Quantity edits can leave several differently
+    costed movements, including returns for lines no longer on the invoice.
+    Caller guards against repeated voids and commits the whole reversal.
     """
+    from app.models.transactions import Transaction
+    from app.services.accounting import create_journal_entry, reversing_lines
+
     date_to_use = txn_date or invoice.date
-    for line in invoice.lines:
-        item = _get_item(db, line.item_id)
-        if item and item.track_inventory:
-            reverse_sale(
+    movements = (
+        db.query(InventoryMovement)
+        .filter(
+            InventoryMovement.source_type.in_(["invoice", "invoice_edit"]),
+            InventoryMovement.source_id == invoice.id,
+        )
+        .order_by(InventoryMovement.id.desc())
+        .all()
+    )
+    reversed_transactions = {}
+    for movement in movements:
+        reversal_id = None
+        if movement.transaction_id:
+            if movement.transaction_id not in reversed_transactions:
+                original = db.get(Transaction, movement.transaction_id)
+                if original is not None:
+                    reversal = create_journal_entry(
+                        db,
+                        date_to_use,
+                        f"COGS reversal — {invoice.invoice_number}",
+                        reversing_lines(original.lines),
+                        source_type="invoice_void",
+                        source_id=invoice.id,
+                        class_id=original.class_id,
+                        job_id=original.job_id,
+                    )
+                    reversed_transactions[original.id] = reversal.id
+            reversal_id = reversed_transactions.get(movement.transaction_id)
+        item = _get_item(db, movement.item_id)
+        if item is not None:
+            _append_movement(
                 db,
                 item,
-                quantity=Decimal(str(line.quantity)),
+                MovementType.VOID,
+                quantity=-movement.quantity,
+                unit_cost=movement.unit_cost,
                 source_type="invoice_void",
                 source_id=invoice.id,
-                original_source_type="invoice",
-                original_source_id=invoice.id,
-                txn_date=date_to_use,
+                transaction_id=reversal_id,
+                memo=memo,
             )
 
 

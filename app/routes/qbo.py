@@ -14,6 +14,8 @@
 #   POST /api/qbo/export/{entity}  -> export single entity type
 # ============================================================================
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -23,6 +25,8 @@ from app.schemas.qbo import QBOImportResult, QBOExportResult, QBOConnectionStatu
 from app.services import qbo_service
 from app.services import qbo_import
 from app.services import qbo_export
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/qbo", tags=["qbo"])
 
@@ -38,11 +42,12 @@ def get_auth_url(db: Session = Depends(get_db)):
     try:
         url = qbo_service.get_auth_url(db)
         return {"url": url}
-    except Exception as e:
+    except Exception:
+        logger.exception("QBO auth URL failed")
         raise HTTPException(
             400,
-            f"Failed to generate auth URL: {str(e)}. "
-            "Check that Client ID and Client Secret are configured in Settings.",
+            "Failed to generate the auth URL — check that Client ID and Client "
+            "Secret are configured in Settings; the server log has the details.",
         )
 
 
@@ -56,10 +61,17 @@ def oauth_callback(
     """Handle OAuth redirect from Intuit. Exchanges code for tokens."""
     try:
         qbo_service.handle_callback(db, code, state, realmId)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except Exception as e:
-        raise HTTPException(500, f"OAuth callback failed: {str(e)}")
+    except ValueError:
+        # Provider/library ValueErrors can contain credentials too.
+        logger.exception("QBO OAuth callback rejected")
+        raise HTTPException(400, "OAuth callback rejected — reconnect and try again")
+    except Exception:
+        # Exception text can carry provider responses or paths; log it,
+        # tell the browser only that it failed (CodeQL stack-trace exposure).
+        logger.exception("QBO OAuth callback failed")
+        raise HTTPException(
+            500, "OAuth callback failed — the server log has the details"
+        )
 
     # Redirect to QBO page in SPA
     return RedirectResponse(url="/#/qbo")
@@ -116,9 +128,10 @@ def import_all(db: Session = Depends(get_db)):
         raise HTTPException(400, "Not connected to QuickBooks Online")
     try:
         result = qbo_import.import_all(db)
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise HTTPException(500, f"Import failed: {str(e)}")
+        logger.exception("QBO import failed")
+        raise HTTPException(500, "Import failed — the server log has the details")
     return result
 
 
@@ -138,9 +151,12 @@ def import_entity(entity: str, db: Session = Depends(get_db)):
     try:
         result = _IMPORT_ENTITY_MAP[entity](db)
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise HTTPException(500, f"Import of {entity} failed: {str(e)}")
+        logger.exception("QBO import of %s failed", entity)
+        raise HTTPException(
+            500, f"Import of {entity} failed — the server log has the details"
+        )
 
     return result
 
@@ -166,9 +182,10 @@ def export_all(db: Session = Depends(get_db)):
         raise HTTPException(400, "Not connected to QuickBooks Online")
     try:
         result = qbo_export.export_all(db)
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise HTTPException(500, f"Export failed: {str(e)}")
+        logger.exception("QBO export failed")
+        raise HTTPException(500, "Export failed — the server log has the details")
     return result
 
 
@@ -188,8 +205,11 @@ def export_entity(entity: str, db: Session = Depends(get_db)):
     try:
         result = _EXPORT_ENTITY_MAP[entity](db)
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise HTTPException(500, f"Export of {entity} failed: {str(e)}")
+        logger.exception("QBO export of %s failed", entity)
+        raise HTTPException(
+            500, f"Export of {entity} failed — the server log has the details"
+        )
 
     return result

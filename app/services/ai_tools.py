@@ -319,8 +319,8 @@ def get_pl_summary(
     total_expense = sum(Decimal(a.balance or 0) for a in expense)
     total_cogs = sum(Decimal(a.balance or 0) for a in cogs)
 
-    # Income is typically negative in the GL (credit balance), so flip it
-    total_income = abs(total_income)
+    # Account.balance uses each account's normal balance convention: income
+    # credits are already positive. Negative income must stay negative.
     net = total_income - total_expense - total_cogs
 
     return {
@@ -380,15 +380,10 @@ def get_tax_summary(
     total_tax_collected = sum(Decimal(i.tax_amount or 0) for i in invoices)
 
     # Group expenses by account
-    expenses_by_account = {}
-    bill_lines = db.query(BillLine).join(BillLine.bill).join(BillLine.account)
-    for bl in bill_lines:
-        if bl.account:
-            key = f"{bl.account.account_number or ''} {bl.account.name}"
-            expenses_by_account[key] = _to_float(
-                (Decimal(expenses_by_account.get(key, 0)) or 0)
-                + (Decimal(bl.amount or 0) or 0)
-            )
+    expenses_by_account = {
+        row["category"]: row["total_expenses"]
+        for row in get_expenses_by_category(db, start_date, end_date)["results"]
+    }
 
     return {
         "total_tax_collected": _to_float(total_tax_collected),

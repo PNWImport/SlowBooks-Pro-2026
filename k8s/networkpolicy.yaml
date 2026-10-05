@@ -1,0 +1,74 @@
+# Ingress isolation for the slowbooks namespace. Everything is denied by
+# default; each policy below opens exactly one path. Egress is not
+# restricted (DNS, SMTP, bank feeds and AI providers are outbound).
+#
+# The app accepts traffic only from the ingress controller's namespace. If
+# yours is not ingress-nginx, change the namespace name below.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: slowbooks
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: slowbooks-from-ingress
+  namespace: slowbooks
+spec:
+  podSelector:
+    matchLabels:
+      app: slowbooks
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 3001
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-from-app
+  namespace: slowbooks
+spec:
+  podSelector:
+    matchLabels:
+      app: slowbooks-postgres
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: slowbooks
+        - podSelector:
+            matchLabels:
+              app: slowbooks-migrate
+      ports:
+        - port: 5432
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-from-app
+  namespace: slowbooks
+spec:
+  podSelector:
+    matchLabels:
+      app: slowbooks-redis
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: slowbooks
+      ports:
+        - port: 6379
+          protocol: TCP

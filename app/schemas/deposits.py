@@ -1,9 +1,8 @@
 from datetime import date as dt_date
-from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 
 class PendingDepositResponse(BaseModel):
@@ -19,7 +18,7 @@ class PendingDepositResponse(BaseModel):
 class DepositCreate(StrictModel):
     deposit_to_account_id: int
     date: dt_date
-    total: Decimal
+    total: Money
     reference: Optional[str] = None
     class_id: Optional[int] = None
     job_id: Optional[int] = None

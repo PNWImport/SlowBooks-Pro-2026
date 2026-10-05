@@ -101,7 +101,7 @@ def validate_worker_url(url: str) -> str:
     try:
         parsed = urlparse(url)
     except Exception as exc:  # noqa: BLE001 — urlparse is famously lenient
-        raise ValueError(f"worker_url is not parseable: {exc}") from exc
+        raise ValueError("worker_url is not a parseable URL") from exc
 
     # --- Scheme: HTTPS only, no exceptions (MITM protection) --------------
     if parsed.scheme != "https":
@@ -195,7 +195,46 @@ def validate_worker_url(url: str) -> str:
 
 DEFAULT_TIMEOUT = 60.0  # seconds
 MAX_TOKENS = 1024
+# OpenAI's reasoning models spend hidden reasoning tokens out of the same
+# max_completion_tokens budget as the answer, so 1024 can run out before a
+# word of the answer is written. It is a ceiling, billed only as used.
+REASONING_MAX_TOKENS = 8192
 TEMPERATURE = 0.3  # low — we want grounded analysis, not creative writing
+
+_OPENAI_REASONING_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4")
+
+
+def _is_openai_reasoning_model(model: str) -> bool:
+    return (model or "").startswith(_OPENAI_REASONING_PREFIXES)
+
+
+# GPT-6 tool calling through Chat Completions: Sol and Luna accept tools only
+# at reasoning_effort "none"; Astra's tool calling requires the Responses API.
+_OPENAI_TOOLS_NEED_NO_REASONING = ("gpt-6-sol", "gpt-6-luna")
+_OPENAI_TOOLS_NEED_RESPONSES_API = ("gpt-6-astra",)
+
+# OpenAI aliases whose temperature support is undocumented; omitting it sends
+# the model's default rather than risking a refused request.
+_OPENAI_DEFAULT_TEMPERATURE_ALIASES = ("chat-latest",)
+
+# Claude 4.7 and later refuse a non-default temperature with a 400.
+_CLAUDE_VERSION_RE = re.compile(r"^claude-(?:[a-z]+-)?(\d+)(?:-(\d{1,2}))?(?:-|$)")
+
+
+def _claude_accepts_temperature(model: str) -> bool:
+    match = _CLAUDE_VERSION_RE.match(model or "")
+    if not match:
+        return True
+    version = (int(match.group(1)), int(match.group(2) or 0))
+    return version < (4, 7)
+
+
+def _ran_out_of_tokens(body: Dict[str, Any]) -> bool:
+    """True when an OpenAI-style reply stopped at the token limit."""
+    try:
+        return body["choices"][0].get("finish_reason") == "length"
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +270,7 @@ PROVIDERS: Dict[str, ProviderSpec] = {
         docs_url="https://console.x.ai/",
         free_tier_hint="API key required — check xAI Console for current pricing and limits",
         # https://docs.x.ai/developers/models
-        model_choices=("grok-4.6",),
+        model_choices=("grok-4.6", "grok-4.7"),
     ),
     "groq": ProviderSpec(
         key="groq",
@@ -292,6 +331,8 @@ PROVIDERS: Dict[str, ProviderSpec] = {
         free_tier_hint="API key required — check Anthropic Console for current access",
         model_choices=(
             "claude-sonnet-5",
+            "claude-opus-5-5",
+            "claude-fable-5-1",
             "claude-opus-5",
             "claude-fable-5",
             "claude-sonnet-4-6",
@@ -307,7 +348,14 @@ PROVIDERS: Dict[str, ProviderSpec] = {
         free_tier_hint="API key and API billing account required",
         # Current general-purpose Chat Completions models. Custom… supports
         # account-specific snapshots and future IDs without an app release.
-        model_choices=("gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"),
+        model_choices=(
+            "gpt-5.6-terra",
+            "gpt-5.6-sol",
+            "gpt-5.6-luna",
+            "gpt-6-sol",
+            "gpt-6-luna",
+            "chat-latest",
+        ),
     ),
     "gemini": ProviderSpec(
         key="gemini",
@@ -503,21 +551,28 @@ def _openai_style_request(
     user: str,
     *,
     token_parameter: str = "max_tokens",
-    include_temperature: bool = True,
+    openai_native: bool = False,
 ) -> Dict[str, Any]:
     """Build an OpenAI-compatible chat-completions request.
 
     Shared by OpenAI, Grok, Groq, and Cloudflare (all OpenAI-compat endpoints).
     """
+    reasoning = openai_native and _is_openai_reasoning_model(model)
     body = {
         "model": model,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        token_parameter: MAX_TOKENS,
+        "max_completion_tokens" if openai_native else token_parameter: (
+            REASONING_MAX_TOKENS if reasoning else MAX_TOKENS
+        ),
     }
-    if include_temperature:
+    # Reasoning models can reject temperature; omitting it uses the model's
+    # default and keeps the request valid if its reasoning effort changes.
+    if not reasoning and not (
+        openai_native and model in _OPENAI_DEFAULT_TEMPERATURE_ALIASES
+    ):
         body["temperature"] = TEMPERATURE
     return {
         "method": "POST",
@@ -626,8 +681,7 @@ def build_request(
             model,
             system,
             user,
-            token_parameter="max_completion_tokens",
-            include_temperature=False,
+            openai_native=True,
         )
 
     if provider_key == "cloudflare":
@@ -673,6 +727,14 @@ def build_request(
         return _openai_style_request(safe_url, api_key, model, system, user)
 
     if provider_key == "anthropic":
+        body = {
+            "model": model,
+            "max_tokens": MAX_TOKENS,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        }
+        if _claude_accepts_temperature(model):
+            body["temperature"] = TEMPERATURE
         return {
             "method": "POST",
             "url": "https://api.anthropic.com/v1/messages",
@@ -681,13 +743,7 @@ def build_request(
                 "anthropic-version": "2023-06-01",
                 "Content-Type": "application/json",
             },
-            "json": {
-                "model": model,
-                "max_tokens": MAX_TOKENS,
-                "temperature": TEMPERATURE,
-                "system": system,
-                "messages": [{"role": "user", "content": user}],
-            },
+            "json": body,
         }
 
     if provider_key == "gemini":
@@ -728,6 +784,8 @@ def parse_response(provider_key: str, body: Dict[str, Any]) -> str:
     Returns an empty string on parse failure — the caller decides
     whether to treat that as an error.
     """
+    if not isinstance(body, dict):
+        return ""
     if provider_key in (
         "grok",
         "groq",
@@ -737,7 +795,8 @@ def parse_response(provider_key: str, body: Dict[str, Any]) -> str:
         "custom",
     ):
         try:
-            return body["choices"][0]["message"]["content"] or ""
+            text = body["choices"][0]["message"]["content"]
+            return text if isinstance(text, str) else ""
         except (KeyError, IndexError, TypeError):
             return ""
 
@@ -747,7 +806,8 @@ def parse_response(provider_key: str, body: Dict[str, Any]) -> str:
             blocks = body.get("content") or []
             for block in blocks:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    return block.get("text") or ""
+                    text = block.get("text")
+                    return text if isinstance(text, str) else ""
             return ""
         except (KeyError, TypeError):
             return ""
@@ -927,6 +987,11 @@ def call_provider(
         raise AIProviderError(f"{provider_key}: non-JSON response") from e
 
     text = parse_response(provider_key, body)
+    if not text and _ran_out_of_tokens(body):
+        raise AIProviderError(
+            f"{provider_key}: the model reached its output limit before writing an "
+            "answer. Try again, or pick a smaller or non-reasoning model."
+        )
     if not text:
         raise AIProviderError(f"{provider_key}: empty response (body shape unexpected)")
     return text
@@ -1017,6 +1082,13 @@ def call_with_tools(
         raise ValueError(f"Unknown provider: {provider_key}")
 
     wire_format = spec.wire_format
+    if provider_key == "openai" and (model or "").startswith(
+        _OPENAI_TOOLS_NEED_RESPONSES_API
+    ):
+        raise AIProviderError(
+            f"openai: {model} answers tool-based questions only through the "
+            "Responses API; choose gpt-6-sol or gpt-6-luna for Ask SlowBooks"
+        )
     messages = [{"role": "user", "content": user_question}]
     gemini_contents = [{"role": "user", "parts": [{"text": user_question}]}]
     tool_calls_made = []
@@ -1050,6 +1122,10 @@ def call_with_tools(
                 }
                 for tool in tools.values()
             ]
+            if provider_key == "openai" and (model or "").startswith(
+                _OPENAI_TOOLS_NEED_NO_REASONING
+            ):
+                req["json"]["reasoning_effort"] = "none"
 
         elif wire_format == "anthropic":
             # Anthropic format: tools at top level
@@ -1268,6 +1344,8 @@ def _extract_tool_calls(wire_format: str, body: Dict[str, Any]) -> list:
 
     Returns normalized calls, including provider call IDs where applicable.
     """
+    if not isinstance(body, dict):
+        return []
     if wire_format in ("grok", "groq", "openai", "cloudflare"):
         # OpenAI format: choices[0].message.tool_calls
         try:
@@ -1284,7 +1362,7 @@ def _extract_tool_calls(wire_format: str, body: Dict[str, Any]) -> list:
                 }
                 for tc in message.get("tool_calls", [])
             ]
-        except (KeyError, IndexError, TypeError):
+        except (AttributeError, KeyError, IndexError, TypeError):
             return []
 
     elif wire_format == "anthropic":
@@ -1317,7 +1395,7 @@ def _extract_tool_calls(wire_format: str, body: Dict[str, Any]) -> list:
                 for p in parts
                 if isinstance(p, dict) and "functionCall" in p
             ]
-        except (KeyError, IndexError, TypeError):
+        except (AttributeError, KeyError, IndexError, TypeError):
             return []
 
     return []

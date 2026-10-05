@@ -10,13 +10,24 @@ Every provider has curated model choices plus **Custom…**. A manual model ID i
 stored and sent unchanged, so vendor renames do not require a Slowbooks update.
 The generic Custom provider requires a non-empty model ID.
 
-Bundled choices were reviewed September 7, 2026 against the official
+Bundled choices were reviewed September 26, 2026 against the official
 [xAI](https://docs.x.ai/developers/models),
 [Groq](https://console.groq.com/docs/models),
 [Cloudflare](https://developers.cloudflare.com/workers-ai/models/),
 [Anthropic](https://platform.claude.com/docs/en/about-claude/model-deprecations),
 [OpenAI](https://developers.openai.com/api/docs/models/gpt), and
 [Gemini](https://ai.google.dev/gemini-api/docs/models) catalogues.
+
+Request shape per model: OpenAI's reasoning models (`gpt-5*`, `gpt-6*`, o-series)
+get `max_completion_tokens` with an 8,192 ceiling and no temperature; the
+`chat-latest` alias gets its default temperature. Claude 4.7 and later
+(including every Claude 5 model) refuse a non-default temperature, so none is
+sent; older Claude models keep 0.3. GPT-6 Sol and Luna are bundled: Ask
+SlowBooks (tool calling) sends them `reasoning_effort: "none"`, the only setting
+at which Chat Completions allows their tools, while plain analysis keeps the
+model's default reasoning. GPT-6 Astra is not bundled: its tool calling requires
+the Responses API, so Ask SlowBooks refuses it with that reason; it can still be
+entered under **Custom…** for plain analysis.
 
 - Enter the provider's model ID and API key, plus its public HTTPS base URL
   (for example, `https://api.example.com/v1`).

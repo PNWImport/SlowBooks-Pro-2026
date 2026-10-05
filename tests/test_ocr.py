@@ -325,6 +325,10 @@ def test_scan_pdf_multi_page(client, monkeypatch, tmp_path):
 
 
 def test_scan_pdf_without_poppler_400(client, monkeypatch, tmp_path):
+    from app.services import pdf_raster
+
+    monkeypatch.setattr(pdf_raster, "windows_available", lambda: False)
+    monkeypatch.setattr(pdf_raster, "macos_available", lambda: False)
     monkeypatch.setattr(ocr_service, "INTAKE_DIR", tmp_path)
     monkeypatch.setattr(ocr_service, "tesseract_available", lambda: True)
     # The engine reports unavailable on missing language data too, and the
@@ -338,7 +342,7 @@ def test_scan_pdf_without_poppler_400(client, monkeypatch, tmp_path):
         files={"file": ("receipt.pdf", b"%PDF-1.4 fake", "application/pdf")},
     )
     assert r.status_code == 400
-    assert "poppler-utils" in r.json()["detail"]
+    assert "PDF scanning" in r.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

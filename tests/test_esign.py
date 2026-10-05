@@ -104,6 +104,13 @@ def test_portal_signing_seals_audit(client, db_session):
     )
     assert r.status_code == 400
 
+    # Consent alone is insufficient: a non-blank typed signature is required.
+    r = client.post(
+        f"/portal/documents/{env['id']}/sign",
+        data={"signer_name": "   ", "consent": "yes"},
+    )
+    assert r.status_code == 400
+
     r = client.post(
         f"/portal/documents/{env['id']}/sign",
         data={"signer_name": "Pat Worker", "consent": "yes"},
@@ -204,7 +211,7 @@ def test_tampered_body_detected(client, db_session):
     # Tamper with the stored body after signing.
     from app.models.esign import SignatureEnvelope
 
-    row = db_session.query(SignatureEnvelope).get(env["id"])
+    row = db_session.get(SignatureEnvelope, env["id"])
     row.body = row.body + " (and agrees to a 90-hour week)"
     db_session.commit()
 
@@ -218,7 +225,7 @@ def test_tamper_before_signing_blocks_signature(client, db_session):
     env = _create_envelope(client, emp["id"])
     from app.models.esign import SignatureEnvelope
 
-    row = db_session.query(SignatureEnvelope).get(env["id"])
+    row = db_session.get(SignatureEnvelope, env["id"])
     row.body = "totally different text"
     db_session.commit()
 

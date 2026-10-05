@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Query
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func as sqlfunc
 
@@ -17,7 +17,7 @@ from app.routes.reports._router import router
 
 class SalesTaxPaymentRequest(StrictModel):
     date: Optional[dt_date] = None
-    amount: Decimal
+    amount: Money
     pay_from_account_id: int
     check_number: Optional[str] = ""
     reference: Optional[str] = None
@@ -143,6 +143,7 @@ def ap_aging(as_of_date: dt_date = Query(default=None), db: Session = Depends(ge
     try:
         from app.models.bills import Bill, BillStatus
         from app.models.contacts import Vendor
+        from app.models.vendor_credits import VendorCredit, VendorCreditStatus
 
         bills = (
             db.query(Bill)
@@ -165,6 +166,7 @@ def ap_aging(as_of_date: dt_date = Query(default=None), db: Session = Depends(ge
                     "over_60": Decimal(0),
                     "over_90": Decimal(0),
                     "total": Decimal(0),
+                    "unapplied_credits": Decimal(0),
                 }
 
             days = (as_of_date - bill.due_date).days if bill.due_date else 0
@@ -179,20 +181,49 @@ def ap_aging(as_of_date: dt_date = Query(default=None), db: Session = Depends(ge
                 aging[vid]["over_90"] += bal
             aging[vid]["total"] += bal
 
+        credits = (
+            db.query(VendorCredit)
+            .filter(VendorCredit.status != VendorCreditStatus.VOID)
+            .filter(VendorCredit.date <= as_of_date)
+            .filter(VendorCredit.balance_remaining > 0)
+            .all()
+        )
+        for credit in credits:
+            vid = credit.vendor_id
+            if vid not in aging:
+                aging[vid] = {
+                    "vendor_name": vendor_names.get(vid, "Unknown"),
+                    "vendor_id": vid,
+                    "current": Decimal(0),
+                    "over_30": Decimal(0),
+                    "over_60": Decimal(0),
+                    "over_90": Decimal(0),
+                    "total": Decimal(0),
+                    "unapplied_credits": Decimal(0),
+                }
+            amount = Decimal(str(credit.balance_remaining))
+            aging[vid]["unapplied_credits"] += amount
+            aging[vid]["current"] -= amount
+            aging[vid]["total"] -= amount
+
+        columns = (
+            "current",
+            "over_30",
+            "over_60",
+            "over_90",
+            "total",
+            "unapplied_credits",
+        )
         items = list(aging.values())
-        totals = {
-            "vendor_name": "TOTAL",
-            "vendor_id": 0,
-            "current": sum(i["current"] for i in items),
-            "over_30": sum(i["over_30"] for i in items),
-            "over_60": sum(i["over_60"] for i in items),
-            "over_90": sum(i["over_90"] for i in items),
-            "total": sum(i["total"] for i in items),
-        }
         for item in items:
-            for k in ("current", "over_30", "over_60", "over_90", "total"):
+            item.setdefault("unapplied_credits", Decimal(0))
+        totals = {"vendor_name": "TOTAL", "vendor_id": 0}
+        for key in columns:
+            totals[key] = sum(item[key] for item in items)
+        for item in items:
+            for k in columns:
                 item[k] = float(item[k])
-        for k in ("current", "over_30", "over_60", "over_90", "total"):
+        for k in columns:
             totals[k] = float(totals[k])
 
         return {"as_of_date": as_of_date.isoformat(), "items": items, "totals": totals}
@@ -208,6 +239,7 @@ def ap_aging(as_of_date: dt_date = Query(default=None), db: Session = Depends(ge
                 "over_60": 0,
                 "over_90": 0,
                 "total": 0,
+                "unapplied_credits": 0,
             },
         }
 

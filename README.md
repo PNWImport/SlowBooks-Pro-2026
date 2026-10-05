@@ -51,7 +51,34 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
-**2.9.4 — Unreleased branch updates** (not yet in the installer downloads):
+**v2.17 — Your ledger, in a spreadsheet.** Trial Balance and General Ledger
+save as a CSV and a printable PDF, and Profit & Loss and Balance Sheet gain
+the CSV — amounts as plain numbers, ready to sum. The general ledger carries
+a balance brought forward, a running balance and a period total that ties to
+the trial balance. Bank feeds accept a setup token from any SimpleFIN
+provider. Asked for by @cnbarry1 (#179, #181). 2.17.1 makes AI analysis
+work again with OpenAI's current models (#185, @Sciumo); 2.17.2 stops an
+invoice edit from stripping its job costing (#187, @Bit-Sage); 2.17.3 makes
+Pay Bills pay each vendor separately and keeps every payment on its own
+customer's or vendor's documents (#189, @Bit-Sage).
+
+**v2.16 — The year at a glance.** Two new overview cards, both opt-in under
+Customize: **P&L: Year to Date** with cumulative net by month, and a
+**Balance Sheet Trend** over the last twelve month-ends that balances at
+every point and agrees with the report. Contributed by @jarvis4openclaw
+(#166). The chart of accounts import offers a CSV template. 2.16.1 fixes
+Wave's full export importing no journals after a passing dry run (#169);
+2.16.2 stops charging tax to non-taxable customers, widens every money
+column for large-denomination currencies (#173), and puts the estimate and
+job-cost forms right (#174, #176); 2.16.3 lets a fresh Docker image start again.
+
+**v2.15 — Your chart, from your file.** Import a chart of accounts from a
+CSV in the export's columns, any spreadsheet with Number / Name / Type, or
+hledger's account list. A dry run shows every row's fate first; existing and
+control accounts are renamed in place, never duplicated. Asked for by
+@tresero (#139, #161).
+
+**2.18.0 — Unreleased branch updates** (not yet in the installer downloads):
 
 - **Payroll and HR:** expanded contractor runs, schedules, locations, retro pay,
   benefits and workers' comp; employee portal time submission, corrected deposit
@@ -66,11 +93,13 @@ Details, known gaps and how to report a barrier:
   synthetic 50,000-invoice/150,000-line workload completed 192 page reads without
   errors. This is a bounded test, not enterprise capacity certification.
 
-**Local validation — September 8, 2026:** 3,232 tests passed, 10 skipped,
-82.35% line coverage, with unchanged source fingerprints. All 42 OCR tests
-passed separately in the production image; formatting, lint, frontend checks,
-and Docker/API smoke checks passed. See the
-[validation evidence and limitations](docs/final-validation-2026-09-07.md).
+**Local validation — September 26, 2026:** 4,959 Linux tests (SQLite plus a
+PostgreSQL 17 migration database), none failing after stale migration-head
+pins were updated; 18 documented skips; all 32 frontend tests passed. A copy of
+an existing PostgreSQL company upgraded to 2.18.0 and passed a 28-step live
+HTTP walkthrough; browser acceptance remains open. Detailed evidence and
+remaining release gates are recorded in [current validation](docs/validation.md);
+this is not release certification.
 
 **Still required before public release:** accessibility remediation and
 keyboard/screen-reader testing, deployment-specific capacity acceptance,
@@ -134,7 +163,7 @@ a native `.app` in a DMG, no Docker or Python required.
 [SimpleFIN](https://www.simplefin.org/) — you hold the bank credential,
 no middleman server, dedup + bank rules on arrival
 ([docs/setup-bank-feeds.md](docs/setup-bank-feeds.md)). Every install
-also serves a self-documenting local REST API (483 operations in v2.9); point
+also serves a self-documenting local REST API (574 operations in this branch); point
 Claude Code or any agentic CLI at it —
 [slowbookspro.com/ai](https://www.slowbookspro.com/ai/) has the
 paste-prompt.
@@ -290,6 +319,7 @@ Maintainers: [validation results and remaining release checks](docs/validation.m
 | [docs/payroll-hr-module.md](docs/payroll-hr-module.md) | Payroll / HR module reference |
 | [docs/release-checklist.md](docs/release-checklist.md) | Production deployment checklist |
 | [docs/tls-proxy-setup.md](docs/tls-proxy-setup.md) | Real certs in front of Slowbooks (Caddy, nginx, Traefik) |
+| [docs/cloud-hosting.md](docs/cloud-hosting.md) | Your own books on a cloud server: VPS, Docker, Caddy, backups off the box, what it does and does not give you |
 | [docs/security-hardening.md](docs/security-hardening.md) | Security pass — what changed, why, how it's tested |
 | [docs/hipaa-compliance.md](docs/hipaa-compliance.md) | HIPAA mapping — honest gap list included |
 | [docs/wiring-audit.md](docs/wiring-audit.md) | Frontend ↔ backend drift audit methodology |

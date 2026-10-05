@@ -15,7 +15,7 @@ internal hardening notes see
 | Backend | Python 3.13 + FastAPI (50 routers, 300+ routes) |
 | Database | PostgreSQL 17 / SQLite + SQLAlchemy 2.0 |
 | Migrations | Alembic |
-| Frontend | Vanilla HTML/CSS/JS (no framework) + self-hosted Chart.js 4.4.6 for analytics |
+| Frontend | Vanilla HTML/CSS/JS (no framework) + self-hosted Chart.js 4.5.1 for analytics |
 | PDF | WeasyPrint 60.2 + Jinja2 |
 | Bank Import | ofxparse (OFX/QFX) |
 | Payments | Stripe Checkout (hosted) |

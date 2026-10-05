@@ -47,6 +47,17 @@ def test_find_duplicates_sorts_highest_first():
     assert matches[0]["similarity"] >= matches[-1]["similarity"]
 
 
+def test_duplicate_helpers_handle_empty_names_and_thresholds():
+    class Row:
+        id = 1
+        name = "Completely Different"
+
+    assert normalize_name("") == ""
+    assert similarity("", "anything") == 0.0
+    assert find_duplicates("", [Row()]) == []
+    assert find_duplicates("Acme", [Row()], threshold=1.1) == []
+
+
 # -------- integration: customer + vendor routes --------
 
 

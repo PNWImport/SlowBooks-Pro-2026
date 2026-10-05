@@ -74,11 +74,26 @@ def invoice_doc_kind(inv, t: Terms) -> str:
     DonationReceipt / Pledge / Invoice for a nonprofit (a nonprofit still
     invoices program fees and rentals, so only a flagged pledge prints as
     one)."""
+    receipt = getattr(inv, "is_sales_receipt", False)
     if not t.is_nonprofit:
-        return "SalesReceipt" if inv.is_sales_receipt else "Invoice"
-    if inv.is_sales_receipt:
+        return "SalesReceipt" if receipt else "Invoice"
+    if receipt:
         return "DonationReceipt"
     return "Pledge" if getattr(inv, "is_pledge", False) else "Invoice"
+
+
+def document_label(inv, t: Terms) -> str:
+    """The document's name as a person says it — Invoice, Pledge, Sales
+    Receipt, Donation Receipt — from the same rule the printed page uses.
+    Everything a posting writes about the document (its ledger lines, the
+    void, the late fee, the payment-page line item) says this, so the
+    ledger, the covering email and the printed document agree. Never the
+    vocabulary swap: a nonprofit's program-fee invoice stays an Invoice
+    on all three."""
+    kind = invoice_doc_kind(inv, t)
+    return {"SalesReceipt": "Sales Receipt", "DonationReceipt": "Donation Receipt"}.get(
+        kind, kind
+    )
 
 
 def invoice_pdf_context(inv, company: dict) -> dict:
@@ -108,10 +123,19 @@ ACK_BODY = """<p>{{ donor.salutation or ('Dear ' ~ donor_name) }},</p>
 <p>{{ company.company_name }}</p>"""
 
 
+class NotAGift(ValueError):
+    """This document does not get an acknowledgment; `reason` says why, in
+    the user's words (a fixed phrase, never exception text)."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
 def gift_from_invoice(inv) -> dict:
     """A sales receipt is a gift; a pledge is not until it is paid."""
     if not inv.is_sales_receipt:
-        raise ValueError("Acknowledge the payment, not the pledge")
+        raise NotAGift("Acknowledge the payment, not the pledge")
     return {
         "kind": "invoice",
         "id": inv.id,
@@ -148,10 +172,10 @@ def payment_gift_amount(db, payment) -> Decimal:
 
 def gift_from_payment(db, payment) -> dict:
     if getattr(payment, "is_voided", False):
-        raise ValueError("This payment is void")
+        raise NotAGift("This payment is void")
     amount = payment_gift_amount(db, payment)
     if amount <= 0:
-        raise ValueError(
+        raise NotAGift(
             "This payment belongs to a donation receipt — acknowledge the receipt"
         )
     return {
@@ -170,7 +194,7 @@ def gift_from_payment(db, payment) -> dict:
 
 def gift_from_in_kind(gift) -> dict:
     if gift.status == "void":
-        raise ValueError("This in-kind gift is void")
+        raise NotAGift("This in-kind gift is void")
     return {
         "kind": "in-kind",
         "id": gift.id,
@@ -235,6 +259,8 @@ def render_acknowledgment(db, company: dict, customer, gift: dict) -> tuple[str,
     'donation_acknowledgment' (Settings -> Email Templates), falling back
     to the built-in text when the row has not been seeded. Rendered in the
     sandboxed environment, autoescaped."""
+    from app.services.settings_service import redact_secrets
+
     from jinja2.sandbox import SandboxedEnvironment
 
     from app.services.email_service import render_template_from_db
@@ -244,7 +270,8 @@ def render_acknowledgment(db, company: dict, customer, gift: dict) -> tuple[str,
         "donor": customer,
         "donor_name": customer.name,
         "customer_name": customer.name,
-        "company": company,
+        # GHSA-c3v4-f43f-4wqm — see settings_service.redact_secrets.
+        "company": redact_secrets(company),
         "gift": gift,
         "irs": gift_irs(company, gift),
     }

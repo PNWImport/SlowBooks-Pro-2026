@@ -103,6 +103,11 @@ def update_recurring(rec_id: int, data: RecurringUpdate, db: Session = Depends(g
     if not rec:
         raise HTTPException(status_code=404, detail="Recurring invoice not found")
 
+    if data.end_date is not None and data.end_date < rec.start_date:
+        raise HTTPException(
+            status_code=422, detail="end_date cannot be before start_date"
+        )
+
     for key, val in data.model_dump(exclude_unset=True, exclude={"lines"}).items():
         setattr(rec, key, val)
 

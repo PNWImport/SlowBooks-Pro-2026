@@ -12,6 +12,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
+  - networkpolicy.yaml
 
 # secret.example.yaml is deliberately NOT listed. Create the real Secret
 # out of band (see the kubectl command in that file) so a filled-in copy
@@ -19,4 +20,4 @@ resources:
 
 images:
   - name: slowbooks
-    newTag: latest
+    newTag: "2.18.0"

@@ -3,7 +3,12 @@ from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.schemas.common import StrictModel, TaxRateFloat, validate_non_negative_line
+from app.schemas.common import (
+    Money,
+    StrictModel,
+    TaxRateFloat,
+    validate_non_negative_line,
+)
 
 
 class BillLineCreate(StrictModel):
@@ -16,7 +21,7 @@ class BillLineCreate(StrictModel):
     is_billable: bool = False
     description: Optional[str] = None
     quantity: float = 1
-    rate: float = 0
+    rate: Money = Decimal("0")
     line_order: int = 0
 
     @model_validator(mode="after")
@@ -111,13 +116,13 @@ class BillResponse(BaseModel):
 
 class BillPaymentAllocationCreate(StrictModel):
     bill_id: int
-    amount: float
+    amount: Money
 
 
 class BillPaymentCreate(StrictModel):
     vendor_id: int
     date: dt_date
-    amount: float
+    amount: Money
     method: Optional[str] = None
     check_number: Optional[str] = None
     pay_from_account_id: Optional[int] = None

@@ -21,6 +21,7 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 - **Recurring Invoices** — Schedule automatic invoice generation (weekly/monthly/quarterly/yearly) with manual "Generate Now" or cron script
 - **Batch Payments** — Apply payments to multiple invoices across multiple customers in a single transaction
 - **Credit Memos** — Issue credits against customers, apply to invoices to reduce balance due. Proper reversing journal entries
+- **Vendor Credits** — Record supplier returns, short shipments, or overcharges against Accounts Payable, then apply the credit to that vendor's bills
 - **Quick Entry Mode** — Batch invoice entry for paper invoice backlog. Save & Next (Ctrl+Enter) with running log
 
 ![Invoices with IRS Pub 583 Mock Data](../screenshots/invoices.png)
@@ -35,6 +36,7 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 - **Manual Journal Entries** — Full CRUD for manual journal entries with dynamic line rows, running debit/credit totals, balance indicator, and void with reversing entries
 - **Auto Journal Entries** — Every invoice, payment, bill, and payroll run automatically creates balanced journal entries. Void creates reversing entries
 - **Chart of Accounts** — 39+ seeded accounts (Contractor template), 6 account types (asset, liability, equity, income, COGS, expense)
+- **Control accounts** — Posting resolves fifteen structural accounts by number. Their names may change, but their numbers/types cannot; missing required controls refuse posting with an actionable 409 instead of silently skipping the ledger. Ordinary unused seeded accounts may be deleted; controls and accounts referenced by transactions or other records remain protected. Inactive accounts can be shown and reactivated.
 - **Closing Date Enforcement** — Prevent modifications to transactions before a configurable closing date with optional password protection
 - **Audit Log** — Automatic logging of all create/update/delete operations with old/new value tracking via SQLAlchemy event hooks
 - **Account Balances** — Updated in real-time as transactions post
@@ -55,15 +57,18 @@ Tax calculations are approximate — verify with a tax professional. Full module
 - **Check Printing** — Generate check PDFs in standard 3-per-page format (stub/stub/check) with payee, amount in words, memo, and signature line
 - **Bank Reconciliation** — Full workflow: enter statement balance, toggle cleared items, validate difference = $0, complete
 - **OFX/QFX Import** — Import bank transactions from OFX/QFX files with FITID dedup, preview before import, auto-match by amount/date
+- **Bank CSV imports** — Bank of America detail, Chase checking/credit and PayPal exports enter the review queue. Bank of America summary/balance rows are excluded; actual rows retain their deposit/withdrawal signs and content-based deduplication. Rules suggest categories without posting. The import dialog shows progress and restores its button after failures.
 
 ## Reports & Tax
 - **QuickBooks-style period selector** — All reports support preset periods (This Month, This Quarter, This/Last Year, Year to Date, Custom Date) with live refresh
 - **Profit & Loss** — Income vs expenses for any date range
 - **Balance Sheet** — Assets, liabilities, and equity as of any date
+- **Trial Balance** — Every account's debit or credit balance for the period, with totals that must agree
+- **Save as spreadsheet / printable** — Profit & Loss, Balance Sheet, Trial Balance and General Ledger each save as a CSV (amounts as plain numbers, one row per line, ready for Excel or LibreOffice) and a PDF. The figures in the file are the figures on the screen
 - **A/R Aging** — Outstanding receivables grouped by customer with 30/60/90 day buckets
 - **A/P Aging** — Outstanding payables grouped by vendor with 30/60/90 day buckets
 - **Sales Tax** — Per-line taxable flag (defaults from the item and the customer) so untaxed labor and a taxed part share one invoice; the rate lives on the document. Sales Tax report shows the taxable base and tax collected. Pay Sales Tax feature records payments to government (DR Sales Tax Payable, CR Bank)
-- **General Ledger** — All journal entries grouped by account with debit/credit totals
+- **General Ledger** — Every posted line grouped by account: balance brought forward, running balance in the account's natural sign (a payable or income reads positive), the source document type, and a period total that ties to the Trial Balance
 - **Income by Customer** — Sales totals per customer with invoice counts
 - **Customer Statements** — PDF statement with invoice/payment history and running balance
 - **Schedule C (Tax)** — Generate Schedule C data from P&L with configurable account-to-tax-line mappings. Export as CSV
@@ -142,7 +147,7 @@ An optional LLM layer uses the analytics snapshot to produce **3 observations / 
 
 | Provider | Wire format | Bundled default model | Configuration |
 |---|---|---|---|
-| **xAI Grok** | OpenAI-compat | `grok-4.6` | API key |
+| **xAI Grok** | OpenAI-compat | `grok-4.6` (also `grok-4.7`) | API key |
 | **Groq (LPU Cloud)** | OpenAI-compat | `openai/gpt-oss-120b` | API key |
 | **Cloudflare Workers AI** | OpenAI-compat | `@cf/openai/gpt-oss-120b` | API token and account ID |
 | **Cloudflare Worker Gateway** (self-hosted) | OpenAI-compat | `@cf/openai/gpt-oss-120b` | Worker URL and shared secret |
@@ -267,7 +272,8 @@ curl http://localhost:3001/api/analytics/export.pdf > snapshot.pdf
 
 ## Communication & Export
 - **Invoice Email** — Send invoices as PDF attachments via SMTP with configurable email settings. Includes "Pay Online" button when Stripe is enabled
-- **CSV Import/Export** — Import/export customers, vendors, items, invoices, and chart of accounts as CSV
+- **CSV Import/Export** — Import customers, vendors, items and the chart of accounts from CSV; export those plus invoices, bills, sales receipts, deposits, classes and jobs
+- **Bring your own chart** (#139 / #161) — Chart of Accounts → **Import…** takes a CSV in the export's own columns (Number, Name, Type, optional Parent, Description, Active), any spreadsheet whose header row uses those words, or **hledger's** account list: the output of `hledger accounts`, `hledger accounts --types` (the `; type:` tag wins), or `hledger balance -O csv` (the `total` row is ignored, balances are not imported). The first post is a dry run that shows every row's fate — create, update, skip, deactivate, keep, error — with a reason, and writes nothing; the second post applies exactly that plan. Existing accounts are matched by number, then by name; a file that names a control account (Receivable, Payable, Checking, Sales tax payable, Inventory, Undeposited funds, Retained earnings, Cost of goods sold, or a credit card under liabilities) **renames that control account** rather than creating a twin, so the operator's chart replaces ours and every document still finds its posting account. Rows without a number get the next free one in their type's range (1000s assets … 6000–9999 expenses). hledger paths keep their hierarchy: `assets:cash:petty cash` becomes *Petty cash* under a *Cash* parent (created if the file never lists it), with the full path kept as the description; the top segment (assets, liabilities, equity, revenues, expenses) is the category, not an account; `assets:bank:*` and `; type: C` accounts are marked as bank accounts. A parent segment that names a control account **is** that account: `assets:inventory` is 1300 Inventory and its children hang from it; a `liabilities:credit card` folder is 2100 and the cards inside it are its children, each marked as a card. Re-importing the same file changes nothing. **Replace the seeded chart** additionally deactivates every account the file does not name that has never been posted to — control accounts and accounts with history are always kept. Also on the CSV Import/Export page as an entity type. `POST /api/csv/import/accounts?dry_run=1|0&replace=0|1`
 - **Print Preview** — Browser print dialog for invoices and estimates via dedicated HTML preview endpoints. Native OS print dialog with "Save as PDF" option
 - **Print-Optimized PDF** — Enhanced invoice PDF template with company logo support
 - **IIF Import/Export** — Full QuickBooks 2003 Pro interoperability (see below)
@@ -309,7 +315,7 @@ Canonical list of security measures lives in [SECURITY.md](../SECURITY.md); engi
 
 ## UI
 - Authentic QB2003 "Default Blue" skin with navy/gold color palette (+ dark mode)
-- Splash screen with build info and decompilation provenance
+- Splash screen with build info and what's new
 - Windows XP-era toolbar, sidebar navigator with icons, status bar
 - Keyboard shortcuts: `Alt+N` (new invoice), `Alt+P` (payment), `Alt+Q` (quick entry), `Alt+H` (home), `Alt+D` (dark mode), `Ctrl+S` (save modal form), `Ctrl+K` (search), `Escape` (close modal)
 - No frameworks — vanilla HTML/CSS/JS single-page app
@@ -424,9 +430,9 @@ All endpoints under `/api/`. Swagger docs at `/docs`. 300+ routes across 50 rout
 ### Authentication
 | Endpoint | Methods | Description |
 |----------|---------|-------------|
-| `/api/auth/status` | GET | Auth state: `{setup_needed, authenticated}` |
+| `/api/auth/status` | GET | Auth state includes `{setup_needed, authenticated, multi_user}` |
 | `/api/auth/setup` | POST | First-run password setup (min 8 chars) |
-| `/api/auth/login` | POST | Login with password |
+| `/api/auth/login` | POST | Login with password (`username` too once there is more than one user) |
 | `/api/auth/logout` | POST | Clear session |
 
 ### Core (Original)
@@ -437,7 +443,7 @@ All endpoints under `/api/`. Swagger docs at `/docs`. 300+ routes across 50 rout
 | `/api/settings` | GET, PUT | Company settings |
 | `/api/settings/test-email` | POST | Send SMTP test email |
 | `/api/search` | GET | Unified search across all entities |
-| `/api/accounts` | GET, POST, PUT, DELETE | Chart of Accounts CRUD |
+| `/api/accounts` | GET, POST, PUT, DELETE | Chart CRUD; `?bank=1` filters bank/card accounts. Control numbers/types are protected; deletion checks controls and references, not merely seeded status. |
 | `/api/customers` | GET, POST, PUT, DELETE | Customer management |
 | `/api/vendors` | GET, POST, PUT, DELETE | Vendor management |
 | `/api/items` | GET, POST, PUT, DELETE | Items & services |
@@ -467,6 +473,9 @@ All endpoints under `/api/`. Swagger docs at `/docs`. 300+ routes across 50 rout
 | `/api/bill-payments` | POST | Pay vendor bills with allocation |
 | `/api/credit-memos` | GET, POST | Credit memo CRUD |
 | `/api/credit-memos/{id}/apply` | POST | Apply credit to invoices |
+| `/api/vendor-credits` | GET, POST | Vendor credit list and create |
+| `/api/vendor-credits/{id}` | GET | One vendor credit with its lines |
+| `/api/vendor-credits/{id}/apply` | POST | Apply a vendor credit to a bill |
 
 ### Productivity
 | Endpoint | Methods | Description |
@@ -509,13 +518,14 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 ### Reports & Tax
 | Endpoint | Methods | Description |
 |----------|---------|-------------|
-| `/api/reports/profit-loss` | GET | P&L report |
-| `/api/reports/balance-sheet` | GET | Balance sheet |
+| `/api/reports/profit-loss` (+`/pdf`, `/csv`) | GET | P&L report |
+| `/api/reports/balance-sheet` (+`/pdf`, `/csv`) | GET | Balance sheet |
+| `/api/reports/trial-balance` (+`/pdf`, `/csv`) | GET | Trial balance, debit and credit columns with totals |
 | `/api/reports/ar-aging` | GET | Accounts receivable aging |
 | `/api/reports/ap-aging` | GET | Accounts payable aging |
 | `/api/reports/sales-tax` | GET | Sales tax collected |
 | `/api/reports/sales-tax/pay` | POST | Record sales tax payment to government |
-| `/api/reports/general-ledger` | GET | All journal entries by account |
+| `/api/reports/general-ledger` (+`/pdf`, `/csv`) | GET | Every posted line by account: balance brought forward, running balance, source, period total |
 | `/api/reports/income-by-customer` | GET | Sales totals per customer |
 | `/api/tax/schedule-c` | GET | Schedule C data from P&L |
 | `/api/tax/schedule-c/csv` | GET | Schedule C CSV export |
@@ -533,6 +543,7 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 | `/api/donors/{id}/giving-statement/pdf`, `/api/donors/giving-statements/{pdf,batch-email}` | GET, POST | Year-end giving statements |
 | `/api/invoices/{id}/write-off` | POST | Write an open balance off to Bad Debt Expense |
 | `/api/credit-memos/{id}/void` | POST | Void a credit memo (unwinds applications) |
+| `/api/vendor-credits/{id}/void` | POST | Void a vendor credit and unwind applications |
 
 ### Import/Export
 | Endpoint | Methods | Description |
@@ -634,8 +645,10 @@ All read endpoints accept `?period=month|quarter|year` (or `mtd/qtd/ytd`), or ex
   seeded from estimates, drill-down job page (budget / committed / actual /
   projected / variance), Job Budget vs Actual report.
 - Customizable overview: show / hide / reorder dashboard cards per user, a
-  catalog of cards (P&L this month vs last, cash position + 30-day forecast,
-  open POs, receipts to review, jobs budget vs actual), reset to standard.
+  catalog of cards (P&L this month vs last, P&L year to date with cumulative
+  net by month, balance sheet trend over 12 month-ends, cash position + 30-day
+  forecast, open POs, receipts to review, jobs budget vs actual), reset to
+  standard.
 - Export parity: IIF export covers classes (list + CLASS column), Customer:Job
   rows, bills, deposits and sales receipts; CSV export adds bills, deposits,
   sales receipts, classes and jobs. Full export re-imports cleanly.

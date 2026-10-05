@@ -19,7 +19,6 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.accounts import Account, AccountType
-from app.models.banking import BankAccount
 from app.models.bills import Bill, BillStatus
 from app.models.contacts import Customer
 from app.models.invoices import Invoice, InvoiceStatus
@@ -109,13 +108,35 @@ def payables(db: Session) -> dict:
     return {"total": _f(total), "overdue_count": int(overdue or 0)}
 
 
+def _bank_ledger_rows(db: Session) -> list[dict]:
+    """Bank and card accounts with their ledger balances (issue #114: the
+    register's stored balance is gone; the ledger is the number)."""
+    from app.services.bank_register import gl_balances
+
+    accounts = (
+        db.query(Account)
+        .filter(Account.bank_kind.isnot(None), Account.is_active)
+        .order_by(Account.account_number)
+        .all()
+    )
+    balances = gl_balances(db, [a.id for a in accounts])
+    return [
+        {
+            "id": a.id,
+            "name": a.name,
+            "kind": a.bank_kind,
+            "balance": _f(balances.get(a.id, 0)),
+        }
+        for a in accounts
+    ]
+
+
 def bank_balances(db: Session) -> dict:
-    rows = db.query(BankAccount).filter(BankAccount.is_active).all()
+    rows = _bank_ledger_rows(db)
+    # cards are owed, not cash: the total is the bank side only
     return {
-        "accounts": [
-            {"id": b.id, "name": b.name, "balance": _f(b.balance)} for b in rows
-        ],
-        "total": sum(_f(b.balance) for b in rows),
+        "accounts": rows,
+        "total": sum(r["balance"] for r in rows if r["kind"] == "bank"),
     }
 
 
@@ -255,15 +276,107 @@ def pnl_month(db: Session) -> dict:
     }
 
 
+def pnl_ytd(db: Session) -> dict:
+    """Year-to-date income, expenses and net, plus the cumulative net
+    by month within the year (current month is month-to-date)."""
+    today = date.today()
+    totals = _pl_for(db, date(today.year, 1, 1), today)
+
+    months = []
+    running = 0.0
+    for m in range(1, today.month + 1):
+        start, end = _month_bounds(today.year, m)
+        if end > today:
+            end = today
+        net = _pl_for(db, start, end)["net"]
+        running += net
+        months.append(
+            {"month": start.strftime("%b"), "net": net, "cumulative": running}
+        )
+    return {
+        "year": today.year,
+        "income": totals["income"],
+        "expenses": totals["expenses"],
+        "net": totals["net"],
+        "months": months,
+    }
+
+
+def _totals_by_type_to(db: Session, date_end: date) -> dict:
+    """Cumulative debit/credit totals per account type, from inception
+    through date_end. One grouped query, at most six rows."""
+    rows = (
+        db.query(
+            Account.account_type,
+            func.coalesce(func.sum(TransactionLine.debit), 0),
+            func.coalesce(func.sum(TransactionLine.credit), 0),
+        )
+        .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+        .join(Account, Account.id == TransactionLine.account_id)
+        .filter(Transaction.date <= date_end)
+        .group_by(Account.account_type)
+        .all()
+    )
+    return {atype: (Decimal(str(dr)), Decimal(str(cr))) for atype, dr, cr in rows}
+
+
+def balance_sheet_trend(db: Session) -> dict:
+    """Assets, liabilities and equity at each of the last 12 month-ends.
+
+    Mirrors /api/reports/balance-sheet semantics: balance-sheet accounts
+    carry their natural-balance cumulative total, and current net income
+    (income − cogs − expenses, which this app never closes into equity)
+    folds into equity so the series actually balances.
+    """
+    today = date.today()
+    ends = []
+    year, month = today.year, today.month
+    for _ in range(12):
+        # the current month stops at today: the card says month-to-date, and a
+        # post-dated entry later this month is not a balance anyone holds yet
+        ends.append(min(_month_bounds(year, month)[1], today))
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+    ends.reverse()  # oldest → newest; the last is the current month-to-date
+
+    months = []
+    for e in ends:
+        by_type = _totals_by_type_to(db, e)
+
+        def _net(acct_type: AccountType, debit_normal: bool) -> Decimal:
+            dr, cr = by_type.get(acct_type, (Decimal(0), Decimal(0)))
+            return (dr - cr) if debit_normal else (cr - dr)
+
+        assets = _net(AccountType.ASSET, True)
+        liabilities = _net(AccountType.LIABILITY, False)
+        equity_base = _net(AccountType.EQUITY, False)
+        net_income = (
+            _net(AccountType.INCOME, False)
+            - _net(AccountType.COGS, True)
+            - _net(AccountType.EXPENSE, True)
+        )
+        months.append(
+            {
+                "month": e.strftime("%b"),
+                "year": e.year,
+                "as_of": e.isoformat(),
+                "assets": float(assets),
+                "liabilities": float(liabilities),
+                "equity": float(equity_base + net_income),
+            }
+        )
+    return {"months": months, "as_of": today.isoformat()}
+
+
 def cash_position(db: Session) -> dict:
     """Cash on hand (active bank accounts) and a simple 30-day forecast:
     cash + receivables due within 30 days − payables due within 30 days.
     A forecast, not a promise — it assumes customers pay on the due date."""
     today = date.today()
     horizon = today + timedelta(days=30)
-    cash = sum(
-        _f(b.balance) for b in db.query(BankAccount).filter(BankAccount.is_active).all()
-    )
+    cash = sum(r["balance"] for r in _bank_ledger_rows(db) if r["kind"] == "bank")
     ar_due = _f(
         db.query(func.coalesce(func.sum(Invoice.balance_due), 0))
         .filter(Invoice.status.in_(OPEN_INVOICE), Invoice.due_date <= horizon)
@@ -442,6 +555,18 @@ WIDGETS: dict[str, tuple[str, str, str, Callable[[Session], dict]]] = {
         "Income, expenses and net for this month beside last month",
         pnl_month,
     ),
+    "pnl_ytd": (
+        "P&L: Year to Date",
+        "half",
+        "Income, expenses and net for the year so far, with cumulative net by month",
+        pnl_ytd,
+    ),
+    "balance_sheet_trend": (
+        "Balance Sheet Trend",
+        "full",
+        "Assets, liabilities and equity at each month end, last 12 months",
+        balance_sheet_trend,
+    ),
     "cash_position": (
         "Cash Position",
         "half",
@@ -528,5 +653,7 @@ def build(db: Session, ids: list[str]) -> dict[str, dict]:
         try:
             out[wid] = entry[3](db)
         except Exception as exc:  # pragma: no cover - defensive
-            out[wid] = {"error": str(exc)}
+            from app.services.safe_errors import safe_message
+
+            out[wid] = {"error": safe_message(exc, f"dashboard widget {wid}")}
     return out

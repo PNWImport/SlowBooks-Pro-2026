@@ -44,8 +44,8 @@ elif os.getenv("DATABASE_URL"):
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
-from app.database import Base
-from app.models import *  # noqa: F401,F403 — import all models for autogenerate
+from app.database import Base  # noqa: E402
+from app.models import *  # noqa: E402,F401,F403 — register models for autogenerate
 
 target_metadata = Base.metadata
 

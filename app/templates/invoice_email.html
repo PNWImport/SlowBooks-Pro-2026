@@ -17,7 +17,9 @@ td { padding: 8px; border-bottom: 1px solid #eee; }
 </div>
 <div class="content">
     <p>Dear {{ inv.customer.name if inv.customer else terms('Customer') }},</p>
-    <p>Please find attached <strong>{{ doc_label }} #{{ inv.invoice_number }}</strong>.</p>
+    {% if note %}<p>{{ note }}</p>
+    {% else %}<p>Please find attached <strong>{{ doc_label }} #{{ inv.invoice_number }}</strong>.</p>
+    {% endif %}
 
     <table>
         <tr><th>{{ doc_label }} #</th><td>{{ inv.invoice_number }}</td></tr>

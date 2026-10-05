@@ -112,7 +112,7 @@ def get_tax_liability(
 
 
 @router.get("/deposit-schedule")
-def get_deposit_schedule(year: int = Query(...), db: Session = Depends(get_db)):
+def get_deposit_schedule(year: int = Query(..., ge=3), db: Session = Depends(get_db)):
     """Monthly-vs-semiweekly depositor classification via the IRS lookback."""
     from app.services.tax_forms import deposit_schedule
 
@@ -120,7 +120,7 @@ def get_deposit_schedule(year: int = Query(...), db: Session = Depends(get_db)):
 
 
 @router.get("/liability-calendar")
-def get_liability_calendar(year: int = Query(...), db: Session = Depends(get_db)):
+def get_liability_calendar(year: int = Query(..., ge=3), db: Session = Depends(get_db)):
     """Date-sorted calendar of every payroll tax deposit and return due for
     the year: 941 deposits under the determined schedule (with the $100k
     next-day rule and de-minimis warnings), quarterly FUTA deposits, the

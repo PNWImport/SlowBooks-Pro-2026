@@ -118,7 +118,7 @@ def _chain_tip(db: Session, lock: bool = False):
         elif conn.dialect.name == "sqlite":
             # Legacy sqlite3 transaction mode does not BEGIN for SELECTs.
             # Reserve the writer before reading rather than racing at INSERT.
-            if not conn.connection.driver_connection.in_transaction:
+            if not getattr(conn.connection.driver_connection, "in_transaction", False):
                 conn.exec_driver_sql("BEGIN IMMEDIATE")
     query = db.query(DocumentAudit).order_by(DocumentAudit.id.desc())
     if lock and db.bind is not None and db.bind.dialect.name != "sqlite":
@@ -430,6 +430,8 @@ def verify_artifact(db: Session, artifact: dict) -> dict:
     if not isinstance(artifact, dict):
         raise ValueError("artifact must be a JSON object")
     payload = artifact.get("payload")
+    if not isinstance(payload, dict):
+        raise ValueError("payload is not an object")
     problems_in_shape = audit_signing.payload_problems(payload)
     if problems_in_shape:
         raise ValueError("; ".join(problems_in_shape))
@@ -519,6 +521,11 @@ def resign_checkpoints(db: Session) -> dict:
             )
             continue
         signed = audit_signing.sign(checkpoint_payload(checkpoint))
+        if signed is None:
+            # The configuration can change after the preflight check above
+            # (for example during a long-running key-rotation command).
+            summary["error"] = "audit checkpoint signing was disabled during re-sign"
+            break
         checkpoint.signature = signed["signature"]
         checkpoint.signature_key_id = signed["signature_key_id"]
         checkpoint.signature_algorithm = signed["signature_algorithm"]

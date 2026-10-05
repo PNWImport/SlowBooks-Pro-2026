@@ -57,7 +57,7 @@ const QBOPage = {
                         ? `<button class="btn btn-secondary" onclick="QBOPage.disconnect()">Disconnect from QuickBooks</button>`
                         : `<button class="btn btn-primary" onclick="QBOPage.connect()">Connect to QuickBooks</button>
                            <div style="font-size:10px; color:var(--text-muted); margin-top:8px;">
-                               Configure Client ID and Secret in <a href="#/settings" style="color:var(--qb-blue);">Settings</a> first.
+                               Configure Client ID and Secret in <a href="#/settings" style="color:var(--text-link);">Settings</a> first.
                            </div>`
                     }
                 </div>

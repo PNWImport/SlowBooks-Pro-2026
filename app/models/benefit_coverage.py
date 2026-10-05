@@ -55,6 +55,7 @@
 #     docs/hipaa-compliance.md § 4 records this as the residual gap.
 # ============================================================================
 
+from decimal import Decimal
 import enum
 
 from sqlalchemy import (
@@ -108,8 +109,8 @@ class BenefitPlan(Base):
     self_insured = Column(Boolean, default=False)
     # Minimum essential coverage — drives ACA months-of-coverage reporting.
     provides_mec = Column(Boolean, default=True)
-    monthly_premium_employee = Column(Numeric(12, 2), default=0)
-    monthly_premium_employer = Column(Numeric(12, 2), default=0)
+    monthly_premium_employee = Column(Numeric(15, 2), default=Decimal("0"))
+    monthly_premium_employer = Column(Numeric(15, 2), default=Decimal("0"))
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

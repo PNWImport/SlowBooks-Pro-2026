@@ -52,7 +52,9 @@ NONPROFIT: dict[str, str] = {
     "P&L": "Activities",
     "P&L by Class": "Activities by Fund",
     "P&L: This Month vs Last": "Activities: This Month vs Last",
+    "P&L: Year to Date": "Activities: Year to Date",
     "Balance Sheet": "Statement of Financial Position",
+    "Balance Sheet Trend": "Statement of Financial Position Trend",
     "Class": "Fund",
     "Classes": "Funds",
     # grants
@@ -120,10 +122,19 @@ class Terms:
             found = m.group(0)
             exact = next((k for k in NONPROFIT if k.lower() == found.lower()), None)
             out = NONPROFIT[exact] if exact else found
-            if found.isupper():
+            # "P&L" and "A/R" are upper-case as keys; matching them is
+            # not a shouted sentence, so "P&L analysis" must not become
+            # "ACTIVITIES analysis".
+            if found.isupper() and not (exact or "").isupper():
                 return out.upper()
             if found[0].islower():
-                return out[0].lower() + out[1:]
+                # a lower-case word in running text takes a lower-case phrase:
+                # "equity" -> "net assets", not "net Assets" (2.16.0 gate). An
+                # acronym inside the replacement keeps its capitals.
+                return " ".join(
+                    w if (w.isupper() and len(w) > 1) else w.lower()
+                    for w in out.split(" ")
+                )
             return out
 
         return _WORD_RE.sub(_swap, s)
@@ -135,6 +146,22 @@ class Terms:
     def compact(self, key: str) -> str:
         """CamelCase form for document filenames: ``SalesReceipt`` / ``Donation``."""
         return re.sub(r"\W", "", self(key))
+
+
+def document_reference(face: str, number, name: str | None = None) -> str:
+    """The text a posting writes for itself — "Invoice #1081 - Boise Neon
+    Supply", "Pledge #1081 - Grant Foundation" — from the document's own
+    face (donor_documents.document_label), never from the company's
+    vocabulary: a nonprofit's program-fee invoice stays an Invoice in its
+    ledger because it prints as one.
+
+    DISPLAY text, written once at posting time and never parsed: the
+    ledger keys documents by source_type and source_id, and the payment
+    providers by their own ids and metadata. History keeps the words in
+    use when it was posted; nothing rewrites it.
+    """
+    ref = f"{face} #{number}"
+    return f"{ref} - {name}" if name else ref
 
 
 def terms_for(settings: dict | None) -> Terms:

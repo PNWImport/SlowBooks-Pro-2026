@@ -2,6 +2,9 @@
 # Pull in with:  pip install -r requirements.txt -r requirements-dev.txt
 pytest>=8.3.0
 pytest-cov>=5.0.0
+# starlette >= 1.7 deprecates httpx in its TestClient in favour of httpx2
+# (pydantic/httpx2, by httpx's author). The app itself still uses httpx.
+httpx2>=2.13,<3
 # Pinned to a series, not floating: a floating range silently changes what
 # the lint gate enforces (ruff 0.16 reports 2526 findings on this tree where
 # 0.6 reports none). See ci.yml.

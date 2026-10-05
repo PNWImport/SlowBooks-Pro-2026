@@ -130,4 +130,8 @@ _TAX_RATE_DOC = dict(
 
 # Reusable annotated types: `tax_rate: TaxRate = Decimal("0")`.
 TaxRate = Annotated[Decimal, AfterValidator(_check_tax_rate), Field(**_TAX_RATE_DOC)]
+
+# Currency stored in NUMERIC(..., 2) columns. Reject fractional cents at the
+# request boundary rather than reporting success and letting the database round.
+Money = Annotated[Decimal, Field(decimal_places=2)]
 TaxRateFloat = Annotated[float, AfterValidator(_check_tax_rate), Field(**_TAX_RATE_DOC)]

@@ -78,6 +78,7 @@ def ocr_status(db: Session = Depends(get_db)):
         version=info["version"],
         languages=info["languages"] or None,
         engine=info["engine"],
+        pdf=ocr_service.tesseract_info().get("pdf"),
     )
 
 

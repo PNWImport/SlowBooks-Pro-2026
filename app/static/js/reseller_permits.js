@@ -443,14 +443,7 @@ const ResellerPermitsPage = {
     },
 
     async _copy(text, label) {
-        try {
-            await navigator.clipboard.writeText(text);
-            toast(`${label} copied to clipboard`);
-        } catch {
-            // Older browsers / non-secure contexts. Fall back to a prompt
-            // so the operator can manually copy.
-            window.prompt(`${label} (copy with Ctrl+C):`, text);
-        }
+        return copyToClipboard(text, label);
     },
 
     // Live format check fired from the form's onkeyup. Updates the hint

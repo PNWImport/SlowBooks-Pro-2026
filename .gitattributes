@@ -5,3 +5,6 @@
 # Ensure shell scripts always have LF line endings (fixes Docker on all platforms)
 *.sh text eol=lf
 docker-entrypoint.sh text eol=lf
+
+# Preserve the byte shape of the real Bank of America export fixture.
+tests/fixtures/bofa_detail_real_shape.csv -text whitespace=cr-at-eol

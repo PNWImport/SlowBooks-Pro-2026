@@ -52,7 +52,10 @@ def test_tagged_pdf_fallback_is_explicit(monkeypatch):
 
     document = Mock()
     document.write_pdf.side_effect = [TypeError("unsupported variant"), b"plain-pdf"]
-    monkeypatch.setattr(pdf_service, "HTML", Mock(return_value=document))
+    monkeypatch.setattr(
+        pdf_service, "_weasyprint", lambda: (Mock(return_value=document), object)
+    )
+    monkeypatch.setattr(pdf_service, "_get_fetcher", lambda: object())
     assert pdf_service.render_pdf("<html></html>") == b"plain-pdf"
     assert document.write_pdf.call_args_list[0].kwargs == {"pdf_variant": "pdf/ua-1"}
     assert document.write_pdf.call_args_list[1].kwargs == {}

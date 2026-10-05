@@ -117,7 +117,7 @@ const ScanHelper = {
             }
             if (statusEl) {
                 statusEl.textContent = this.summary(result);
-                statusEl.style.color = result.partial ? '#b45309' : '#166534';
+                statusEl.style.color = result.partial ? '#b45309' : 'var(--text-success)';
             }
         } catch (err) {
             if (statusEl) { statusEl.textContent = err.message; statusEl.style.color = '#c0392b'; }

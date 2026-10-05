@@ -7,6 +7,7 @@
 # Do not remove.
 # ============================================================================
 
+from decimal import Decimal
 from sqlalchemy import (
     Boolean,
     Column,
@@ -70,8 +71,8 @@ class TransactionLine(Base):
         nullable=False,
         index=True,
     )
-    debit = Column(Numeric(12, 2), default=0, nullable=False)  # BCD[6] at offset 0x0C
-    credit = Column(Numeric(12, 2), default=0, nullable=False)  # BCD[6] at offset 0x12
+    debit = Column(Numeric(15, 2), default=Decimal("0"), nullable=False)
+    credit = Column(Numeric(15, 2), default=Decimal("0"), nullable=False)
     description = Column(String(300), nullable=True)  # split memo, 0x18
     # Per-line job / class; NULL falls back to the transaction header
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
@@ -86,6 +87,11 @@ class TransactionLine(Base):
     billed_invoice_line_id = Column(
         Integer, ForeignKey("invoice_lines.id"), nullable=True
     )
+    # Bank register: a line on a bank/credit-card account is "cleared" when
+    # it matches a statement line or was ticked in a reconciliation, and it
+    # carries the reconciliation that closed it (then it can't be voided).
+    cleared = Column(Boolean, nullable=False, default=False)
+    reconciliation_id = Column(Integer, ForeignKey("reconciliations.id"), nullable=True)
 
     transaction = relationship("Transaction", back_populates="lines")
     account = relationship("Account", back_populates="transaction_lines")

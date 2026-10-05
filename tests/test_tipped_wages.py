@@ -72,6 +72,15 @@ def test_creditable_tips_pin():
     )
 
 
+def test_tip_math_handles_empty_and_zero_inputs():
+    from app.services.tips import _q
+
+    assert _q("1.2") == Decimal("1.20")
+    assert tip_credit_topup("10", "2", 0, "7.25") == Decimal("0.00")
+    assert creditable_tips(10, 0, 80) == Decimal("0.00")
+    assert creditable_tips(10, 5, 0) == Decimal("5.00")
+
+
 # --- pay-run integration ----------------------------------------------------
 
 

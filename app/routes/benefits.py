@@ -3,7 +3,7 @@
 # YTD accumulators, remittance. See app/services/benefits_engine.py.
 # ============================================================================
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -178,14 +178,19 @@ def delete_rate(code_id: int, rate_id: int, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=400, detail="A code needs at least one dated rate"
         )
-    db.delete(row)
-    db.flush()
-    # reopen the row that preceded it
-    remaining = sorted(
-        (r for r in code.rates if r.id != rate_id), key=lambda r: r.effective_from
+    predecessor = max(
+        (r for r in code.rates if r.effective_from < row.effective_from),
+        key=lambda r: r.effective_from,
+        default=None,
     )
-    if remaining:
-        remaining[-1].effective_to = None
+    # Reconnect only an adjacent predecessor, retaining the removed interval's
+    # expiry and leaving intentional gaps and later rates untouched.
+    if (
+        predecessor is not None
+        and predecessor.effective_to == row.effective_from - timedelta(days=1)
+    ):
+        predecessor.effective_to = row.effective_to
+    db.delete(row)
     db.commit()
     return {"status": "deleted", "id": rate_id}
 
@@ -250,7 +255,10 @@ def _set_group_codes(db: Session, g: EmployeeGroup, codes: list[GroupCodeIn]):
     seen = set()
     for c in codes:
         if c.benefit_code_id in seen:
-            continue
+            raise HTTPException(
+                status_code=409,
+                detail=f"Benefit code {c.benefit_code_id} appears more than once",
+            )
         seen.add(c.benefit_code_id)
         if (
             not db.query(BenefitCode)

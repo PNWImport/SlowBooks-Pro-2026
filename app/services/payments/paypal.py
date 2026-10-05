@@ -29,6 +29,8 @@ from app.models.invoices import Invoice
 from app.services.accounting import _q
 from app.services.payments import _http
 from app.services.payments.base import CheckoutSession, PaymentProvider, PaymentResult
+from app.services.donor_documents import document_label
+from app.services.terminology import document_reference, terms_for
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,9 @@ def build_token_request(settings: Mapping[str, str]) -> dict:
 def build_order_request(
     invoice: Invoice, settings: Mapping[str, str], base_url: str, token: str
 ) -> dict:
+    # what the payer sees on the hosted page; the ids and metadata
+    # the webhook resolves by are untouched
+    terms = terms_for(settings)
     return {
         "method": "POST",
         "url": f"{api_base(settings)}/v2/checkout/orders",
@@ -80,7 +85,9 @@ def build_order_request(
                     },
                     "custom_id": str(invoice.id),
                     "invoice_id": invoice.invoice_number,
-                    "description": f"Invoice #{invoice.invoice_number}",
+                    "description": document_reference(
+                        document_label(invoice, terms), invoice.invoice_number
+                    ),
                 }
             ],
             "application_context": {

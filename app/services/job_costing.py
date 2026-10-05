@@ -45,6 +45,7 @@ from app.models.time_entries import TimeEntry, TimeEntryStatus
 from app.models.transactions import Transaction, TransactionLine
 from app.services.accounting import create_journal_entry
 from app.services.jobs_service import job_attribution
+from app.services.safe_errors import DataProblem
 
 TWO = Decimal("0.01")
 
@@ -237,7 +238,7 @@ def resolve_line_accounts(
     if not debit and ctype:
         debit = ctype.default_account_id
     if not debit:
-        raise ValueError(
+        raise DataProblem(
             "No cost account for this line — pick one, or set a default account on "
             f"the '{ctype.name if ctype else cost_type}' cost type or the cost code in Settings"
         )
@@ -251,7 +252,7 @@ def resolve_line_accounts(
             else ctype.offset_account_id
         )
     if not credit:
-        raise ValueError(
+        raise DataProblem(
             "No offset account for this line — pick one, or set the offset account on "
             f"the '{ctype.name if ctype else cost_type}' cost type in Settings "
             "(Settings → Cost Types → Create default offset accounts)"
@@ -297,7 +298,7 @@ def post_job_cost(db: Session, jc: JobCost) -> Transaction:
             }
         )
     if not lines:
-        raise ValueError("A job cost entry needs at least one line with an amount")
+        raise DataProblem("A job cost entry needs at least one line with an amount")
     label = job.full_name if job else "allocation"
     txn = create_journal_entry(
         db,
@@ -315,7 +316,7 @@ def post_job_cost(db: Session, jc: JobCost) -> Transaction:
 
 def void_job_cost(db: Session, jc: JobCost) -> None:
     if jc.status == "void":
-        raise ValueError("Job cost entry is already void")
+        raise DataProblem("Job cost entry is already void")
     txn = jc.transaction
     if txn is not None:
         reverse = [
@@ -385,18 +386,20 @@ def labor_cost_for_entry(
 
 def post_time_entry_to_job(db: Session, entry: TimeEntry) -> JobCost:
     if entry.job_cost_id:
-        raise ValueError("Time entry is already posted to its job")
+        raise DataProblem("Time entry is already posted to its job")
     if not entry.job_id:
-        raise ValueError("Time entry has no job")
+        raise DataProblem("Time entry has no job")
     if entry.status not in (TimeEntryStatus.APPROVED, TimeEntryStatus.SUBMITTED):
-        raise ValueError("Only submitted or approved time entries post to a job")
+        raise DataProblem("Only submitted or approved time entries post to a job")
     emp = entry.employee or db.get(Employee, entry.employee_id)
+    if not emp:
+        raise DataProblem("Time entry references a missing employee")
     types = cost_type_map(db)
     labor = types.get("labor")
     code = db.get(CostCode, entry.cost_code_id) if entry.cost_code_id else None
     hours, rate, base = labor_cost_for_entry(emp, entry)
     if base <= 0:
-        raise ValueError("Time entry has no hours, or the employee has no cost rate")
+        raise DataProblem("Time entry has no hours, or the employee has no cost rate")
     debit, credit = resolve_line_accounts(db, types, code, "labor", None, None)
 
     jc = JobCost(
@@ -514,14 +517,14 @@ def distribute_payroll_burden(db: Session, run) -> Optional[JobCost]:
         db.query(Account).filter(Account.account_number == "6120").first()
         or db.query(Account).filter(Account.account_number == "6000").first()
     )
+    if tax_expense is None:
+        raise DataProblem(
+            "No payroll tax expense account (6120) to distribute burden from"
+        )
     benefit_expense_fallback = (
         db.query(Account).filter(Account.account_number == "6150").first()
         or tax_expense
     )
-    if tax_expense is None:
-        raise ValueError(
-            "No payroll tax expense account (6120) to distribute burden from"
-        )
 
     jc = JobCost(
         number=next_job_cost_number(db),
@@ -678,10 +681,12 @@ def allocate_cost(
 ) -> JobCost:
     amount = _q(amount)
     if amount <= 0:
-        raise ValueError("Allocation amount must be positive")
+        raise DataProblem("Allocation amount must be positive")
     weights = allocation_weights(db, method, job_ids, start_date, end_date, explicit)
     if not weights:
-        raise ValueError("Nothing to allocate on: no jobs carry weight for that method")
+        raise DataProblem(
+            "Nothing to allocate on: no jobs carry weight for that method"
+        )
     total_w = sum(weights.values())
     types = cost_type_map(db)
     code = db.get(CostCode, cost_code_id) if cost_code_id else None

@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 from app.models.classes import FUNCTIONS
 from app.models.nonprofit import ALLOCATION_BASES
@@ -24,7 +24,7 @@ class ReleaseCreate(StrictModel):
     date: dt_date
     class_id: int
     # None = release what the fund spent in the period (the suggestion)
-    amount: Optional[Decimal] = None
+    amount: Optional[Money] = None
     period_start: Optional[dt_date] = None
     period_end: Optional[dt_date] = None
     memo: Optional[str] = None

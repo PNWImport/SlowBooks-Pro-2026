@@ -86,6 +86,17 @@ def create_credit_memo(data: CreditMemoCreate, db: Session = Depends(get_db)):
     customer = db.query(Customer).filter(Customer.id == data.customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
+    if data.original_invoice_id is not None:
+        original = (
+            db.query(Invoice).filter(Invoice.id == data.original_invoice_id).first()
+        )
+        if not original:
+            raise HTTPException(status_code=404, detail="Original invoice not found")
+        if original.customer_id != data.customer_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Original invoice must belong to the credit memo customer",
+            )
 
     subtotal, tax_amount, total = compute_line_totals(data.lines, data.tax_rate)
 
@@ -191,6 +202,7 @@ def create_credit_memo(data: CreditMemoCreate, db: Session = Depends(get_db)):
             source_type="credit_memo",
             source_id=cm.id,
             class_id=cm.class_id,
+            job_id=cm.job_id,
         )
         cm.transaction_id = txn.id
 
@@ -233,6 +245,16 @@ def apply_credit(
     )
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    # A credit belongs to one customer: it pays down that customer's invoices
+    # only (the payment-side rule, #189).
+    if invoice.customer_id != cm.customer_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invoice {invoice.invoice_number} belongs to a different "
+                "customer than this credit memo."
+            ),
+        )
 
     if Decimal(str(data.amount)) > cm.balance_remaining:
         raise HTTPException(status_code=400, detail="Amount exceeds credit balance")
@@ -250,15 +272,11 @@ def apply_credit(
     amount = Decimal(str(data.amount))
     cm.amount_applied += amount
     cm.balance_remaining -= amount
-    if cm.balance_remaining < 0:
-        raise HTTPException(status_code=400, detail="Amount exceeds credit balance")
     if cm.balance_remaining == 0:
         cm.status = CreditMemoStatus.APPLIED
 
     invoice.amount_paid += amount
     invoice.balance_due -= amount
-    if invoice.balance_due < 0:
-        raise HTTPException(status_code=400, detail="Amount exceeds invoice balance")
     invoice.status = (
         InvoiceStatus.PAID if invoice.balance_due == 0 else InvoiceStatus.PARTIAL
     )
@@ -272,7 +290,7 @@ def void_credit_memo(cm_id: int, db: Session = Depends(get_db)):
     """Reverse a credit memo: put every application back on its invoice,
     post the mirror-image entry, return any inventory the memo took back,
     and mark it void. This is also how a mistaken write-off is undone."""
-    from app.models.items import MovementType
+    from app.models.items import InventoryMovement, MovementType
     from app.services.accounting import reversing_lines
     from app.services.inventory_service import _append_movement
 
@@ -314,17 +332,25 @@ def void_credit_memo(cm_id: int, db: Session = Depends(get_db)):
                 job_id=cm.job_id,
             )
 
-    for line in cm.lines:
-        if not line.item_id:
-            continue
-        item = db.query(Item).filter(Item.id == line.item_id).first()
-        if item and item.track_inventory and line.quantity > 0:
+    # Reverse actual returns even if the item tracking setting has changed.
+    movements = (
+        db.query(InventoryMovement)
+        .filter(
+            InventoryMovement.source_type == "credit_memo",
+            InventoryMovement.source_id == cm.id,
+        )
+        .order_by(InventoryMovement.id)
+        .all()
+    )
+    for movement in movements:
+        item = db.query(Item).filter(Item.id == movement.item_id).first()
+        if item is not None:
             _append_movement(
                 db,
                 item,
                 MovementType.VOID,
-                quantity=-Decimal(str(line.quantity)),
-                unit_cost=Decimal(str(item.avg_cost or 0)),
+                quantity=-movement.quantity,
+                unit_cost=movement.unit_cost,
                 source_type="credit_memo_void",
                 source_id=cm.id,
                 memo=f"VOID Credit Memo {cm.memo_number}",

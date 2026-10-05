@@ -63,6 +63,21 @@ def test_semi_monthly_pairs_and_february_cap():
     ]
 
 
+def test_semi_monthly_rolls_into_next_year():
+    s = _schedule(
+        frequency=PayFrequency.SEMI_MONTHLY,
+        anchor_pay_date=date(2026, 12, 20),
+        weekend_shift=WeekendShift.NONE,
+    )
+    dates = upcoming_pay_dates(s, date(2026, 12, 20), count=4)
+    assert [d["pay_date"] for d in dates] == [
+        "2026-12-20",
+        "2027-01-05",
+        "2027-01-20",
+        "2027-02-05",
+    ]
+
+
 def test_monthly_caps_the_31st():
     s = _schedule(
         frequency=PayFrequency.MONTHLY,

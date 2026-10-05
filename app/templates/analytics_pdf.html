@@ -252,7 +252,7 @@
                 {% for customer, revenue in dashboard.revenue_by_customer.items()|sort(attribute=1, reverse=true) %}
                     <tr><td>{{ customer }}</td><td class="num green">{{ revenue | currency }}</td></tr>
                 {% else %}
-                    <tr><td colspan="2" class="empty">No paid invoices this period.</td></tr>
+                    <tr><td colspan="2" class="empty">{{ terms.text("No paid invoices this period.") }}</td></tr>
                 {% endfor %}
                 </tbody>
             </table>

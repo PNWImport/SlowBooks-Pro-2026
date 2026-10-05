@@ -1,5 +1,5 @@
-#!/bin/bash
-set -eo pipefail
+#!/bin/sh
+set -eu
 
 echo "Slowbooks Pro 2026 — Starting up..."
 
@@ -54,10 +54,14 @@ fi
 # Set SKIP_BOOT_SELFCHECK=1 to bypass even when pytest is available.
 if [ -z "${SKIP_BOOT_SELFCHECK:-}" ] && python -c "import pytest" 2>/dev/null; then
     echo "Boot self-check: SPA <-> backend wiring..."
-    if ! python -m pytest tests/test_wiring.py -q --no-header 2>&1 | tail -5; then
+    wiring_log=$(mktemp)
+    if ! python -m pytest tests/test_wiring.py -q --no-header >"$wiring_log" 2>&1; then
+        tail -5 "$wiring_log"
+        rm -f "$wiring_log"
         echo "ERROR: wiring self-check failed. Set SKIP_BOOT_SELFCHECK=1 to override." >&2
         exit 1
     fi
+    rm -f "$wiring_log"
 fi
 
 echo "Starting Slowbooks Pro 2026 on port ${APP_PORT:-3001}..."

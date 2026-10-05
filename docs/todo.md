@@ -13,7 +13,286 @@ under `[Unreleased]` and move its entry down to the archive.
 
 ---
 
+## Follow-ups decided September 26 (separate PRs, not this release PR)
+
+- **Typed ORM models.** Pyright reports 1,889 errors (baseline 1,888; 0 new
+  call-shape errors after the invoice-edit fix). About 95% come from legacy
+  `Column()` declarations pyright cannot type. Convert the models to
+  SQLAlchemy 2.0 `Mapped[...] = mapped_column(...)` in its own PR, then add a
+  CI gate that fails on any new pyright error beyond the recorded baseline.
+- **SQLAlchemy 2.1** (makes `postgresql://` mean psycopg 3) and **ruff ≥ 0.7**
+  — held by requirement caps and Dependabot ignores; each needs its own pass.
+- **GPT-6 Astra** for Ask SlowBooks needs a Responses API adapter.
+- **`claude-haiku-4-5-20251001`** may be retired from October 15, 2026.
+- PostgreSQL backups are custom-format dumps named `*.sql`; renaming touches
+  the restore filename validation, so change it deliberately.
+
+## Upstream intake and PR preparation — September 14
+
+Release target: **2.18.0 (unreleased)**, following upstream 2.17.3.
+
+Final preparation refresh: upstream main still `a1022f8`; retained Docker image
+now includes the import-reference boundary fix. Live PostgreSQL boundary/replay
+and persistence checks pass, as do 32 frontend tests and formatting/lint.
+Fresh image CVE scan reports zero known vulnerabilities. External acceptance,
+full accumulated file review and explicit debt decisions remain open; see
+`docs/local-readiness-2026-09-20.md`. No commit, push or PR performed.
+
+Final-gate follow-up: fixed real import/reconciliation races. Full Linux run:
+4,859 passed, 11 skipped, one runner zombie-process failure; 47 launcher tests
+pass with a proper reaper. Later reconciliation change passes focused checks.
+Latest image vulnerability scan reports zero; known scanner/type debt and
+browser/native/owner/code-review gates remain explicit in current validation.
+
+Latest intake through `a1022f8` is incorporated: Wave full exports, zero-ledger
+refusal and repeat-import protection. Verified with 64 importer tests, 32 frontend
+tests and live rebuilt Linux HTTP replay checks. See current validation; final
+full-suite/accumulated review and external acceptance gates remain open.
+
+Current local issue checklist: [September 20 readiness](local-readiness-2026-09-20.md).
+
+September 20 coverage follow-ups: fixed unsafe repair of unowned empty tables;
+focused IIF routes reach 97/97 statements and repair reaches 182/182. Latest
+repair group passes 31 tests with PostgreSQL; payroll/remittance/job-costing
+group passes 61. These do not replace the full-run snapshot or close the
+remaining acceptance gates; see [validation](validation.md).
+
+September 20 final review: Linux/PostgreSQL/OCR coverage snapshot passed
+**4,780 tests, 12 documented skips**, with **97.04% statement coverage**.
+Final account-parent/log fixes passed 93 affected tests, including SQLite and
+PostgreSQL contention; the final image passed 35 live HTTP checks. CodeQL ran
+locally with reviewed alerts; typing/static debt and browser/native/owner gates
+remain explicit. See [review findings](review-findings-2026-09-20.md). The intake
+counts below describe the preceding run, not the final review.
+
+September 20 intake: the next ten upstream commits through `80f2ad8` are
+incorporated; focused intake tests pass 74/74 and frontend tests pass 32/32.
+The fresh Docker/PostgreSQL HTTP pass made 359 requests with no 5xx responses.
+Chrome is not connected to the browser tool, so real browser acceptance remains
+open; 300 inventoried API operations still need separate live workflow/provider
+fixtures. Full Python regression: **4,755 passed, 31 skipped, zero failed**;
+fresh PostgreSQL migration/repair/concurrency group: **33 passed**, no skips.
+See the current handoff at the top
+of [validation.md](validation.md); September 16 completion language is historical.
+
+September 16 review: all five chart-import/UI findings in
+[the cross-layer review](spiderweb-review-2026-09-16.md) are resolved. The
+importer passes 21 tests at 100% statement coverage; frontend passes 32 tests;
+existing cross-layer and live PostgreSQL gates remain green. The current-tree
+full suite passes **4,738 tests, 31 skipped, zero failed** in 14m57s.
+
+Execution order clarified: local integration and focused checks only, then the
+large local validation/fix pass, then final documentation with minimal README
+changes. No merge, commit, push or PR as part of this work. Historical PR
+preparation notes below are future considerations, not current authorization.
+
+Current scope: the **114 upstream-only commits** through `2866c90` and the
+nine-commit 2.15 chart-import intake through `719735e` are integrated in the
+working tree. Every ledger row now has a semantic disposition. This work is
+deliberately uncommitted, so the Git commit graph does not yet reflect the
+content intake. Final preflight closed the container-CVE gate: the rebuilt
+Alpine runtime image boots on PostgreSQL 17, serves the 2.16.0 health response
+and chart template, has no pip module or launchers, and has zero high/critical
+Trivy findings. Actionlint and ShellCheck pass. Pyright still
+reports 1,830 app diagnostics requiring triage after its concrete flow issues
+were reduced. Hosted CodeQL, native/live
+validation and the owner choice on License 2.0/contributor terms also remain
+open. See `validation.md` for the coverage run, corrected harness failures,
+and exact scope; this is not more upstream commit intake.
+
+Handoff checklist: complete the current browser/live workflow gates, then
+external validation plus final uncommitted diff and owner
+review. Keep this branch uncommitted until that review is complete.
+
+- September 15 CI preflight: 97% application statement coverage with PostgreSQL
+  and OCR available; the full run's five missing-checkout-file failures passed
+  focused reruns. Expanded CI lint/frontend coverage, repaired backup failure
+  cleanup and whitespace-safe retention, moved the production image to Alpine
+  and removed build-only pip, and restored editor type diagnostics. Python
+  dependency audits, formatting, frontend, actionlint, shellcheck and final
+  zero-high/critical container scan pass.
+
+- September 15 accumulated closeout: standardized operator-entered currency at
+  two decimal places without reducing quantity, percentage, FX or inventory
+  precision; fixed cross-owner bill/batch allocations and Undeposited Funds
+  overdraw/concurrency protection. Latest broad local suite: **4,738 passed,
+  31 skipped, zero failed**; frontend **29 passed**; Black 720 files, Ruff and
+  whitespace clean; dependency audit clean; production image built and became
+  healthy on PostgreSQL 17. Remaining public-release gates require native,
+  provider, accessibility, payroll-jurisdiction, penetration, capacity or
+  hosted-review environments.
+
+- September 15 fresh review: fixed fractional-cent customer/vendor credit
+  applications and inventory reversals after tracking-setting changes for bills
+  and both credit types. Twelve regression cases reproduced the defects before
+  their fixes. Overlapping focused gates passed 69 and 53 tests; see
+  `validation.md` for sequence and scope. Full release readiness is still open.
+
+- September 15 invoice reversal follow-up: fixed tracking-toggle stock errors
+  and historical COGS/account drift when voiding edited invoices. Eight new
+  cases and the affected regression group passed **111 tests**; original
+  movements and journal lines now determine the reversal. Details are in
+  `validation.md`; this does not replace the historical full-suite result.
+
+- September 15 final exact-tree regression: **4,566 passed, 31 skipped, zero
+  failed, two warnings** in 30m27s after the Redis image requirement/guard.
+  `pip-audit` found no known vulnerabilities; Black (718 files), Ruff and
+  whitespace checks passed.
+
+- September 15 strict production-runtime gate: a disposable TLS PostgreSQL 17
+  + Redis + two-worker deployment started healthy with forced HTTPS. The image
+  now includes the Redis client required by its documented shared rate-limit
+  storage URI; the focused proxy/rate-limit guard passed 14 tests. Synthetic
+  containers, network and certificate volume were removed after the check.
+
+- September 15 PR preparation: remote fetch reconfirmed upstream `2866c90`
+  unchanged. Docker restart, separate-database backup restoration, three real
+  OCR receipts, browser login/Settings/nonprofit switch/sign-out passed.
+  QB import missing-journal warnings repaired; 43 focused tests passed. Current
+  Black/Ruff/whitespace checks pass. Detailed evidence is in `validation.md`.
+
+- September 15 production-style crawl: current Docker image rendered all 62 SPA
+  routes and served all 68 shell assets. A 275-operation safe GET sweep found
+  and fixed two invalid-year tax-calendar 500s; it now has zero 5xx responses.
+  The 600-test frontend/auth/system/backend-only gate and 42 focused tax/auth
+  tests pass. Token/OAuth/provider/send paths remain separate live acceptance.
+
+- September 15 final-tree suite: **4,565 passed, 31 skipped, zero failed, two
+  warnings** in 15m01s after the production-crawl validation fix. This replaces
+  the earlier 4,564-pass result; Black, Ruff and whitespace checks remain green.
+
+- September 15 executable deployment gates: a fresh PostgreSQL 17 run passed
+  38 tests (five deliberate SQLite variants skipped); production Compose fails
+  closed for absent required deployment values and resolves with synthetic ones.
+  Packaging/launcher/PDF/OCR gate: 76 passed; proxy/rate-limit/Docker/Kubernetes/
+  server/PDF/subprocess gate: 71 passed. Native signed artifacts, real proxy TLS
+  and live provider accounts still need their target environments.
+
+- September 15 static security closeout: `pip-audit` found no known dependency
+  vulnerabilities; secret scan found test fixtures only; Bandit had zero high
+  findings. The reviewed medium findings have fixed origins/allowlisted inputs
+  and their AI/encryption/FX/PDF/subprocess/repair gate passed 164 tests (two
+  PostgreSQL skips already covered by the fresh-server run).
+
+- September 15 mechanical closeout: JS, workflow YAML, JSON, shell syntax and
+  Python compilation passed; `git diff --check` and `git fsck --no-dangling`
+  are clean.
+
+- September 15 Docker smoke: isolated Compose build/install passed with
+  PostgreSQL 17, all migrations, 57-account seed, first-run setup/login, and a
+  live customer→invoice create/fetch flow. Containers and network are stopped;
+  synthetic project volumes remain for repeatability.
+
+- September 15 full-suite closeout: after triage and minimal fixes, **4,564
+  passed, 31 skipped, zero failed, two warnings** across 4,595 tests in 14m31s.
+  Frontend remains green at 29 passed. The full-suite execution gate is closed
+  for this tree; native artifacts, live providers and deployment capacity remain
+  separate release gates.
+
+- First full-scope security/company batch: donor-template credential exposure
+  reproduced and fixed from `2fd6758`; PostgreSQL migrate/seed initialization
+  integrated from `dba2839`. Gates: 64 and 110 tests passed respectively.
+  The final editable-invoice renderer is now covered by the shared redaction
+  path; the September 15 full-suite result supersedes its earlier deferral.
+
+- Further local groups integrated with focused evidence in the ledger: typed
+  error handling/QBO callback, control-account protection and account cleanup,
+  invoice-message payloads, Wave export headers, shared clipboard behavior,
+  PDF logos/WeasyPrint 70 lazy data-only fetcher, portable attachment paths,
+  contrast/hidden-state fixes and sidebar update visibility. No full-suite claim.
+  Banking's coordinated migration/register/posting/reconciliation group is now
+  integrated with local row-lock and account/date-isolation adaptations. Gates:
+  25 passed and 98 passed/four PostgreSQL skips; migration tested on disposable
+  SQLite only. Source-link navigation and void line-lock gaps are now fixed
+  (32- and 33-test Python gates, 27 frontend checks). Matching/void concurrency
+  review and later follow-ups remained open at that checkpoint; the later real
+  PostgreSQL and seeded-browser gates below supersede those two deferrals.
+  Batch claims and the matching/void lock inversion now have guards and real
+  PostgreSQL checks: expanded local gate 80 passed; live locking/accounting gate
+  13 passed, five SQLite variants skipped. Cash-flow commits 43414fb/ab35f72 and
+  wrapper d853dc9 are integrated. Later disposable PostgreSQL parity/concurrency
+  and seeded Banking browser gates supersede those deferrals; the temporary test
+  databases were removed.
+- Native PDF scanning runtime/status/dependency and follow-up WinRT/ImageIO
+  fixes integrated: 146 focused tests passed, including real Poppler rendering.
+  Existing intake/storage/conversion guards retained. Native artifact acceptance
+  and remaining release/launcher changes are still separate ledger items.
+- Headless selection persistence and URL/image error wording now integrated;
+  49 launcher/OCR-region tests passed (two native-tool skips), plus 64 AI
+  transport/security tests. TLS and cleanup safeguards retained. Windows
+  version-resource/workflow and macOS release follow-ups remain open.
+- Windows version-resource/workflow integration now passes its 15-test focused
+  gate; native Windows artifact verification remains open. App version unchanged.
+- macOS `a38cca2` failure diagnostics now integrated (20 mocked release/packaging
+  tests passed); later timestamp/provenance follow-ups remain in the ledger.
+- Timestamp/provenance `79150e3` now integrated (27 mocked packaging tests).
+  Control-account docs reconciled; `58870d5` factory reuse adopted while
+  retaining lifespan execution. Combined fixture/audit/control/banking/desktop
+  gate: 101 passed. Native acceptance and full-suite/memory profiling remain open.
+- WebView2-missing guidance/browser fallback and `0a078c2`'s opt-in Windows
+  timer lifecycle are integrated (49 focused tests); native Windows acceptance
+  remains open.
+- Guarded anyio closed-loop cleanup and the UTF-8 test-read follow-up are
+  integrated (57 focused tests). Full-suite memory measurement remains deferred.
+- Vendor credits and the adapted migration join are integrated; schema repair
+  now uses a disposable SQLite revision baseline before dropping only leaked,
+  empty blockers (44 combined tests). Real PostgreSQL recovery now reuses the
+  existing enum safely, drops only verified empty pending children before their
+  parent, and refuses populated dependents; recovery/refusal gates passed.
+- Saved invoice-email templates now drive preview and send through one sandbox;
+  unsaved previews, redaction, escaping and request-local blank reporting pass
+  67 focused tests. A cross-cutting audit found and fixed the missing invoice-
+  dialog caller; the dialog now shows the saved-template preview and debounced
+  note refresh in a sandboxed `srcdoc` iframe. Focused repair and fallback gates
+  passed 49 and 58 tests; a seeded browser visibly exercised the same preview.
+  Live SMTP remains open.
+- Windows portability CI and the corrected pre-analysis macOS HarfBuzz exclusion
+  are integrated (35 focused tests); hosted/native execution remains open.
+- Company vocabulary now reaches server responses, control guidance, AI labels
+  and document-generated ledger/provider references (82 focused tests). The
+  hardened seeded live walk covered 2,862 business/2,853 nonprofit strings with
+  zero source-backed leaks or unclassified dynamic results.
+- Before full-suite execution, all 4,595 Python tests collected successfully.
+  The 29-test frontend gate found and closed an AI Settings regression:
+  Custom again starts with its required, 255-character model field visible, and
+  the UI names both self-hosted-gateway and custom-endpoint choices. The related
+  137-test AI gate passes.
+- Sign-out now returns to the desktop picker, active usernames are listed before
+  sign-in, and first launch auto-opens the last company until the picker is
+  explicitly requested. The combined sign-in/desktop gate passed 67 tests.
+- Parked accountant-sharing and Canada notes are integrated into an adapted
+  design index. Release/README wrappers are dispositioned without inflating the
+  README; obsolete storage-internals provenance is removed.
+- License 2.0, contributor terms, and the dependent first-run/installer terms
+  remain intentionally unapplied pending explicit owner legal acceptance.
+
+- Integrated `9bfc378`, `fe44ddf`, `20689c9`: comment-only provenance cleanup
+  in IIF export, CSS, backup script and JS. Corrected the clock comment to
+  match the actual 60-second interval rather than copying the upstream typo.
+- Adapted `12102d6` / `61a9aa1`: preserve the light README and exclude unaccepted
+  legal claims while retaining applicable contribution/release guidance.
+  `7978419`'s fixture convention is incorporated with the sign-in feature suite.
+- Before PR: recheck upstream's target SHA and compare the final behavior/diff;
+  the pinned 114-commit inventory is fully dispositioned, not merged by ancestry.
+- A committed-tree merge preview at local `52721f3` / upstream `2866c90`
+  reports seven conflicted paths: CHANGELOG, README, app/main.py,
+  app/routes/attachments.py, app/routes/banking.py, desktop_launcher.py and
+  docs/data-model.md. It excludes uncommitted work; 14 upstream-changed paths
+  also overlap local tracked edits. No merge was performed.
+- Resolve the integration baseline before final validation. A full merge
+  would also need a migration-head join (`fb23cd45ef67`, `f8a9b0c1d2e3`),
+  preservation of local TLS/concurrency safeguards, and fixture compatibility
+  checks. Do not rewrite published migration history or use production data.
+- Review the accumulated diff, agree PR split/scope and contributor terms,
+  validate subsequent fixes on the final tree, then prepare approved
+  commits and the PR. No sign-off, push or PR submission has been authorized
+  by the intake itself.
+
 ## Open work — payroll/HR follow-ups
+
+Bank-import follow-up: BoA parser/fixture/bounds/docs and explicit import-button
+recovery now integrated (50 Python + 29 frontend tests passed). The associated
+opt-in Windows timer is also integrated. See the ledger for exact dispositions.
 
 Every item below was created by a shipped feature and is currently
 recorded only inside a struck-through entry further down this file.

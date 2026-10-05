@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -30,7 +30,7 @@ _BALANCE_SHEET_TYPES = (AccountType.ASSET, AccountType.LIABILITY, AccountType.EQ
 
 class OpeningBalanceLine(StrictModel):
     account_id: int
-    amount: Decimal
+    amount: Money
 
 
 class OpeningBalanceCreate(StrictModel):

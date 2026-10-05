@@ -39,6 +39,11 @@ from app.models.api_tokens import ApiToken  # noqa: F401
 from app.models.purchase_orders import PurchaseOrder, PurchaseOrderLine
 from app.models.bills import Bill, BillLine, BillPayment, BillPaymentAllocation
 from app.models.credit_memos import CreditMemo, CreditMemoLine, CreditApplication
+from app.models.vendor_credits import (
+    VendorCredit,
+    VendorCreditApplication,
+    VendorCreditLine,
+)
 
 # Phase 3: Productivity
 from app.models.recurring import RecurringInvoice, RecurringInvoiceLine
@@ -139,6 +144,9 @@ __all__ = [
     "CreditMemo",
     "CreditMemoLine",
     "CreditApplication",
+    "VendorCredit",
+    "VendorCreditLine",
+    "VendorCreditApplication",
     # Phase 3
     "RecurringInvoice",
     "RecurringInvoiceLine",

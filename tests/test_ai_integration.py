@@ -15,7 +15,11 @@ from app.services.ai_service import (
     PROVIDERS,
     _extract_tool_calls,
     _parse_json_args,
+    MAX_TOKENS,
+    REASONING_MAX_TOKENS,
+    TEMPERATURE,
     build_request,
+    call_provider,
     call_with_tools,
     parse_response,
     validate_worker_url,
@@ -510,7 +514,7 @@ def test_provider_defaults_are_current_and_manual_ids_remain_supported():
 
 def test_current_openai_and_groq_models_use_completion_token_parameter():
     openai_req = build_request("openai", "sk-test", "gpt-5.6-terra", "sys", "user")
-    assert openai_req["json"]["max_completion_tokens"] == 1024
+    assert openai_req["json"]["max_completion_tokens"] == REASONING_MAX_TOKENS
     assert "max_tokens" not in openai_req["json"]
     assert "temperature" not in openai_req["json"]
 
@@ -673,3 +677,166 @@ def test_call_with_tools_custom_roundtrip():
     second_payload = client.request.call_args_list[1].kwargs["json"]
     assert second_payload["messages"][1]["tool_calls"][0]["id"] == "t1"
     assert second_payload["messages"][2]["tool_call_id"] == "t1"
+
+
+# ---------------------------------------------------------------------------
+# OpenAI request shape (#185): its reasoning models refuse max_tokens and a
+# non-default temperature, and spend reasoning out of the answer's budget
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model", ["gpt-5.4-mini", "gpt-6-sol", "o3-mini", "o4-mini", "o1"]
+)
+def test_openai_reasoning_models_get_completion_tokens_and_no_temperature(model):
+    body = build_request("openai", "sk-fake", model, "s", "u")["json"]
+    assert "max_tokens" not in body and "temperature" not in body
+    assert body["max_completion_tokens"] == REASONING_MAX_TOKENS
+
+
+def test_openai_non_reasoning_model_keeps_temperature():
+    body = build_request("openai", "sk-fake", "gpt-4o-mini", "s", "u")["json"]
+    assert "max_tokens" not in body
+    assert body["max_completion_tokens"] == MAX_TOKENS
+    assert body["temperature"] == TEMPERATURE
+
+
+def test_other_openai_compatible_providers_are_unchanged():
+    # a model named like OpenAI's on another provider is not OpenAI's API
+    body = build_request("grok", "k", "gpt-5-lookalike", "s", "u")["json"]
+    assert body["max_tokens"] == MAX_TOKENS and body["temperature"] == TEMPERATURE
+    assert "max_completion_tokens" not in body
+
+
+def test_groq_lookalike_keeps_its_budget_and_temperature():
+    # Groq takes max_completion_tokens, but is never treated as a reasoning model
+    body = build_request("groq", "k", "gpt-5-lookalike", "s", "u")["json"]
+    assert body["max_completion_tokens"] == MAX_TOKENS
+    assert body["temperature"] == TEMPERATURE and "max_tokens" not in body
+
+
+def test_the_tool_loop_sends_the_same_openai_shape():
+    client = _fake_client(
+        [_mock_response({"choices": [{"message": {"content": "done"}}]})]
+    )
+    call_with_tools(
+        provider_key="openai",
+        api_key="sk-fake",
+        model="gpt-5.4-mini",
+        user_question="hi",
+        tools=_FAKE_TOOLS,
+        tool_executor=MagicMock(),
+        client=client,
+    )
+    sent = client.request.call_args.kwargs["json"]
+    assert "temperature" not in sent and "max_tokens" not in sent
+    assert sent["max_completion_tokens"] == REASONING_MAX_TOKENS and sent["tools"]
+
+
+def test_a_reply_cut_off_at_the_limit_says_so():
+    truncated = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
+    client = _fake_client([_mock_response(truncated)])
+    with pytest.raises(AIProviderError, match="output limit"):
+        call_provider("openai", "sk-fake", "gpt-5.4-mini", "s", "u", client=client)
+
+
+# ---------------------------------------------------------------------------
+# Claude 4.7 and later refuse a non-default temperature (400); older Claude
+# models keep the low analysis temperature
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["claude-sonnet-5", "claude-opus-5-5", "claude-fable-5-1", "claude-opus-4-7"],
+)
+def test_current_claude_models_are_sent_no_temperature(model):
+    body = build_request("anthropic", "sk-ant", model, "s", "u")["json"]
+    assert "temperature" not in body
+    assert body["max_tokens"] == MAX_TOKENS
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-sonnet-4-20250514"],
+)
+def test_older_claude_models_keep_the_analysis_temperature(model):
+    body = build_request("anthropic", "sk-ant", model, "s", "u")["json"]
+    assert body["temperature"] == TEMPERATURE
+
+
+def test_openai_chat_latest_alias_uses_its_default_temperature():
+    body = build_request("openai", "sk-fake", "chat-latest", "s", "u")["json"]
+    assert "temperature" not in body and "max_tokens" not in body
+    assert body["max_completion_tokens"] == MAX_TOKENS
+
+
+def test_every_listed_model_builds_a_request():
+    for key, spec in PROVIDERS.items():
+        for model in spec.model_choices:
+            if key in ("cloudflare", "cloudflare_worker", "custom"):
+                continue
+            req = build_request(key, "k", model, "s", "u")
+            assert req["json"]
+
+
+# ---------------------------------------------------------------------------
+# GPT-6 tool calling through Chat Completions: Sol and Luna need reasoning
+# effort "none"; Astra needs the Responses API and is refused up front
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna"])
+def test_gpt6_tool_loop_sends_no_reasoning(model):
+    client = _fake_client(
+        [_mock_response({"choices": [{"message": {"content": "done"}}]})]
+    )
+    call_with_tools(
+        provider_key="openai",
+        api_key="sk-fake",
+        model=model,
+        user_question="hi",
+        tools=_FAKE_TOOLS,
+        tool_executor=MagicMock(),
+        client=client,
+    )
+    sent = client.request.call_args.kwargs["json"]
+    assert sent["reasoning_effort"] == "none" and sent["tools"]
+    assert "max_completion_tokens" in sent and "max_tokens" not in sent
+
+
+def test_gpt6_analysis_keeps_default_reasoning():
+    body = build_request("openai", "sk-fake", "gpt-6-sol", "s", "u")["json"]
+    assert "reasoning_effort" not in body and "temperature" not in body
+    assert body["max_completion_tokens"] == REASONING_MAX_TOKENS
+
+
+def test_gpt6_astra_tool_loop_is_refused_before_any_request():
+    client = _fake_client([])
+    with pytest.raises(AIProviderError, match="Responses API"):
+        call_with_tools(
+            provider_key="openai",
+            api_key="sk-fake",
+            model="gpt-6-astra",
+            user_question="hi",
+            tools=_FAKE_TOOLS,
+            tool_executor=MagicMock(),
+            client=client,
+        )
+    client.request.assert_not_called()
+
+
+def test_other_models_tool_loop_sends_no_reasoning_effort():
+    client = _fake_client(
+        [_mock_response({"choices": [{"message": {"content": "done"}}]})]
+    )
+    call_with_tools(
+        provider_key="openai",
+        api_key="sk-fake",
+        model="gpt-5.6-terra",
+        user_question="hi",
+        tools=_FAKE_TOOLS,
+        tool_executor=MagicMock(),
+        client=client,
+    )
+    assert "reasoning_effort" not in client.request.call_args.kwargs["json"]

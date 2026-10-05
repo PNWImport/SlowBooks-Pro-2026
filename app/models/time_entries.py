@@ -3,6 +3,7 @@
 # Tier 1.4: regular / overtime / doubletime capture with an approval workflow.
 # ============================================================================
 
+from decimal import Decimal
 import enum
 
 from sqlalchemy import (
@@ -38,9 +39,9 @@ class TimeEntry(Base):
     )
     date = Column(Date, nullable=False, index=True)
 
-    hours_regular = Column(Numeric(10, 2), default=0)
-    hours_overtime = Column(Numeric(10, 2), default=0)
-    hours_doubletime = Column(Numeric(10, 2), default=0)
+    hours_regular = Column(Numeric(10, 2), default=Decimal("0"))
+    hours_overtime = Column(Numeric(10, 2), default=Decimal("0"))
+    hours_doubletime = Column(Numeric(10, 2), default=Decimal("0"))
 
     # Optional job-costing link. Items double as the project list in this app.
     project_id = Column(Integer, ForeignKey("items.id"), nullable=True)

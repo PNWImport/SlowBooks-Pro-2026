@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, field_validator
 
-from app.schemas.common import StrictModel, TaxRate
+from app.schemas.common import Money, StrictModel, TaxRate
 
 from app.schemas.invoices import InvoiceLineCreate, InvoiceResponse
 from app.schemas.payments import PaymentResponse
@@ -28,7 +28,7 @@ class SalesReceiptCreate(StrictModel):
     currency: Optional[str] = None
     exchange_rate: Optional[Decimal] = None
     # Nonprofit donation receipt: what the donor got back, if anything
-    fair_value_amount: Optional[Decimal] = None
+    fair_value_amount: Optional[Money] = None
     fair_value_description: Optional[str] = None
     lines: list[InvoiceLineCreate] = []
 

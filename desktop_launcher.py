@@ -504,9 +504,17 @@ def _server_already_running(port: int) -> bool:
 
 
 def launch_company(
-    filename: str, port: int, output=None, bind_host: str = "127.0.0.1"
+    filename: str,
+    port: int,
+    output=None,
+    bind_host: str = "127.0.0.1",
+    persist: bool = True,
 ) -> subprocess.Popen:
-    """Point the app at a company file, migrate it, and start the server."""
+    """Migrate and serve a company; only windowed launches persist its selection.
+
+    Headless servers receive their database URL through start_server's child
+    environment, without changing the desktop .env or last-opened company.
+    """
     from app.services import company_service
 
     # A second launch while the app is already open would lose the fight
@@ -523,8 +531,9 @@ def launch_company(
         raise ValueError(f"Invalid company file name: {filename!r}")
 
     db_url = "sqlite:///" + db_path.as_posix()
-    set_env_value("DATABASE_URL", db_url)
-    company_service.set_last_opened(filename)
+    if persist:
+        set_env_value("DATABASE_URL", db_url)
+        company_service.set_last_opened(filename)
 
     migrate(db_url, output=output)
 
@@ -626,12 +635,14 @@ async function refresh() {
       '<div class="open">Open &rsaquo;</div></div>';
   }).join('');
   list.querySelectorAll('.company').forEach(function (el) {
-    el.onclick = function () { openCompany(el.getAttribute('data-file')); };
+    el.onclick = function () { openCompany(el.getAttribute('data-file'), el.querySelector('.name').firstChild.textContent); };
   });
+  const last = info.companies.find(function (c) { return c.file === info.last_opened; });
+  if (info.auto_open && last) openCompany(last.file, last.name);
 }
-async function openCompany(file) {
+async function openCompany(file, name) {
   setBusy(true);
-  setStatus('Opening company… first open can take a minute.');
+  setStatus('Opening ' + (name || 'company') + '… first open can take a minute.');
   const result = await window.pywebview.api.open_company(file);
   if (result && result.success) {
     // Navigate from JS, only AFTER the call above has resolved -- doing
@@ -793,6 +804,8 @@ class PickerApi:
     def __init__(self, port: int, log_fh=None):
         self._port = port
         self._server: subprocess.Popen | None = None
+        self._window = None
+        self._auto_open = True
         self._log_fh = log_fh
 
     def open_document_html(self, title: str, html: str) -> dict:
@@ -990,6 +1003,7 @@ class PickerApi:
         return {
             "companies": company_service.manifest_list_companies(),
             "last_opened": company_service.get_last_opened(),
+            "auto_open": self._auto_open,
         }
 
     def create_company(self, name: str) -> dict:
@@ -999,6 +1013,26 @@ class PickerApi:
             return company_service.manifest_create_company(name)
         except Exception as exc:  # surfaced in the picker, not a traceback
             return {"success": False, "error": str(exc)}
+
+    def show_picker(self) -> dict:
+        """Stop the open company and return this window to the picker."""
+        import threading
+
+        stop_server(self._server)
+        self._server = None
+        self._auto_open = False
+        window = self._window
+
+        def _load():
+            time.sleep(0.15)
+            try:
+                if window is not None:
+                    window.load_html(PICKER_HTML)
+            except Exception:
+                pass
+
+        threading.Thread(target=_load, daemon=True).start()
+        return {"success": True}
 
     def open_company(self, filename: str) -> dict:
         """Launch the company's server and hand the URL back to the picker
@@ -1054,6 +1088,84 @@ def _webview2_installed() -> bool:
         except OSError:
             continue
     return False
+
+
+WEBVIEW2_URL = "https://developer.microsoft.com/microsoft-edge/webview2/"
+WINDOWS_INSTALLER = "SlowBooksPro-Setup-x64.exe"
+
+
+def _no_webview2_message() -> str:
+    """Give checkout and frozen users only instructions they can execute."""
+    if FROZEN:
+        return (
+            "SlowBooks Pro needs the Microsoft Edge WebView2 runtime to show "
+            "its window, and this computer does not have it.\n\n"
+            f"Install it from Microsoft: {WEBVIEW2_URL}\n"
+            f"Or use {WINDOWS_INSTALLER}, which installs the runtime.\n"
+        )
+    return (
+        "The Microsoft WebView2 runtime is not installed, so the app window "
+        "cannot open properly.\n"
+        f"Install it from: {WEBVIEW2_URL}\n"
+        "You can also start without a native window:\n"
+        "    python desktop_launcher.py --no-window"
+    )
+
+
+def _ask_yes_no(message: str, title: str = "SlowBooks Pro 2026") -> bool:
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        return ctypes.windll.user32.MessageBoxW(0, message, title, 0x4 | 0x30) == 6
+    except Exception:
+        return False
+
+
+def _hold_until_dismissed(message: str, title: str = "SlowBooks Pro 2026") -> None:
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(0, message, title, 0x40)
+            return
+        except Exception:
+            pass
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+
+
+def _run_without_webview2(port: int, log_fh=None) -> int:
+    msg = _no_webview2_message()
+    print(msg)
+    if not _ask_yes_no(msg + "\nOpen SlowBooks Pro in your web browser instead?"):
+        _show_error_box(msg)
+        return 1
+    return run_in_browser(port, log_fh)
+
+
+def run_in_browser(port: int, log_fh=None) -> int:
+    """Serve on loopback, open the system browser, and stop on dismissal."""
+    import webbrowser
+
+    proc = _start_default_company(port, output=log_fh)
+    if proc is None:
+        return 1
+    url = f"http://127.0.0.1:{port}"
+    print(f"SlowBooks Pro is running at {url}")
+    webbrowser.open(url)
+    try:
+        _hold_until_dismissed(
+            f"SlowBooks Pro is open in your web browser at {url}\n\n"
+            "Keep this box open while you work. Click OK to stop SlowBooks Pro."
+        )
+    finally:
+        stop_server(proc)
+    return 0
 
 
 def _show_error_box(message: str) -> None:
@@ -1152,17 +1264,7 @@ def run_window(port: int, log_fh=None) -> int:
         return 1
 
     if not _webview2_installed():
-        msg = (
-            "The Microsoft WebView2 runtime is not installed, so the app\n"
-            "window cannot open properly.\n"
-            "Install it from:\n"
-            "    https://developer.microsoft.com/microsoft-edge/webview2/\n"
-            "You can also start without a native window:\n"
-            "    python desktop_launcher.py --no-window"
-        )
-        print(msg)
-        _show_error_box(msg)
-        return 1
+        return _run_without_webview2(port, log_fh)
 
     # pywebview CANCELS downloads by default -- without this, saving a PDF,
     # a CSV export, or a backup from inside the app silently does nothing.
@@ -1182,7 +1284,7 @@ def run_window(port: int, log_fh=None) -> int:
     _purge_stale_webview_cache(storage_dir, app_version)
 
     api = PickerApi(port, log_fh)
-    webview.create_window(
+    api._window = webview.create_window(
         "SlowBooks Pro 2026",
         html=PICKER_HTML,
         js_api=api,
@@ -1262,13 +1364,10 @@ def _lan_addresses() -> list[str]:
     return seen
 
 
-def run_headless(port: int, bind_host: str = "127.0.0.1") -> int:
-    if bind_host != "127.0.0.1":
-        try:
-            _lan_tls()
-        except (OSError, ValueError, RuntimeError) as exc:
-            print(f"ERROR: {exc}")
-            return 1
+def _start_default_company(
+    port: int, bind_host: str = "127.0.0.1", output=None
+) -> subprocess.Popen | None:
+    """Start the last-used, first, or newly created default company."""
     from app.services import company_service
 
     filename = company_service.get_last_opened()
@@ -1281,14 +1380,29 @@ def run_headless(port: int, bind_host: str = "127.0.0.1") -> int:
             result = company_service.manifest_create_company("My Company")
             if not result["success"]:
                 print(f"ERROR: {result['error']}")
-                return 1
+                return None
             filename = result["file"]
 
     print(f"Opening company file: {filename}")
     try:
-        proc = launch_company(filename, port, bind_host=bind_host)
+        return launch_company(
+            filename, port, output=output, bind_host=bind_host, persist=False
+        )
     except (ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f"ERROR: {exc}")
+        return None
+
+
+def run_headless(port: int, bind_host: str = "127.0.0.1") -> int:
+    if bind_host != "127.0.0.1":
+        try:
+            _lan_tls()
+        except (OSError, ValueError, RuntimeError) as exc:
+            print(f"ERROR: {exc}")
+            return 1
+
+    proc = _start_default_company(port, bind_host)
+    if proc is None:
         return 1
 
     if bind_host == "127.0.0.1":
@@ -1340,6 +1454,100 @@ def _watch_parent(parent_pid: int, poll_seconds: float = 2.0) -> None:
     threading.Thread(target=_poll, daemon=True, name="parent-watch").start()
 
 
+def _win32_dlls():
+    """Return the Windows DLLs used by the timer-resolution integration."""
+    import ctypes
+
+    return ctypes.windll.winmm, ctypes.windll.kernel32, ctypes.windll.ntdll
+
+
+def _timer_resolution_ms(ntdll) -> float | None:
+    """Read the current Windows timer resolution in milliseconds."""
+    import ctypes
+
+    lo, hi, current = ctypes.c_uint32(), ctypes.c_uint32(), ctypes.c_uint32()
+    try:
+        status = ntdll.NtQueryTimerResolution(
+            ctypes.byref(lo), ctypes.byref(hi), ctypes.byref(current)
+        )
+        if status != 0:
+            return None
+    except Exception:
+        return None
+    return current.value / 10_000
+
+
+def raise_timer_resolution(period_ms: int = 1):
+    """Optionally request a finer Windows timer and return its matched undo."""
+    if sys.platform != "win32":
+        return lambda: None
+
+    requested = os.environ.get("SLOWBOOKS_TIMER_RESOLUTION_MS", "").strip()
+    if not requested:
+        print(
+            "timer resolution: left at the system default "
+            "(set SLOWBOOKS_TIMER_RESOLUTION_MS=1 to request 1 ms)"
+        )
+        return lambda: None
+    try:
+        period_ms = max(1, int(requested))
+    except ValueError:
+        print(
+            f"timer resolution: SLOWBOOKS_TIMER_RESOLUTION_MS={requested!r} "
+            "is not a number"
+        )
+        return lambda: None
+
+    try:
+        import ctypes
+
+        winmm, kernel32, ntdll = _win32_dlls()
+    except Exception:
+        return lambda: None
+
+    before = _timer_resolution_ms(ntdll)
+    try:
+
+        class _PowerThrottling(ctypes.Structure):
+            _fields_ = [
+                ("Version", ctypes.c_uint32),
+                ("ControlMask", ctypes.c_uint32),
+                ("StateMask", ctypes.c_uint32),
+            ]
+
+        state = _PowerThrottling(1, 0x4, 0)
+        kernel32.SetProcessInformation(
+            kernel32.GetCurrentProcess(),
+            4,
+            ctypes.byref(state),
+            ctypes.sizeof(state),
+        )
+    except Exception:
+        pass
+
+    try:
+        if winmm.timeBeginPeriod(period_ms) != 0:
+            print(f"timer resolution: request for {period_ms} ms refused")
+            return lambda: None
+    except Exception:
+        return lambda: None
+
+    after = _timer_resolution_ms(ntdll)
+
+    def _format(value):
+        return "unknown" if value is None else f"{value:.3f} ms"
+
+    print(f"timer resolution: was {_format(before)}, now {_format(after)}")
+
+    def undo():
+        try:
+            winmm.timeEndPeriod(period_ms)
+        except Exception:
+            pass
+
+    return undo
+
+
 def _serve() -> int:
     """Internal: run the uvicorn server in this process. The frozen build
     has no child interpreter for `-m uvicorn`, so start_server() re-execs
@@ -1364,14 +1572,18 @@ def _serve() -> int:
     port = int(os.environ.get("APP_PORT", "3001"))
     host = os.environ.get("APP_HOST", "127.0.0.1")
     tls = _lan_tls() if host != "127.0.0.1" else {}
-    uvicorn.run(
-        app.main.app,
-        host=host,
-        port=port,
-        use_colors=False,
-        **tls,
-        **({"proxy_headers": False} if tls else {}),
-    )
+    restore_timer = raise_timer_resolution()
+    try:
+        uvicorn.run(
+            app.main.app,
+            host=host,
+            port=port,
+            use_colors=False,
+            **tls,
+            **({"proxy_headers": False} if tls else {}),
+        )
+    finally:
+        restore_timer()
     return 0
 
 
@@ -1409,7 +1621,7 @@ def run_smoke_test(port: int = 3999) -> int:
     # Pipe the server child's output into our own (the log file when
     # frozen) — a crashing uvicorn child is otherwise completely silent.
     child_out = sys.stdout if hasattr(sys.stdout, "fileno") else None
-    proc = launch_company(filename, port, output=child_out)
+    proc = launch_company(filename, port, output=child_out, persist=False)
     try:
         with urllib.request.urlopen(
             f"http://127.0.0.1:{port}/health", timeout=5
@@ -1451,6 +1663,34 @@ def run_smoke_test(port: int = 3999) -> int:
     return 0
 
 
+def _repair_schema(argv) -> int:
+    """Run the bounded schema repair inside source or frozen launchers."""
+    url = None
+    for index, argument in enumerate(argv):
+        if argument == "--database-url" and index + 1 < len(argv):
+            url = argv[index + 1]
+        elif argument.startswith("--database-url="):
+            url = argument.split("=", 1)[1]
+    if not url:
+        print(
+            "usage: SlowBooksPro --_repair-schema --database-url <url> [--dry-run]",
+            file=sys.stderr,
+        )
+        return 2
+
+    # app.database creates its engine at import time, so set this first.
+    os.environ["DATABASE_URL"] = url
+    from app.services.schema_repair import repair
+
+    result = repair(url, dry_run="--dry-run" in argv)
+    print(f"revision before : {result.started_at}")
+    print(f"revision now    : {result.now_at}")
+    if result.dropped:
+        print(f"dropped (empty) : {', '.join(result.dropped)}")
+    print(f"result          : {'OK' if result.ok else 'FAILED'} - {result.message}")
+    return 0 if result.ok else 1
+
+
 def main() -> int:
     # Make every stdio write total BEFORE argparse can print anything.
     # A frozen console=False build launched with redirected stdio (any
@@ -1479,6 +1719,9 @@ def main() -> int:
     # argparse must never meet, so handle it before parsing.
     if "--_serve" in sys.argv:
         return _serve()
+
+    if "--_repair-schema" in sys.argv:
+        return _repair_schema(sys.argv)
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(

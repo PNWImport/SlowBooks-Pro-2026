@@ -3,13 +3,13 @@ from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, field_validator, model_validator
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 
 class InKindLineCreate(StrictModel):
     description: str
     quantity: Decimal = Decimal("1")
-    fair_value: Decimal = Decimal("0")  # per unit, the donor's estimate
+    fair_value: Money = Decimal("0")  # per unit, the donor's estimate
     debit_account_id: int  # the asset or expense the gift is
     credit_account_id: Optional[int] = None  # default: In-Kind Contributions
     class_id: Optional[int] = None

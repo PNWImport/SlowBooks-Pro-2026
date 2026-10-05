@@ -40,21 +40,30 @@ def _fetch_direct(from_code: str, to_code: str) -> Optional[dict]:
         TimeoutError,
         json.JSONDecodeError,
         OSError,
+        UnicodeError,
     ):
         return None
 
+    if not isinstance(payload, dict):
+        return None
     observations = payload.get("observations") or []
-    if not observations:
+    if not isinstance(observations, list) or not observations:
         return None
     obs = observations[-1]
+    if not isinstance(obs, dict):
+        return None
     date = obs.get("d")
     cell = obs.get(series) or {}
+    if not isinstance(cell, dict):
+        return None
     raw = cell.get("v")
     if raw in (None, ""):
         return None
     try:
         rate = Decimal(str(raw))
     except Exception:
+        return None
+    if not rate.is_finite() or rate <= 0:
         return None
     return {"rate": rate, "observation_date": date, "series": series}
 

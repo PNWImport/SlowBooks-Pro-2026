@@ -39,6 +39,30 @@ ENCRYPTED_SETTINGS_KEYS = frozenset(
 )
 
 
+SECRET_PLACEHOLDER = "********"
+
+
+def redact_secrets(settings: dict) -> dict:
+    """A copy of the settings with every credential replaced.
+
+    GHSA-c3v4-f43f-4wqm. `get_all_settings()` decrypts on the way out, and
+    anything handed the result can read a live credential. `GET /api/settings`
+    redacts for every role including admin, so the intent has always been that
+    these values do not leave the server — but an editable email template
+    rendered against the raw dict walks straight around that, and Jinja's
+    sandbox is no help because `company` is a plain dict and reading a key
+    from it is an ordinary permitted operation.
+
+    It lives here, beside `ENCRYPTED_SETTINGS_KEYS`, so a credential added
+    later is redacted by the same act that encrypts it. Two lists in two files
+    is how they drift.
+    """
+    return {
+        k: (SECRET_PLACEHOLDER if k in ENCRYPTED_SETTINGS_KEYS and v else v)
+        for k, v in settings.items()
+    }
+
+
 def _maybe_decrypt(key: str, value):
     if key in ENCRYPTED_SETTINGS_KEYS and value:
         return decrypt_value(value)

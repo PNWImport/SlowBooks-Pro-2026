@@ -74,6 +74,19 @@ def test_limiter_honours_storage_uri(monkeypatch):
         importlib.reload(rl)
 
 
+def test_limiter_builds_redis_storage_when_configured(monkeypatch):
+    """The production image must include Redis' Python client for shared limits."""
+    monkeypatch.setenv("RATE_LIMIT_STORAGE_URI", "redis://redis:6379/0")
+    import app.services.rate_limit as rl
+
+    importlib.reload(rl)
+    try:
+        assert type(rl.limiter._storage).__name__ == "RedisStorage"
+    finally:
+        monkeypatch.delenv("RATE_LIMIT_STORAGE_URI", raising=False)
+        importlib.reload(rl)
+
+
 def test_warns_when_proxy_trust_unset(monkeypatch, caplog):
     import app.main as main
 

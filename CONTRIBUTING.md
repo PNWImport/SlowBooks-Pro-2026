@@ -17,6 +17,35 @@ etiquette. Collaborators have full branch and Actions access: push
 branches, trigger workflows, download artifacts. CI (black/ruff,
 pytest, CodeQL, pip-audit) must be green before review.
 
+## Upstream PR preparation — September 14, 2026
+
+Upstream's current contribution and release procedure is recorded at
+[`2866c90`](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/blob/2866c9066d36c1f4de978e21041f76a7395c1d24/CONTRIBUTING.md).
+Before submitting this branch:
+
+- Review its Contributor Terms and sign-off requirement with the contributor;
+  do not add a sign-off on someone's behalf without their approval. This note
+  does not replace this checkout's license or record acceptance of new terms.
+- Preserve the local test counts and fixture documentation below. Upstream's
+  shared-database fixture and release-version claims are not established here.
+- Keep fixture passwords in named constants away from username literals;
+  scripts must obtain passwords from the environment, without defaults.
+- Supply real exported-file evidence for named third-party import formats;
+  synthetic regression coverage alone is not format acceptance.
+- Keep saved user email templates unchanged and verify business/nonprofit
+  wording. Upstream targets USA deployments; do not claim unverified support.
+- Run the full suite before pushing. Release acceptance is a separate
+  Windows, Apple Silicon macOS, and Linux/Docker/PostgreSQL gate against an
+  exact commit in the upstream testing repository, not a local coverage score.
+
+Every release also carries its docs pass, before the tag: the README's
+*What's New* and API count, `docs/features.md`, the CHANGELOG section and
+`app/static/whats-new.json` here; and on the site, the version stamps, the
+changelog entry, and the LLM-facing docs (`llms.txt`, the agent
+instructions template, the AI page) describing the new surface the way an
+agent needs it. A feature that takes a file ships a template for it.
+`docs/release-checklist.md` has the list.
+
 ## First contribution? Fork — no access needed
 
 Pushing a branch to this repo requires collaborator access, which new
@@ -88,8 +117,10 @@ bottom; leave that in.
 - **JavaScript**: vanilla JS (no build step). Match the surrounding
   style; no semicolons-vs-not crusade.
 - **Tests**: every behavior change comes with a test. Tests live under
-  `tests/` and are run with `pytest tests/ -q`. The full suite runs in
-  under 60 seconds with no network dependencies. Common fixtures
+  `tests/` and are run with `pytest tests/ -q`. Runtime depends on the
+  environment; the September 8 coverage checkpoint took about 20 minutes.
+  Full migration validation needs a dedicated PostgreSQL test database;
+  native integration cases need their documented system binaries. Common fixtures
   (defined in [tests/conftest.py](tests/conftest.py)):
   - `client` — authenticated `TestClient`. Use for most tests.
   - `unauthed_client` — `TestClient` with no session. Use only for

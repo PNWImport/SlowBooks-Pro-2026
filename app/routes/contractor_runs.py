@@ -29,7 +29,7 @@ from app.models.contractor_payments import (
 )
 from app.services.accounting import create_journal_entry, reversing_lines
 from app.services.encryption import encrypt
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 router = APIRouter(prefix="/api/contractor-runs", tags=["contractor-runs"])
 
@@ -41,7 +41,7 @@ CENT = Decimal("0.01")
 
 class ContractorPaymentInput(StrictModel):
     vendor_id: int
-    amount: float
+    amount: Money
     description: Optional[str] = None
 
     @model_validator(mode="after")

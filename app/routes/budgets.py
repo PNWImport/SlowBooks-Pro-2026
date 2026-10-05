@@ -58,20 +58,27 @@ def create_budget(data: BudgetCreate, db: Session = Depends(get_db)):
 def bulk_upsert(items: list[BudgetCreate], db: Session = Depends(get_db)):
     """Batch upsert budget entries."""
     count = 0
+    pending = {}
     for item in items:
-        existing = (
-            db.query(Budget)
-            .filter(
-                Budget.account_id == item.account_id,
-                Budget.year == item.year,
-                Budget.month == item.month,
+        key = (item.account_id, item.year, item.month)
+        existing = pending.get(key)
+        if existing is None:
+            existing = (
+                db.query(Budget)
+                .filter(
+                    Budget.account_id == item.account_id,
+                    Budget.year == item.year,
+                    Budget.month == item.month,
+                )
+                .first()
             )
-            .first()
-        )
         if existing:
             existing.amount = item.amount
         else:
-            db.add(Budget(**item.model_dump()))
+            existing = Budget(**item.model_dump())
+            db.add(existing)
+        # Sessions disable autoflush; later occurrences must see pending rows.
+        pending[key] = existing
         count += 1
     db.commit()
     return {"saved": count}

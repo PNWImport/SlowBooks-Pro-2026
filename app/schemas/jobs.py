@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, field_validator
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 from app.models.jobs import JOB_STATUSES
 
@@ -37,7 +37,7 @@ class JobCreate(StrictModel):
     start_date: Optional[dt_date] = None
     projected_end_date: Optional[dt_date] = None
     end_date: Optional[dt_date] = None
-    contract_amount: Optional[Decimal] = None
+    contract_amount: Optional[Money] = None
     notes: Optional[str] = None
 
     _name = field_validator("name")(_clean_name)
@@ -55,7 +55,7 @@ class JobUpdate(StrictModel):
     start_date: Optional[dt_date] = None
     projected_end_date: Optional[dt_date] = None
     end_date: Optional[dt_date] = None
-    contract_amount: Optional[Decimal] = None
+    contract_amount: Optional[Money] = None
     notes: Optional[str] = None
     is_active: Optional[bool] = None
 

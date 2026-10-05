@@ -41,8 +41,10 @@ def _auth_exempt() -> tuple[tuple[str, ...], set[str]]:
             ],
         )
     )
-    exact_block = text[text.index("_AUTH_EXEMPT_EXACT = {") :]
-    exact = set(re.findall(r'"([^"]+)"', exact_block[: exact_block.index("}")]))
+    exact_start = text.index("_AUTH_EXEMPT_EXACT = {")
+    exact_end = text.index("\n}\n", exact_start)
+    exact_block = text[exact_start:exact_end]
+    exact = set(re.findall(r'"([^"]+)"', exact_block))
     # Also extract regex exemptions if present
     regex_pat = None
     if "_AUTH_EXEMPT_RE" in text:

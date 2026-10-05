@@ -129,7 +129,11 @@ def _build_scenario(client, customer_id, vendor_id):
     assert r.status_code == 201, r.text
 
     # Partial payment on inv_partial — half down
-    partial_amt = float(Decimal(str(inv_partial["total"])) / 2)
+    # Payments are whole cents. An odd-cent invoice cannot be split into two
+    # mathematically equal currency amounts; round this first installment.
+    partial_amt = float(
+        (Decimal(str(inv_partial["total"])) / 2).quantize(Decimal("0.01"))
+    )
     r = client.post(
         "/api/payments",
         json={

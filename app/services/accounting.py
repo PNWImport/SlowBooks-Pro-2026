@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.models.transactions import Transaction, TransactionLine
 from app.models.accounts import Account, AccountType
+from app.services.safe_errors import DataProblem
+from app.services import control_accounts
 
 CENT = Decimal("0.01")
 
@@ -60,6 +62,27 @@ def compute_line_totals(lines, tax_rate) -> tuple[Decimal, Decimal, Decimal]:
     tax_amount = _q(taxable_subtotal(lines) * Decimal(str(tax_rate or 0)))
     total = _q(subtotal + tax_amount)
     return subtotal, tax_amount, total
+
+
+def taxed_copy_lines(lines, customer):
+    """Lines a NEW document is built from (an estimate converting, an invoice
+    being duplicated, a recurring template running), with each line's tax
+    flag as the customer stands TODAY: a customer marked non-taxable pays no
+    tax on any line, whatever the source said. Returns lightweight objects
+    carrying quantity, rate and is_taxable for compute_line_totals, in the
+    source order, plus the flags to store on the new lines.
+
+    Copying the source's tax instead charged a reseller tax on a new invoice
+    converted from an estimate saved before the exemption applied (2.16.2
+    gate, skytech — booked to Sales Tax Payable)."""
+    from types import SimpleNamespace
+
+    exempt = customer is not None and customer.is_taxable is False
+    out = []
+    for ln in lines:
+        flag = False if exempt else (getattr(ln, "is_taxable", None) is not False)
+        out.append(SimpleNamespace(quantity=ln.quantity, rate=ln.rate, is_taxable=flag))
+    return out
 
 
 def taxable_subtotal(lines) -> Decimal:
@@ -135,7 +158,7 @@ def lock_accounts(db: Session, account_ids) -> dict[int, Account]:
     db.flush()
     conn = db.connection()
     if conn.dialect.name == "sqlite":
-        if not conn.connection.driver_connection.in_transaction:
+        if not getattr(conn.connection.driver_connection, "in_transaction", False):
             conn.exec_driver_sql("BEGIN IMMEDIATE")
     return {
         account.id: account
@@ -161,6 +184,8 @@ def create_journal_entry(
     bypass_closing_date: bool = False,
     class_id: int = None,
     job_id: int = None,
+    *,
+    existing_transaction: Transaction = None,
 ) -> Transaction:
     """Create a balanced journal entry.
 
@@ -190,22 +215,37 @@ def create_journal_entry(
     for i, line in enumerate(lines):
         debit = Decimal(str(line.get("debit", 0)))
         credit = Decimal(str(line.get("credit", 0)))
+        if not debit.is_finite() or not credit.is_finite():
+            raise DataProblem(f"Line {i+1}: debit and credit must be finite")
         if debit < 0 or credit < 0:
-            raise ValueError(f"Line {i+1}: debit and credit must be non-negative")
+            raise DataProblem(f"Line {i+1}: debit and credit must be non-negative")
         if debit > 0 and credit > 0:
-            raise ValueError(f"Line {i+1}: a line cannot have both debit and credit")
+            raise DataProblem(f"Line {i+1}: a line cannot have both debit and credit")
 
     total_debit = sum(Decimal(str(line.get("debit", 0))) for line in lines)
     total_credit = sum(Decimal(str(line.get("credit", 0))) for line in lines)
 
     if total_debit != total_credit:
-        raise ValueError(
+        raise DataProblem(
             f"Journal entry not balanced: debits={total_debit}, credits={total_credit}"
         )
 
     locked_accounts = lock_accounts(db, (line["account_id"] for line in lines))
+    for i, line in enumerate(lines):
+        if line["account_id"] not in locked_accounts:
+            raise DataProblem(f"Line {i+1}: account {line['account_id']} not found")
 
-    txn = Transaction(
+    # Invoice edits retain their header identity after removing old splits.
+    # Reject nonempty journals so this path cannot double-post their balances.
+    if existing_transaction is not None and (
+        db.query(TransactionLine)
+        .filter(TransactionLine.transaction_id == existing_transaction.id)
+        .first()
+        is not None
+    ):
+        raise DataProblem("Replacement journal must have its old splits removed")
+
+    header = dict(
         date=txn_date,
         description=description,
         source_type=source_type,
@@ -214,7 +254,13 @@ def create_journal_entry(
         class_id=class_id,
         job_id=job_id,
     )
-    db.add(txn)
+    txn = existing_transaction
+    if txn is None:
+        txn = Transaction(**header)
+        db.add(txn)
+    else:
+        for key, value in header.items():
+            setattr(txn, key, value)
     db.flush()
 
     from app.services.classes_service import default_function_of
@@ -260,39 +306,38 @@ def create_journal_entry(
 
 
 def get_ar_account_id(db: Session) -> int:
-    """Get Accounts Receivable account ID (1100)."""
-    acct = db.query(Account).filter(Account.account_number == "1100").first()
-    return acct.id if acct else None
+    """Resolve control account 1100; raise rather than skip a posting."""
+    return control_accounts.resolve(db, "1100")
 
 
 def get_default_income_account_id(db: Session) -> int:
-    """Get default Service Income account ID (4000)."""
-    acct = db.query(Account).filter(Account.account_number == "4000").first()
-    return acct.id if acct else None
+    """Resolve control account 4000; raise rather than skip a posting."""
+    return control_accounts.resolve(db, "4000")
 
 
 def get_sales_tax_account_id(db: Session) -> int:
-    """Get Sales Tax Payable account ID (2200)."""
-    acct = db.query(Account).filter(Account.account_number == "2200").first()
-    return acct.id if acct else None
+    """Resolve control account 2200; raise rather than skip a posting."""
+    return control_accounts.resolve(db, "2200")
 
 
 def get_undeposited_funds_id(db: Session) -> int:
-    """Get Undeposited Funds account ID (1200)."""
-    acct = db.query(Account).filter(Account.account_number == "1200").first()
-    return acct.id if acct else None
+    """Resolve control account 1200; raise rather than skip a posting."""
+    return control_accounts.resolve(db, "1200")
 
 
 def get_ap_account_id(db: Session) -> int:
-    """Get Accounts Payable account ID (2000)."""
-    acct = db.query(Account).filter(Account.account_number == "2000").first()
-    return acct.id if acct else None
+    """Resolve control account 2000; raise rather than skip a posting."""
+    return control_accounts.resolve(db, "2000")
 
 
 def get_cc_account_id(db: Session) -> int:
-    """Get Credit Card Payable account ID (2100)."""
-    acct = db.query(Account).filter(Account.account_number == "2100").first()
-    return acct.id if acct else None
+    """Resolve control account 2100; raise rather than skip a posting."""
+    return control_accounts.resolve(db, "2100")
+
+
+def get_opening_balance_equity_id(db: Session) -> int:
+    """Opening-balance offset, created only when the operator posts it."""
+    return ensure_account(db, "3900", "Opening Balance Equity", AccountType.EQUITY).id
 
 
 def ensure_account(

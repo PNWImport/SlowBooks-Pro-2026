@@ -11,3 +11,5 @@ winrt-Windows.Storage.Streams==3.2.1
 winrt-Windows.Foundation==3.2.1
 winrt-Windows.Foundation.Collections==3.2.1
 winrt-Windows.Globalization==3.2.1
+# Native page-1 PDF rasterization.
+winrt-Windows.Data.Pdf==3.2.1

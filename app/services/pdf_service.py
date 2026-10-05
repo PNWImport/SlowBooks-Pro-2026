@@ -7,9 +7,9 @@ import mimetypes
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
-from weasyprint import HTML, default_url_fetcher
 
 from app.services import storage
+from app.services.accounting import quantize_cents
 
 TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
 _jinja_env = Environment(autoescape=True, loader=FileSystemLoader(str(TEMPLATE_DIR)))
@@ -65,7 +65,24 @@ def _company_logo_data_uri(company_settings: dict) -> str:
     return f"data:{mime};base64,{encoded}"
 
 
-def _safe_url_fetcher(url, timeout=10, ssl_context=None):
+# WeasyPrint is imported lazily (issue #121). Importing it pulls in the
+# native pango/cairo/gobject stack, and doing that at module scope meant
+# `import app.main` — and therefore the whole test suite — could not run on a
+# machine without it. That is how a Windows-only failure reached a release:
+# CI runs pytest on Linux only, and the one box that would have caught it
+# could not import the app. Rendering a PDF still requires the stack; only
+# importing the module no longer does.
+_FETCHER = None
+
+
+def _weasyprint():
+    """(HTML, URLFetcher) — imported on first use, not at import time."""
+    from weasyprint import HTML, URLFetcher
+
+    return HTML, URLFetcher
+
+
+def _build_safe_fetcher():
     """Restrict WeasyPrint to data: URIs only.
 
     Without this, user-controlled HTML (e.g. invoice notes, customer name
@@ -73,10 +90,45 @@ def _safe_url_fetcher(url, timeout=10, ssl_context=None):
     read and embed local files into the generated PDF. Templates currently
     need no external fetches; if that changes, whitelist specific https
     origins here rather than opening up file:// broadly.
+
+    WeasyPrint 70 (CVE-2026-55073) made the fetcher a class so that every
+    channel of write_pdf() honours it; ``allowed_protocols`` is the
+    library's own gate, and ``fetch`` refuses anything else a second time.
     """
-    if url.startswith("data:"):
-        return default_url_fetcher(url, timeout=timeout, ssl_context=ssl_context)
-    raise ValueError(f"URL scheme not allowed in PDF templates: {url!r}")
+    _HTML, URLFetcher = _weasyprint()
+
+    class _SafeURLFetcher(URLFetcher):
+        def __init__(self):
+            super().__init__(allowed_protocols=("data",))
+
+        def fetch(self, url, headers=None):
+            if not url.lower().startswith("data:"):
+                raise ValueError(f"URL scheme not allowed in PDF templates: {url!r}")
+            return super().fetch(url, headers=headers)
+
+    return _SafeURLFetcher()
+
+
+def _get_fetcher():
+    """The document's fetcher, built on first use.
+
+    WeasyPrint calls attributes on this object (``_fail_on_errors``), so it
+    must be the URLFetcher instance itself — a plain callable wrapper is not
+    a substitute.
+    """
+    global _FETCHER
+    if _FETCHER is None:
+        _FETCHER = _build_safe_fetcher()
+    return _FETCHER
+
+
+def __getattr__(name):
+    """Module-level lazy attribute (PEP 562): `pdf_service._safe_url_fetcher`
+    still resolves to the fetcher instance, but building it — and therefore
+    importing WeasyPrint — happens on first access rather than at import."""
+    if name == "_safe_url_fetcher":
+        return _get_fetcher()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def render_pdf(html_str: str) -> bytes:
@@ -86,7 +138,8 @@ def render_pdf(html_str: str) -> bytes:
     a W-2 or an invoice readable to a blind user. Falls back to a plain PDF
     if the installed WeasyPrint can't do the variant, so a render never
     fails on an environment quirk."""
-    doc = HTML(string=html_str, url_fetcher=_safe_url_fetcher)
+    HTML, _ = _weasyprint()
+    doc = HTML(string=html_str, url_fetcher=_get_fetcher())
     try:
         return doc.write_pdf(pdf_variant="pdf/ua-1")
     except Exception:  # pragma: no cover - older WeasyPrint / font edge cases
@@ -125,6 +178,11 @@ def _render(template_name: str, company_settings: dict, **context) -> str:
     from app.services.terminology import terms_for
 
     template = _jinja_env.get_template(template_name)
+    # Every document carries the company logo when one is set (discussion
+    # #108: only the analytics PDF and the new-hire report ever received it).
+    context.setdefault(
+        "company_logo_data_uri", _company_logo_data_uri(company_settings)
+    )
     return template.render(
         company=company_settings, terms=terms_for(company_settings), **context
     )
@@ -144,8 +202,7 @@ def generate_invoice_pdf(invoice, company_settings: dict) -> bytes:
 
 
 def generate_estimate_pdf(estimate, company_settings: dict) -> bytes:
-    template = _jinja_env.get_template("estimate_pdf.html")
-    html_str = template.render(est=estimate, company=company_settings)
+    html_str = _render("estimate_pdf.html", company_settings, est=estimate)
     return render_pdf(html_str)
 
 
@@ -220,8 +277,6 @@ def _amount_to_words(amount) -> str:
     def _int_to_words(n):
         if n == 0:
             return "Zero"
-        if n < 0:
-            return "Negative " + _int_to_words(-n)
         parts = []
         if n >= 1000000:
             parts.append(_int_to_words(n // 1000000) + " Million")
@@ -241,10 +296,10 @@ def _amount_to_words(amount) -> str:
             parts.append(ones[n])
         return " ".join(parts)
 
-    amt = float(amount or 0)
-    dollars = int(amt)
-    cents = round((amt - dollars) * 100)
-    return f"{_int_to_words(dollars)} and {cents:02d}/100"
+    amt = quantize_cents(amount)
+    dollars, cents = divmod(int(abs(amt) * 100), 100)
+    sign = "Negative " if amt < 0 else ""
+    return f"{sign}{_int_to_words(dollars)} and {cents:02d}/100"
 
 
 def generate_collection_letter_pdf(
@@ -252,14 +307,11 @@ def generate_collection_letter_pdf(
 ) -> bytes:
     from datetime import date as _date
 
-    from app.services.terminology import terms_for
-
-    template = _jinja_env.get_template("collection_letter.html")
-    html_str = template.render(
+    html_str = _render(
+        "collection_letter.html",
+        company_settings,
         customer=customer,
         invoices=invoices,
-        company=company_settings,
-        terms=terms_for(company_settings),
         letter_type=letter_type,
         total_due=total_due,
         today=_date.today(),
@@ -318,10 +370,10 @@ def generate_report_pdf(sections: list, company_settings: dict) -> bytes:
     """
     from datetime import date
 
-    template = _jinja_env.get_template("report_pdf.html")
-    html_str = template.render(
+    html_str = _render(
+        "report_pdf.html",
+        company_settings,
         sections=sections,
-        company=company_settings,
         paper_size=(company_settings.get("pdf_paper_size") or "letter").lower(),
         generated_on=date.today().isoformat(),
     )

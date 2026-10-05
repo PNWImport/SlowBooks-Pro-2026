@@ -1,4 +1,84 @@
 {
+  "2.18.0": {
+    "title": "Payroll, accounting integrity and release hardening — unreleased",
+    "items": [
+      "Expanded payroll and HR workflows, including contractor runs, retro pay, benefits and employee time submission",
+      "Accounting amounts use cents; payment ownership, deposit availability and historical inventory reversals are checked",
+      "Stronger session, upload and audit protections, with hardened deployment and backup handling",
+      "Includes the 2.15 chart importer with preview, template download and hledger support"
+    ]
+  },
+  "2.17.3": {
+    "title": "Payments land on the right account",
+    "items": [
+      "Pay Bills: paying bills from more than one vendor at once now makes one payment per vendor; it used to record a single payment to the first vendor that also paid the others' bills",
+      "A payment, credit memo or batch payment can no longer be applied to a different customer's invoice, and a bill payment to a different vendor's bill"
+    ]
+  },
+  "2.17.2": {
+    "title": "Editing an invoice keeps its job costing",
+    "items": [
+      "Saving an invoice from the edit screen no longer strips each line's job and cost code, so its revenue stays on the job-cost reports",
+      "An edited invoice posts the way a new one does: foreign-currency invoices at their exchange rate, and a changed invoice date moves its ledger entry",
+      "An invoice's total cannot be edited below what has already been paid, and paid / partly paid follows the payments"
+    ]
+  },
+  "2.17.1": {
+    "title": "OpenAI works again",
+    "items": [
+      "AI analysis with OpenAI: the current models, including the default gpt-5.4-mini, refused the request; they are sent the settings they accept",
+      "Reasoning models get room to think before answering, and a reply cut off at the limit now says so instead of reporting an unexpected response"
+    ]
+  },
+  "2.17.0": {
+    "title": "Your ledger, in a spreadsheet",
+    "items": [
+      "Trial Balance and General Ledger save as a spreadsheet (CSV) and a printable PDF; Profit & Loss and Balance Sheet gain the spreadsheet",
+      "The General Ledger shows each account's balance brought forward, a running balance, the source of every line and a period total that ties to the Trial Balance",
+      "Bank feeds: a SimpleFIN setup token from any SimpleFIN provider connects, not only bridge.simplefin.org"
+    ]
+  },
+  "2.16.3": {
+    "title": "The Docker image starts again",
+    "items": [
+      "Server / Docker installs: a freshly built image failed to start after a database library update; the library is pinned to the tested version",
+      "Desktop apps are unchanged from 2.16.2"
+    ]
+  },
+  "2.16.2": {
+    "title": "Tax-exempt customers, wider amounts, and two forms put right",
+    "items": [
+      "Estimates: the line-item cells follow their headings again (quantity sat under Cost code); picking an item fills its cost",
+      "Job Cost Entry: the dialog opens as wide as your window and the cost lines scroll instead of being cut off",
+      "A customer marked non-taxable is no longer charged sales tax on invoices, estimates or sales receipts made in the app",
+      "Money columns hold amounts up to 9,999,999,999,999.99, for currencies with large everyday amounts"
+    ]
+  },
+  "2.16.1": {
+    "title": "Wave's full export imports its journals",
+    "items": [
+      "Wave full exports recognize two-column debit and credit headers without misreading the alternate signed amount column",
+      "Migration dry runs reject all-zero ledgers and report skipped empty journals",
+      "Previously imported transaction IDs are skipped on repeat imports from the same source; synthesized opening balances are posted once"
+    ]
+  },
+  "2.16.0": {
+    "title": "The year at a glance",
+    "items": [
+      "Two new overview cards under Customize: P&L year to date with cumulative net by month, and a Balance Sheet trend over the last twelve month-ends",
+      "The trend balances at every point and its latest point equals the Balance Sheet report; a nonprofit sees Activities and Statement of Financial Position",
+      "The chart of accounts import dialog offers a CSV template with the columns and example rows"
+    ]
+  },
+  "2.15.0": {
+    "title": "Your chart, from your file",
+    "items": [
+      "Chart of Accounts → Import… reads a CSV in the export's columns, any spreadsheet with Number / Name / Type, or hledger's account list",
+      "A dry run first: every row's fate with a reason, nothing written until you say so",
+      "Accounts you already have take the file's names; the control accounts the software posts to are renamed, never duplicated",
+      "Replace the seeded chart: unused accounts the file does not name are deactivated, control accounts and history stay"
+    ]
+  },
   "2.9.3": {
     "title": "SimpleFIN request pinned to the checked address",
     "items": [

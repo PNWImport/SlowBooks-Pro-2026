@@ -150,11 +150,14 @@ const InvoicesPage = {
     },
 
     async copyPaymentLink(id) {
+        let data;
         try {
-            const data = await API.get(`/payments/payment-link/${id}`);
-            await navigator.clipboard.writeText(data.url);
-            toast('Payment link copied to clipboard');
-        } catch (err) { toast(err.message, 'error'); }
+            data = await API.get(`/payments/payment-link/${id}`);
+        } catch (err) { toast(err.message, 'error'); return; }
+        // Fetching the link and copying it fail for unrelated reasons, and
+        // reporting a clipboard refusal as an API error sent people looking
+        // in the wrong place.
+        return copyToClipboard(data.url, 'Payment link');
     },
 
     // Desktop-mode fallback: webhooks can't reach 127.0.0.1, so poll the
@@ -185,15 +188,47 @@ const InvoicesPage = {
                     <div class="form-group full-width"><label>Recipient Email *</label>
                         <input name="recipient" type="email" required value="${escapeHtml(email)}"></div>
                     <div class="form-group full-width"><label>Subject</label>
-                        <input name="subject" value="${InvoicesPage.docLabel(inv)} #${escapeHtml(inv.invoice_number)} from ${escapeHtml(inv.customer_name || 'us')}"></div>
-                    <div class="form-group full-width"><label>Message</label>
-                        <textarea name="message">Please find attached Invoice #${escapeHtml(inv.invoice_number)}.</textarea></div>
+                        <input name="subject" placeholder="Loading from your template…"></div>
+                    <div class="form-group full-width"><label>Message <span class="form-hint">Appears at the top of the email. Leave it blank to send your template as it is.</span></label>
+                        <textarea name="message" oninput="InvoicesPage.queueEmailPreview(${id})"></textarea></div>
                 </div>
+                <details style="margin-top:4px;" open>
+                    <summary style="cursor:pointer; font-size:12px; font-weight:600;">Preview — this is what will be sent</summary>
+                    <iframe id="email-preview" sandbox="" title="Email preview" style="width:100%;height:260px;border:1px solid var(--border);border-radius:4px;margin-top:6px;background:#fff;"></iframe>
+                </details>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Send Email</button>
                 </div>
             </form>`);
+        InvoicesPage.refreshEmailPreview(id, true);
+    },
+
+    // The preview is rendered by the same server code that sends, then kept in
+    // a sandboxed iframe so an operator-authored template cannot execute in the
+    // application page.
+    _previewTimer: null,
+
+    queueEmailPreview(id) {
+        clearTimeout(InvoicesPage._previewTimer);
+        InvoicesPage._previewTimer = setTimeout(() => InvoicesPage.refreshEmailPreview(id), 350);
+    },
+
+    async refreshEmailPreview(id, fillSubject = false) {
+        const form = $('#modal-body form');
+        if (!form) return;
+        const frame = $('#email-preview');
+        try {
+            const out = await API.post(`/invoices/${id}/email-preview`, {
+                recipient: form.recipient.value || null,
+                subject: fillSubject ? null : (form.subject.value || null),
+                message: form.message.value || null,
+            });
+            if (fillSubject && !form.subject.value) form.subject.value = out.subject;
+            if (frame) frame.srcdoc = out.html_body;
+        } catch (err) {
+            if (frame) frame.srcdoc = `<p>Preview unavailable: ${escapeHtml(err.message)}</p>`;
+        }
     },
 
     async sendEmail(e, id) {
@@ -308,6 +343,7 @@ const InvoicesPage = {
     },
 
     customerSelected(customerId) {
+        setTimeout(() => InvoicesPage.recalc(), 0);
         if (customerId === '__new__') {
             const form = $('#inv-new-customer-form');
             if (form) form.style.display = 'block';
@@ -351,7 +387,11 @@ const InvoicesPage = {
 
     lineRowHtml(idx, line, items) {
         const itemOpts = items.map(i => `<option value="${i.id}" ${line.item_id==i.id?'selected':''}>${escapeHtml(i.name)}</option>`).join('');
-        return `<tr data-line="${idx}">
+        // The form has no job / class / cost-code cells, but a line may carry
+        // them (job costing, the API). Keep them on the row so an edit sends
+        // them back instead of stripping them from the line and its posting.
+        const dim = (v) => (v == null ? '' : escapeHtml(String(v)));
+        return `<tr data-line="${idx}" data-job-id="${dim(line.job_id)}" data-class-id="${dim(line.class_id)}" data-cost-code-id="${dim(line.cost_code_id)}">
             <td><select class="line-item" onchange="InvoicesPage.itemSelected(${idx})">
                 <option value="">--</option>${itemOpts}</select></td>
             <td><input class="line-desc" value="${escapeHtml(line.description || '')}"></td>
@@ -367,6 +407,7 @@ const InvoicesPage = {
         const tbody = $('#inv-lines');
         const idx = InvoicesPage.lineCount++;
         tbody.insertAdjacentHTML('beforeend', InvoicesPage.lineRowHtml(idx, {}, InvoicesPage._items));
+        InvoicesPage.recalc();
     },
 
     removeLine(idx) {
@@ -389,6 +430,7 @@ const InvoicesPage = {
     },
 
     recalc() {
+        TaxExempt.enforce(InvoicesPage._customers, $('#inv-customer-select')?.value, $('#inv-lines'));
         let subtotal = 0, taxable = 0;
         $$('#inv-lines tr').forEach(row => {
             const qty = parseFloat(row.querySelector('.line-qty')?.value) || 0;
@@ -446,6 +488,9 @@ const InvoicesPage = {
                 quantity: parseFloat(row.querySelector('.line-qty')?.value) || 1,
                 is_taxable: row.querySelector('.line-taxable') ? row.querySelector('.line-taxable').checked : null,
                 rate: parseFloat(row.querySelector('.line-rate')?.value) || 0,
+                job_id: row.dataset.jobId ? parseInt(row.dataset.jobId) : null,
+                class_id: row.dataset.classId ? parseInt(row.dataset.classId) : null,
+                cost_code_id: row.dataset.costCodeId ? parseInt(row.dataset.costCodeId) : null,
                 line_order: i,
             });
         });

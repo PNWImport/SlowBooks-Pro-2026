@@ -2,7 +2,9 @@
 tuning, and the /api/system server_mode flag the UI keys its header off."""
 
 import sqlite3
+import sys
 
+import pytest
 from sqlalchemy import create_engine, text
 
 import desktop_launcher
@@ -124,6 +126,10 @@ def test_data_dir_flag_redirects_everything(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="parent watcher is POSIX-only; os.kill(pid, 0) terminates on Windows",
+)
 def test_parent_watcher_exits_when_parent_dies(tmp_path):
     """Real process pair: a fake 'launcher' spawns a watcher child; killing
     the launcher must take the child down within the poll interval."""
@@ -164,13 +170,27 @@ def test_parent_watcher_exits_when_parent_dies(tmp_path):
     # Kill the launcher; the watcher must take the child down
     parent.kill()
     parent.wait()
+
+    def _exited(pid):
+        try:
+            _os.kill(pid, 0)
+        except OSError:
+            return True
+        # The orphaned child is re-parented to PID 1. In a container whose
+        # PID 1 is not an init (act, `docker run` without --init) nothing
+        # reaps it, so it stays a zombie that still answers kill(pid, 0).
+        # A zombie has exited — the watcher did its job.
+        try:
+            with open(f"/proc/{pid}/stat") as f:
+                return f.read().rsplit(")", 1)[1].split()[0] == "Z"
+        except OSError:
+            return False
+
     deadline = time.time() + 5
     alive = True
     while time.time() < deadline:
-        try:
-            _os.kill(child_pid, 0)
-            time.sleep(0.2)
-        except OSError:
+        if _exited(child_pid):
             alive = False
             break
+        time.sleep(0.2)
     assert not alive, "server child outlived its launcher parent"

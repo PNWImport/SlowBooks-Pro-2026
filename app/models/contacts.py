@@ -3,6 +3,7 @@
 # entry (customers, vendors, employees, other names); same idea here.
 # ============================================================================
 
+from decimal import Decimal
 from sqlalchemy import (
     Column,
     Integer,
@@ -48,12 +49,12 @@ class Customer(Base):
     ship_country = Column(String(100), default="US")
 
     terms = Column(String(50), default="Net 30")
-    credit_limit = Column(Numeric(12, 2), nullable=True)
+    credit_limit = Column(Numeric(15, 2), nullable=True)
     tax_id = Column(EncryptedString(255), nullable=True)
     is_taxable = Column(Boolean, default=True)
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
-    balance = Column(Numeric(12, 2), default=0)
+    balance = Column(Numeric(15, 2), default=Decimal("0"))
     # Nonprofit: the donor record. individual | organization; the
     # salutation opens the acknowledgment letter; the year-end statement
     # batch skips donors who opted out.
@@ -99,7 +100,7 @@ class Vendor(Base):
     w9_document_id = Column(Integer, ForeignKey("attachments.id"), nullable=True)
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
-    balance = Column(Numeric(12, 2), default=0)
+    balance = Column(Numeric(15, 2), default=Decimal("0"))
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(

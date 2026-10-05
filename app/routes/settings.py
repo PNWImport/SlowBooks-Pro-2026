@@ -11,7 +11,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.settings import DEFAULT_SETTINGS
-from app.services.settings_service import get_all_settings, set_setting
+from app.services.settings_service import (
+    ENCRYPTED_SETTINGS_KEYS,
+    SECRET_PLACEHOLDER,
+    get_all_settings,
+    redact_secrets,
+    set_setting,
+)
 
 # Aliases used by upstream Phase 9/10 routes that import from this module
 _get_all = get_all_settings
@@ -24,31 +30,13 @@ _set = set_setting
 # period override password. Empty values still report as empty so the UI
 # can render an unconfigured state; non-empty values report SECRET_PLACEHOLDER
 # so the operator can tell the value is set without exposing it.
-SECRET_KEYS = frozenset(
-    {
-        "closing_date_password",
-        "smtp_password",
-        "stripe_secret_key",
-        "stripe_webhook_secret",
-        "paypal_client_secret",
-        "square_access_token",
-        "square_webhook_signature_key",
-        "qbo_client_secret",
-        "qbo_access_token",
-        "qbo_refresh_token",
-        "simplefin_access_url",
-    }
-)
-SECRET_PLACEHOLDER = "********"
-
-
-def _redact_secrets(settings: dict) -> dict:
-    """Return a copy of `settings` with secret values replaced by the
-    placeholder when non-empty."""
-    return {
-        k: (SECRET_PLACEHOLDER if (k in SECRET_KEYS and v) else v)
-        for k, v in settings.items()
-    }
+# ONE list, in settings_service, beside the encryption it mirrors. This file
+# used to carry a second frozenset identical to ENCRYPTED_SETTINGS_KEYS; they
+# happened to agree, and nothing would have said so if they stopped. A
+# credential added to one and not the other is encrypted at rest and rendered
+# in plaintext by an email template (GHSA-c3v4-f43f-4wqm).
+SECRET_KEYS = ENCRYPTED_SETTINGS_KEYS
+_redact_secrets = redact_secrets
 
 
 # Settings whose value is one of a fixed set. The SPA renders a <select>;
@@ -216,4 +204,8 @@ def test_email(db: Session = Depends(get_db)):
         # Don't let the catch-all below rewrite our own 502 into a 500.
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Email failed: {str(e)}")
+        from app.services.safe_errors import safe_message
+
+        raise HTTPException(
+            status_code=500, detail=f"Email failed: {safe_message(e, 'test email')}"
+        )

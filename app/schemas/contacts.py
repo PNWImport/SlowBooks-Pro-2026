@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from app.schemas.common import BlankableEmail, NonBlankName, StrictModel
+from app.schemas.common import BlankableEmail, Money, NonBlankName, StrictModel
 
 
 # Field lengths below mirror the VARCHAR(n) widths on the Customer model.
@@ -35,7 +35,7 @@ class CustomerCreate(StrictModel):
     ship_zip: Optional[str] = Field(None, max_length=20)
     ship_country: str = Field("US", max_length=100)
     terms: str = Field("Net 30", max_length=50)
-    credit_limit: Optional[Decimal] = None
+    credit_limit: Optional[Money] = None
     tax_id: Optional[str] = Field(None, max_length=50)
     is_taxable: bool = True
     notes: Optional[str] = None
@@ -66,7 +66,7 @@ class CustomerUpdate(StrictModel):
     ship_zip: Optional[str] = Field(None, max_length=20)
     ship_country: Optional[str] = Field(None, max_length=100)
     terms: Optional[str] = Field(None, max_length=50)
-    credit_limit: Optional[Decimal] = None
+    credit_limit: Optional[Money] = None
     tax_id: Optional[str] = Field(None, max_length=50)
     is_taxable: Optional[bool] = None
     notes: Optional[str] = None

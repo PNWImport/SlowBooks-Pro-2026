@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, field_validator, model_validator
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 from app.models.job_costing import ALLOCATION_METHODS
 
@@ -80,7 +80,7 @@ class CostTypeResponse(BaseModel):
 class EquipmentCreate(StrictModel):
     name: str
     code: Optional[str] = None
-    hourly_rate: Decimal = Decimal("0")
+    hourly_rate: Money = Decimal("0")
     cost_code_id: Optional[int] = None
     recovery_account_id: Optional[int] = None
     notes: Optional[str] = None
@@ -91,7 +91,7 @@ class EquipmentCreate(StrictModel):
 class EquipmentUpdate(StrictModel):
     name: Optional[str] = None
     code: Optional[str] = None
-    hourly_rate: Optional[Decimal] = None
+    hourly_rate: Optional[Money] = None
     cost_code_id: Optional[int] = None
     recovery_account_id: Optional[int] = None
     notes: Optional[str] = None
@@ -121,8 +121,8 @@ class JobCostLineCreate(StrictModel):
     cost_type: Optional[str] = None
     description: Optional[str] = None
     quantity: Decimal = Decimal("1")
-    rate: Decimal = Decimal("0")
-    amount: Optional[Decimal] = None  # defaults to quantity × rate
+    rate: Money = Decimal("0")
+    amount: Optional[Money] = None  # defaults to quantity × rate
     debit_account_id: Optional[int] = None
     credit_account_id: Optional[int] = None
     employee_id: Optional[int] = None
@@ -204,7 +204,7 @@ class AllocationTarget(StrictModel):
 
 class AllocationCreate(StrictModel):
     date: dt_date
-    amount: Decimal
+    amount: Money
     method: str = "equal"
     memo: Optional[str] = None
     cost_code_id: Optional[int] = None
@@ -230,8 +230,8 @@ class AllocationCreate(StrictModel):
 class JobBudgetRow(StrictModel):
     cost_code_id: Optional[int] = None
     cost_type: Optional[str] = None
-    amount: Decimal = Decimal("0")
-    revenue_amount: Decimal = Decimal("0")
+    amount: Money = Decimal("0")
+    revenue_amount: Money = Decimal("0")
     notes: Optional[str] = None
 
     @model_validator(mode="after")

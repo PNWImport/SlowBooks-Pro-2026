@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -54,8 +54,8 @@ class AssetCreate(StrictModel):
     name: str
     asset_type_id: int
     purchase_date: date
-    purchase_price: Decimal
-    salvage_value: Decimal = Decimal("0")
+    purchase_price: Money
+    salvage_value: Money = Decimal("0")
     description: Optional[str] = None
 
 
@@ -63,8 +63,8 @@ class AssetUpdate(StrictModel):
     name: Optional[str] = None
     asset_type_id: Optional[int] = None
     purchase_date: Optional[date] = None
-    purchase_price: Optional[Decimal] = None
-    salvage_value: Optional[Decimal] = None
+    purchase_price: Optional[Money] = None
+    salvage_value: Optional[Money] = None
     description: Optional[str] = None
 
 
@@ -74,7 +74,7 @@ class DepreciationRunRequest(StrictModel):
 
 class DisposalRequest(StrictModel):
     disposal_date: date
-    proceeds: Decimal = Decimal("0")
+    proceeds: Money = Decimal("0")
     deposit_account_id: int
 
 

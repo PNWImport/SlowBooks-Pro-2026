@@ -3,6 +3,7 @@
 # Feature 2: Weekly/monthly/quarterly/yearly recurring invoice templates
 # ============================================================================
 
+from decimal import Decimal
 from sqlalchemy import (
     Column,
     Integer,
@@ -32,7 +33,7 @@ class RecurringInvoice(Base):
     is_active = Column(Boolean, default=True)
 
     terms = Column(String(50), default="Net 30")
-    tax_rate = Column(Numeric(5, 4), default=0)
+    tax_rate = Column(Numeric(5, 4), default=Decimal("0"))
     notes = Column(Text, nullable=True)
     invoices_created = Column(Integer, default=0)
 
@@ -64,8 +65,8 @@ class RecurringInvoiceLine(Base):
     )
     item_id = Column(Integer, ForeignKey("items.id"), nullable=True)
     description = Column(Text, nullable=True)
-    quantity = Column(Numeric(10, 2), default=1)
-    rate = Column(Numeric(12, 2), default=0)
+    quantity = Column(Numeric(10, 2), default=Decimal("1"))
+    rate = Column(Numeric(15, 2), default=Decimal("0"))
     # Per-line sales tax (default: the item's flag, or taxable). A customer-
     # owned-device repair is labor with no tax; the part on the same invoice
     # is taxed.

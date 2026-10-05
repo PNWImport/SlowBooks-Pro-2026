@@ -317,3 +317,9 @@ def test_calendar_endpoints(client, seed_accounts):
     body = r.json()
     assert body["year"] == 2026
     assert len(body["entries"]) > 0
+
+
+def test_calendar_endpoints_reject_years_without_a_valid_lookback(client):
+    for endpoint in ("deposit-schedule", "liability-calendar"):
+        response = client.get(f"/api/tax-forms/{endpoint}?year=1")
+        assert response.status_code == 422

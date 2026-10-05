@@ -3,19 +3,10 @@
 from sqlalchemy.orm import Query
 
 
-def _account(client, name: str) -> dict:
-    response = client.post("/api/banking/accounts", json={"name": name})
-    assert response.status_code == 201, response.text
-    return response.json()
-
-
-def _transaction(client, account_id: int, day: str, amount: int) -> dict:
-    response = client.post(
-        "/api/banking/transactions",
-        json={"bank_account_id": account_id, "date": day, "amount": amount},
-    )
-    assert response.status_code == 201, response.text
-    return response.json()
+from tests.banking_helpers import (
+    bank_account as _account,
+    bank_transaction as _transaction,
+)
 
 
 def test_reconciliation_scopes_transactions_and_locks_transitions(client, monkeypatch):
@@ -49,16 +40,16 @@ def test_reconciliation_scopes_transactions_and_locks_transitions(client, monkey
     ).json()
     base = f"/api/banking/reconciliations/{reconciliation['id']}"
 
-    assert client.post(f"{base}/toggle/{foreign['id']}").status_code == 404
-    assert client.post(f"{base}/toggle/{future['id']}").status_code == 404
-    toggled = client.post(f"{base}/toggle/{owned['id']}")
+    assert client.post(f"{base}/toggle/{foreign['line_id']}").status_code == 400
+    assert client.post(f"{base}/toggle/{future['line_id']}").status_code == 400
+    toggled = client.post(f"{base}/toggle/{owned['line_id']}")
     assert toggled.status_code == 200
     assert toggled.json()["reconciled"] is True
 
     completed = client.post(f"{base}/complete")
     assert completed.status_code == 200, completed.text
     assert client.post(f"{base}/complete").status_code == 400
-    assert client.post(f"{base}/toggle/{owned['id']}").status_code == 400
-    assert {"BankAccount", "BankTransaction", "Reconciliation"}.issubset(
+    assert client.post(f"{base}/toggle/{owned['line_id']}").status_code == 400
+    assert {"BankAccount", "TransactionLine", "Reconciliation"}.issubset(
         locked_entities
     )

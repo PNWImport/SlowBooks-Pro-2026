@@ -3,12 +3,12 @@ from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 
 class PaymentAllocationCreate(StrictModel):
     invoice_id: int
-    amount: Decimal
+    amount: Money
 
 
 class PaymentAllocationResponse(BaseModel):
@@ -22,7 +22,7 @@ class PaymentAllocationResponse(BaseModel):
 class PaymentCreate(StrictModel):
     customer_id: int
     date: dt_date
-    amount: Decimal
+    amount: Money
     method: Optional[str] = None
     check_number: Optional[str] = None
     reference: Optional[str] = None

@@ -22,6 +22,7 @@ from app.schemas.time_entries import (
     TimeEntryApprove,
 )
 from app.services.overtime import classify_period
+from app.services.safe_errors import safe_message
 
 router = APIRouter(prefix="/api/time-entries", tags=["time-entries"])
 
@@ -86,7 +87,13 @@ def post_entries_to_job(data: PostToJobRequest, db: Session = Depends(get_db)):
             )
         except ValueError as exc:
             db.rollback()
-            results.append({"id": entry_id, "ok": False, "error": str(exc)})
+            results.append(
+                {
+                    "id": entry_id,
+                    "ok": False,
+                    "error": safe_message(exc, "post time entry to job"),
+                }
+            )
     return {"results": results, "posted": sum(1 for r in results if r["ok"])}
 
 
@@ -251,7 +258,9 @@ def post_entry_to_job(entry_id: int, db: Session = Depends(get_db)):
     try:
         jc = post_time_entry_to_job(db, entry)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(
+            status_code=400, detail=safe_message(exc, "post time entry to job")
+        )
     db.commit()
     return {
         "id": entry.id,
@@ -285,7 +294,9 @@ def reject_time_entry(entry_id: int, db: Session = Depends(get_db)):
             try:
                 void_job_cost(db, jc)
             except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc))
+                raise HTTPException(
+                    status_code=400, detail=safe_message(exc, "void job cost")
+                )
         entry.job_cost_id = None
     entry.status = TimeEntryStatus.REJECTED
     db.commit()

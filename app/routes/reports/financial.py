@@ -1,9 +1,9 @@
 from datetime import date
 from decimal import Decimal
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import func as sqlfunc
+from sqlalchemy import func as sqlfunc, select
 
 from app.database import get_db
 from app.models.accounts import Account, AccountType
@@ -13,7 +13,7 @@ from app.services.terminology import Terms, terms_from_db
 
 # Debit-normal account types. For these, natural balance = debit - credit.
 # For the rest (liability, equity, income), natural balance = credit - debit.
-_DEBIT_NORMAL = {AccountType.ASSET, AccountType.EXPENSE, AccountType.COGS}
+from app.services.bank_register import DEBIT_NORMAL as _DEBIT_NORMAL  # noqa: E402
 
 
 def _totals_by_account(db, acct_type, date_start=None, date_end=None):
@@ -163,8 +163,37 @@ def general_ledger(
     if account_id:
         q = q.filter(TransactionLine.account_id == account_id)
 
-    q = q.order_by(Account.account_number, Transaction.date)
+    # date, then posting order: a stable order is what makes a running
+    # balance mean the same thing on screen and in an export (#179)
+    q = q.order_by(
+        Account.account_number, Transaction.date, Transaction.id, TransactionLine.id
+    )
     results = q.all()
+
+    # Balance brought forward per account: everything posted before the
+    # period. Balances read in the account's natural sign, as the balance
+    # sheet and the overview show them: a debit-normal account (asset,
+    # expense, COGS) is debit minus credit, every other account credit minus
+    # debit, so a payable you owe reads positive. The debit and credit
+    # columns are untouched, so period Dr - Cr still equals the TB's Net.
+    ids = {acct.id for _, _, acct in results}
+    opening = {}
+    if ids:
+        for acct_id, dr, cr in (
+            db.query(
+                TransactionLine.account_id,
+                sqlfunc.coalesce(sqlfunc.sum(TransactionLine.debit), 0),
+                sqlfunc.coalesce(sqlfunc.sum(TransactionLine.credit), 0),
+            )
+            .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+            .filter(Transaction.date < start_date, TransactionLine.account_id.in_(ids))
+            .group_by(TransactionLine.account_id)
+            .all()
+        ):
+            opening[acct_id] = Decimal(str(dr)) - Decimal(str(cr))
+
+    def _sign(acct):
+        return 1 if acct.account_type in _DEBIT_NORMAL else -1
 
     entries_by_account = {}
     for tl, txn, acct in results:
@@ -175,24 +204,33 @@ def general_ledger(
                 "account_number": acct.account_number,
                 "account_name": acct.name,
                 "account_type": acct.account_type.value,
+                "normal_balance": "debit" if _sign(acct) > 0 else "credit",
+                "opening_balance": _sign(acct) * opening.get(acct.id, Decimal(0)),
                 "entries": [],
                 "total_debit": Decimal(0),
                 "total_credit": Decimal(0),
+                "_running": _sign(acct) * opening.get(acct.id, Decimal(0)),
             }
-        entries_by_account[key]["entries"].append(
+        a = entries_by_account[key]
+        a["_running"] += _sign(acct) * (tl.debit - tl.credit)
+        a["entries"].append(
             {
                 "date": txn.date.isoformat(),
                 "description": txn.description or tl.description or "",
                 "reference": txn.reference or "",
                 "debit": float(tl.debit),
                 "credit": float(tl.credit),
+                "running_balance": float(a["_running"]),
+                "source_type": txn.source_type or "journal",
             }
         )
-        entries_by_account[key]["total_debit"] += tl.debit
-        entries_by_account[key]["total_credit"] += tl.credit
+        a["total_debit"] += tl.debit
+        a["total_credit"] += tl.credit
 
     accounts_list = list(entries_by_account.values())
     for a in accounts_list:
+        a["closing_balance"] = float(a.pop("_running"))
+        a["opening_balance"] = float(a["opening_balance"])
         a["total_debit"] = float(a["total_debit"])
         a["total_credit"] = float(a["total_credit"])
 
@@ -210,103 +248,24 @@ def account_transactions(
     end_date: date = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """Phase 11: drill-down support. Return every journal entry line hitting
-    a given account in the date range, with source document linkage so the
+    """Phase 11: drill-down support. Every journal entry line hitting a
+    given account in the date range, with source document linkage so the
     UI can jump from a P&L row straight to the underlying invoice/bill/JE.
+    The register service (bank_register.account_register) does the work —
+    the bank register is the same view."""
+    from app.services.bank_register import account_register
 
-    Response:
-      {
-        account: {id, number, name, type, natural_balance},
-        start_date, end_date,
-        period_debit, period_credit, period_net,
-        entries: [
-          {transaction_id, date, description, reference, debit, credit,
-           running_balance, source_type, source_id, source_link}
-        ]
-      }
-    """
     acct = db.query(Account).filter(Account.id == account_id).first()
     if not acct:
         raise HTTPException(status_code=404, detail="Account not found")
-
     if not start_date:
         start_date = date(date.today().year, 1, 1)
     if not end_date:
         end_date = date.today()
-
-    q = (
-        db.query(TransactionLine, Transaction)
-        .join(Transaction, TransactionLine.transaction_id == Transaction.id)
-        .filter(TransactionLine.account_id == account_id)
-        .filter(Transaction.date >= start_date, Transaction.date <= end_date)
-        .order_by(Transaction.date, Transaction.id, TransactionLine.id)
-    )
-
-    # Running balance is useful for reconciliation-style drill-downs.
-    # Sign follows the account's natural balance (debit-normal vs credit-normal).
-    debit_normal = acct.account_type in _DEBIT_NORMAL
-    running = Decimal("0")
-    period_debit = Decimal("0")
-    period_credit = Decimal("0")
-    entries = []
-
-    for tl, txn in q.all():
-        dr = tl.debit or Decimal("0")
-        cr = tl.credit or Decimal("0")
-        period_debit += dr
-        period_credit += cr
-        delta = (dr - cr) if debit_normal else (cr - dr)
-        running += delta
-
-        # Build a friendly source link the SPA can route to.
-        source_link = None
-        if txn.source_type == "invoice" and txn.source_id:
-            source_link = f"/#/invoices/{txn.source_id}"
-        elif txn.source_type == "bill" and txn.source_id:
-            source_link = f"/#/bills/{txn.source_id}"
-        elif txn.source_type == "payment" and txn.source_id:
-            source_link = f"/#/payments/{txn.source_id}"
-        elif txn.source_type == "bill_payment" and txn.source_id:
-            source_link = f"/#/bill-payments/{txn.source_id}"
-        elif txn.source_type in ("journal", "manual_journal") and txn.source_id:
-            source_link = f"/#/journal/{txn.source_id}"
-
-        entries.append(
-            {
-                "transaction_id": txn.id,
-                "date": txn.date.isoformat(),
-                "description": txn.description or tl.description or "",
-                "reference": txn.reference or "",
-                "debit": float(dr),
-                "credit": float(cr),
-                "running_balance": float(running),
-                "source_type": txn.source_type,
-                "source_id": txn.source_id,
-                "source_link": source_link,
-            }
-        )
-
-    period_net = (
-        (period_debit - period_credit)
-        if debit_normal
-        else (period_credit - period_debit)
-    )
-
-    return {
-        "account": {
-            "id": acct.id,
-            "number": acct.account_number,
-            "name": acct.name,
-            "type": acct.account_type.value,
-            "natural_balance": "debit" if debit_normal else "credit",
-        },
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
-        "period_debit": float(period_debit),
-        "period_credit": float(period_credit),
-        "period_net": float(period_net),
-        "entries": entries,
-    }
+    out = account_register(db, acct, start_date, end_date)
+    out["start_date"] = start_date.isoformat()
+    out["end_date"] = end_date.isoformat()
+    return out
 
 
 # ============================================================================
@@ -380,7 +339,7 @@ def cash_flow(
     end_date: date = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """Cash Flow Statement: Operating, Investing, Financing sections."""
+    """Cash flow from counterpart lines of journals moving bank-kind cash."""
     if not start_date:
         start_date = date(date.today().year, 1, 1)
     if not end_date:
@@ -396,6 +355,12 @@ def cash_flow(
         AccountType.EQUITY: "financing",
     }
 
+    # Cash belongs to bank-kind chart accounts, even without a linked feed.
+    # Cards are liabilities, and opening carry-forwards are not period flows.
+    cash_account_ids = select(Account.id).where(Account.bank_kind == "bank")
+    cash_transaction_ids = select(TransactionLine.transaction_id).where(
+        TransactionLine.account_id.in_(cash_account_ids)
+    )
     results = (
         db.query(
             Account.name,
@@ -407,7 +372,13 @@ def cash_flow(
         )
         .join(TransactionLine, TransactionLine.account_id == Account.id)
         .join(Transaction, TransactionLine.transaction_id == Transaction.id)
-        .filter(Transaction.date >= start_date, Transaction.date <= end_date)
+        .filter(
+            Transaction.date >= start_date,
+            Transaction.date <= end_date,
+            Transaction.id.in_(cash_transaction_ids),
+            ~TransactionLine.account_id.in_(cash_account_ids),
+            sqlfunc.coalesce(Transaction.source_type, "") != "opening_balance",
+        )
         .group_by(
             Account.id, Account.name, Account.account_number, Account.account_type
         )
@@ -421,10 +392,6 @@ def cash_flow(
     for acct_name, acct_num, acct_type, net_change in results:
         section = section_map.get(acct_type, "operating")
         amount = float(net_change)
-        # For investing (assets), net cash flow is negative of net change
-        # (buying assets = cash outflow)
-        if section == "investing":
-            amount = -amount
         sections[section].append(
             {
                 "account_name": acct_name,
@@ -686,6 +653,71 @@ def _tb_section(data: dict) -> dict:
     }
 
 
+def _gl_section(data: dict) -> dict:
+    rows = []
+    for a in data["accounts"]:
+        head = f"{a['account_number'] or ''} {a['account_name']}".strip()
+        rows.append({"cells": [head, "", "", "", "", ""], "style": "subtotal"})
+        rows.append(
+            {
+                "cells": [
+                    "",
+                    "",
+                    "Balance brought forward",
+                    "",
+                    "",
+                    _money(a["opening_balance"]),
+                ]
+            }
+        )
+        for e in a["entries"]:
+            rows.append(
+                {
+                    "cells": [
+                        e["date"],
+                        e["reference"],
+                        e["description"],
+                        _money(e["debit"]) if e["debit"] else "",
+                        _money(e["credit"]) if e["credit"] else "",
+                        _money(e["running_balance"]),
+                    ]
+                }
+            )
+        rows.append(
+            {
+                "cells": [
+                    "",
+                    "",
+                    "Period total",
+                    _money(a["total_debit"]),
+                    _money(a["total_credit"]),
+                    _money(a["closing_balance"]),
+                ],
+                "style": "subtotal",
+            }
+        )
+    return {
+        "title": "General Ledger",
+        "period": f"{data['start_date']} — {data['end_date']}",
+        "columns": ["Date", "Reference", "Description", "Debit", "Credit", "Balance"],
+        "rows": rows,
+    }
+
+
+def _company_name(db) -> str:
+    from app.services.settings_service import get_all_settings
+
+    return get_all_settings(db).get("company_name") or ""
+
+
+def _csv_download(text: str, filename: str, request: Request):
+    """The same Content-Disposition rule as the CSV page: inline for the
+    desktop shell (which saves it itself), attachment for a browser."""
+    from app.routes.csv import _csv_response
+
+    return _csv_response(text, filename, request)
+
+
 def _pdf_response(sections, db, filename: str):
     from fastapi.responses import Response
     from app.services.pdf_service import generate_report_pdf
@@ -711,6 +743,105 @@ def profit_loss_pdf(
         [_pl_section(data, t)],
         db,
         f"{t.slug('Profit & Loss')}_{data['start_date']}_{data['end_date']}.pdf",
+    )
+
+
+@router.get("/trial-balance/pdf")
+def trial_balance_pdf(
+    start_date: date = Query(default=None),
+    end_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    data = trial_balance(start_date, end_date, db)
+    return _pdf_response(
+        [_tb_section(data)],
+        db,
+        f"trial-balance_{data['start_date']}_{data['end_date']}.pdf",
+    )
+
+
+@router.get("/trial-balance/csv")
+def trial_balance_csv_route(
+    request: Request,
+    start_date: date = Query(default=None),
+    end_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    from app.services.ledger_exports import trial_balance_csv
+
+    data = trial_balance(start_date, end_date, db)
+    return _csv_download(
+        trial_balance_csv(data, _company_name(db)),
+        f"trial-balance_{data['start_date']}_{data['end_date']}.csv",
+        request,
+    )
+
+
+@router.get("/general-ledger/pdf")
+def general_ledger_pdf(
+    start_date: date = Query(default=None),
+    end_date: date = Query(default=None),
+    account_id: int = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    data = general_ledger(start_date, end_date, account_id, db)
+    return _pdf_response(
+        [_gl_section(data)],
+        db,
+        f"general-ledger_{data['start_date']}_{data['end_date']}.pdf",
+    )
+
+
+@router.get("/general-ledger/csv")
+def general_ledger_csv_route(
+    request: Request,
+    start_date: date = Query(default=None),
+    end_date: date = Query(default=None),
+    account_id: int = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    from app.services.ledger_exports import general_ledger_csv
+
+    data = general_ledger(start_date, end_date, account_id, db)
+    return _csv_download(
+        general_ledger_csv(data, _company_name(db)),
+        f"general-ledger_{data['start_date']}_{data['end_date']}.csv",
+        request,
+    )
+
+
+@router.get("/profit-loss/csv")
+def profit_loss_csv_route(
+    request: Request,
+    start_date: date = Query(default=None),
+    end_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    from app.services.ledger_exports import profit_loss_csv
+
+    data = profit_loss(start_date, end_date, db)
+    t = terms_from_db(db)
+    return _csv_download(
+        profit_loss_csv(data, _company_name(db), t),
+        f"{t.slug('Profit & Loss')}_{data['start_date']}_{data['end_date']}.csv",
+        request,
+    )
+
+
+@router.get("/balance-sheet/csv")
+def balance_sheet_csv_route(
+    request: Request,
+    as_of_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    from app.services.ledger_exports import balance_sheet_csv
+
+    data = balance_sheet(as_of_date, db)
+    t = terms_from_db(db)
+    return _csv_download(
+        balance_sheet_csv(data, _company_name(db), t),
+        f"{t.slug('Balance Sheet')}_{data['as_of_date']}.csv",
+        request,
     )
 
 

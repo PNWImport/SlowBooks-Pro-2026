@@ -35,6 +35,8 @@ from app.services.accounting import (
     get_ar_account_id,
     get_default_income_account_id,
 )
+from app.services.safe_errors import DataProblem, safe_message
+from app.services.control_accounts import MissingControlAccount
 
 logger = logging.getLogger(__name__)
 
@@ -288,7 +290,7 @@ def import_classes(db: Session, rows: list) -> dict:
 
         except Exception as e:
             sp.rollback()
-            errors.append({"row": i + 1, "message": str(e)})
+            errors.append({"row": i + 1, "message": safe_message(e, "IIF import")})
 
     return {"imported": imported, "errors": errors}
 
@@ -394,7 +396,7 @@ def import_accounts(db: Session, rows: list) -> dict:
 
         except Exception as e:
             sp.rollback()
-            errors.append({"row": i + 1, "message": str(e)})
+            errors.append({"row": i + 1, "message": safe_message(e, "IIF import")})
 
     # Build a single opening-balance journal entry from OBAMOUNT values
     # (dropping any that summed to exactly zero after merging).
@@ -503,7 +505,8 @@ def _create_opening_balance_entry(db: Session, balances: list) -> dict:
         logger.exception("Failed to create opening balance journal entry")
         return {
             "created": False,
-            "warning": f"Opening balance journal entry failed: {e}",
+            "warning": "Opening balance journal entry failed: "
+            + safe_message(e, "IIF opening balances"),
         }
 
 
@@ -565,7 +568,7 @@ def import_customers(db: Session, rows: list) -> dict:
 
         except Exception as e:
             sp.rollback()
-            errors.append({"row": i + 1, "message": str(e)})
+            errors.append({"row": i + 1, "message": safe_message(e, "IIF import")})
 
     return {"imported": imported, "errors": errors}
 
@@ -616,7 +619,7 @@ def import_vendors(db: Session, rows: list) -> dict:
 
         except Exception as e:
             sp.rollback()
-            errors.append({"row": i + 1, "message": str(e)})
+            errors.append({"row": i + 1, "message": safe_message(e, "IIF import")})
 
     return {"imported": imported, "errors": errors}
 
@@ -669,7 +672,7 @@ def import_items(db: Session, rows: list) -> dict:
 
         except Exception as e:
             sp.rollback()
-            errors.append({"row": i + 1, "message": str(e)})
+            errors.append({"row": i + 1, "message": safe_message(e, "IIF import")})
 
     return {"imported": imported, "errors": errors}
 
@@ -758,7 +761,11 @@ def import_transactions(db: Session, blocks: list) -> dict:
         except Exception as e:
             sp.rollback()
             errors.append(
-                {"row": i + 1, "message": f"Transaction block {i + 1}: {str(e)}"}
+                {
+                    "row": i + 1,
+                    "message": f"Transaction block {i + 1}: "
+                    + safe_message(e, "IIF import"),
+                }
             )
 
     return {"imported": counts, "errors": errors, "warnings": warnings}
@@ -783,14 +790,14 @@ def _resolve_block_class(db: Session, trns_type: str, doc_ref: str, spls: list):
     if not names:
         return None
     if len(names) > 1:
-        raise ValueError(
+        raise DataProblem(
             f"{trns_type} {doc_ref}: multiple CLASS values {sorted(names)} in one "
             f"block — classes apply per document; split the block or unify the CLASS"
         )
     name = names.pop()
     class_id = resolve_class_id(db, name)
     if class_id is None:
-        raise ValueError(
+        raise DataProblem(
             f"{trns_type} {doc_ref}: class '{name}' not found. Import your "
             f"QuickBooks class list (File > Utilities > Export > Lists > Class "
             f"List) or create it under Settings → Classes first, or correct "
@@ -811,7 +818,7 @@ def _validate_block_balance(trns_type: str, trns: dict, spls: list) -> Decimal:
     spl_total = sum((_parse_decimal(s.get("AMOUNT", "")) for s in spls), Decimal("0"))
     residual = trns_amt + spl_total
     if abs(residual) > Decimal("0.01"):
-        raise ValueError(
+        raise DataProblem(
             f"{trns_type} block does not sum to zero "
             f"(TRNS={trns_amt}, SPL total={spl_total}, residual={residual}). "
             f"Standard QB convention: TRNS and SPL amounts carry opposite signs."
@@ -839,27 +846,29 @@ def _import_bill(db: Session, trns: dict, spls: list) -> Bill:
 
     vendor_name = trns.get("NAME", "").strip()
     if not vendor_name:
-        raise ValueError("BILL: missing vendor NAME on TRNS line")
+        raise DataProblem("BILL: missing vendor NAME on TRNS line")
     vendor = db.query(Vendor).filter(Vendor.name == vendor_name).first()
     if not vendor:
-        raise ValueError(
+        raise DataProblem(
             f"BILL: vendor '{vendor_name}' not found. Add the vendor in "
             f"Vendors first, or correct the NAME in the IIF file."
         )
 
     ap_acct_name = trns.get("ACCNT", "").strip()
     if not ap_acct_name:
-        raise ValueError(f"BILL ({vendor_name}): missing AP account ACCNT on TRNS line")
+        raise DataProblem(
+            f"BILL ({vendor_name}): missing AP account ACCNT on TRNS line"
+        )
     ap_account = _find_account(db, ap_acct_name)
     if not ap_account:
-        raise ValueError(
+        raise DataProblem(
             f"BILL ({vendor_name}): AP account '{ap_acct_name}' not found. "
             f"Add the account in the chart of accounts first."
         )
 
     doc_num = trns.get("DOCNUM", "").strip()
     if not doc_num:
-        raise ValueError(
+        raise DataProblem(
             f"BILL ({vendor_name}): missing DOCNUM (bill_number is required)"
         )
 
@@ -880,10 +889,10 @@ def _import_bill(db: Session, trns: dict, spls: list) -> Bill:
     for spl in spls:
         spl_acct_name = spl.get("ACCNT", "").strip()
         if not spl_acct_name:
-            raise ValueError(f"BILL {doc_num}: SPL line missing ACCNT")
+            raise DataProblem(f"BILL {doc_num}: SPL line missing ACCNT")
         spl_acct = _find_account(db, spl_acct_name)
         if not spl_acct:
-            raise ValueError(
+            raise DataProblem(
                 f"BILL {doc_num}: expense account '{spl_acct_name}' not found"
             )
         spl_amount = _parse_decimal(spl.get("AMOUNT", ""))
@@ -978,10 +987,10 @@ def _import_deposit(db: Session, trns: dict, spls: list) -> Transaction:
 
     bank_acct_name = trns.get("ACCNT", "").strip()
     if not bank_acct_name:
-        raise ValueError("DEPOSIT: missing bank account ACCNT on TRNS line")
+        raise DataProblem("DEPOSIT: missing bank account ACCNT on TRNS line")
     bank_acct = _find_account(db, bank_acct_name)
     if not bank_acct:
-        raise ValueError(
+        raise DataProblem(
             f"DEPOSIT: bank account '{bank_acct_name}' not found. "
             f"Add the account in the chart of accounts first."
         )
@@ -1011,12 +1020,12 @@ def _import_deposit(db: Session, trns: dict, spls: list) -> Transaction:
     for spl in spls:
         spl_acct_name = spl.get("ACCNT", "").strip()
         if not spl_acct_name:
-            raise ValueError(
+            raise DataProblem(
                 f"DEPOSIT {doc_num or bank_acct_name}: SPL line missing ACCNT"
             )
         spl_acct = _find_account(db, spl_acct_name)
         if not spl_acct:
-            raise ValueError(
+            raise DataProblem(
                 f"DEPOSIT {doc_num or bank_acct_name}: source account "
                 f"'{spl_acct_name}' not found"
             )
@@ -1094,6 +1103,7 @@ def _import_invoice(db: Session, trns: dict, spls: list) -> Invoice:
     # Job under the customer (created on first sight), and the invoice is
     # tagged to it so job costing survives the migration.
     customer, job = resolve_customer_and_job(db, cust_name)
+    assert customer is not None  # nonblank name + create=True above
 
     inv_date = _parse_iif_date(trns.get("DATE", ""))
     due_date = _parse_iif_date(trns.get("DUEDATE", ""))
@@ -1166,7 +1176,13 @@ def _import_invoice(db: Session, trns: dict, spls: list) -> Invoice:
     invoice.balance_due = invoice.total
 
     # Create journal entry
-    ar_id = get_ar_account_id(db)
+    # Historical imports remain useful even when the destination chart is
+    # incomplete: keep the document and report an unposted warning rather than
+    # discarding the imported record.
+    try:
+        ar_id = get_ar_account_id(db)
+    except MissingControlAccount:
+        ar_id = None
     unmatched_accounts = []
     if ar_id and subtotal > 0:
         journal_lines = [
@@ -1254,27 +1270,23 @@ def _import_payment(db: Session, trns: dict, spls: list) -> Payment:
 
     # Duplicate detection: match on customer + date + amount + reference
     cust_name = trns.get("NAME", "").strip()
+    # A Customer:Job label identifies the same payer as its parent customer.
+    # Resolve that identity before deduplication instead of matching the label
+    # against Customer.name (which never contains the job suffix).
+    customer, _job = resolve_customer_and_job(db, cust_name, create=False)
+    if not customer:
+        return None
     pmt_date = _parse_iif_date(trns.get("DATE", ""))
     pmt_amount = abs(_parse_decimal(trns.get("AMOUNT", "")))
-    existing_q = (
-        db.query(Payment)
-        .join(Customer)
-        .filter(
-            Customer.name == cust_name,
-            Payment.date == (pmt_date or date.today()),
-            Payment.amount == pmt_amount,
-        )
+    existing_q = db.query(Payment).filter(
+        Payment.customer_id == customer.id,
+        Payment.date == (pmt_date or date.today()),
+        Payment.amount == pmt_amount,
     )
     if ref:
         existing_q = existing_q.filter(Payment.reference == ref)
     if existing_q.first():
         return None
-
-    # Resolve customer ("Customer:Job" resolves to the customer; a payment
-    # is not job-costed — the invoice it pays already is)
-    customer, _job = resolve_customer_and_job(db, cust_name, create=False)
-    if not customer:
-        return None  # Can't create payment without customer
 
     pmt_date = _parse_iif_date(trns.get("DATE", ""))
     amount = abs(_parse_decimal(trns.get("AMOUNT", "")))
@@ -1286,7 +1298,10 @@ def _import_payment(db: Session, trns: dict, spls: list) -> Payment:
         # Last resort: use Undeposited Funds
         from app.services.accounting import get_undeposited_funds_id
 
-        uf_id = get_undeposited_funds_id(db)
+        try:
+            uf_id = get_undeposited_funds_id(db)
+        except MissingControlAccount:
+            uf_id = None
         if uf_id:
             deposit_acct = db.query(Account).filter(Account.id == uf_id).first()
 
@@ -1308,6 +1323,11 @@ def _import_payment(db: Session, trns: dict, spls: list) -> Payment:
                 db.query(Invoice).filter(Invoice.invoice_number == doc_num).first()
             )
             if invoice:
+                if invoice.customer_id != customer.id:
+                    raise DataProblem(
+                        f"Payment cannot allocate to invoice {doc_num}: "
+                        "customer does not match"
+                    )
                 alloc_amount = abs(_parse_decimal(spl.get("AMOUNT", "")))
                 alloc = PaymentAllocation(
                     payment_id=payment.id,
@@ -1326,8 +1346,12 @@ def _import_payment(db: Session, trns: dict, spls: list) -> Payment:
                 elif invoice.amount_paid > 0:
                     invoice.status = InvoiceStatus.PARTIAL
 
-    # Create journal entry
-    ar_id = get_ar_account_id(db)
+    # Create journal entry when the imported chart has A/R; otherwise retain
+    # the payment and let the caller report an unposted warning.
+    try:
+        ar_id = get_ar_account_id(db)
+    except MissingControlAccount:
+        ar_id = None
     if ar_id and deposit_acct and amount > 0:
         journal_lines = [
             {
@@ -1415,7 +1439,10 @@ def _import_cash_sale(db: Session, trns: dict, spls: list) -> Invoice:
     if not deposit_acct:
         from app.services.accounting import get_undeposited_funds_id
 
-        uf_id = get_undeposited_funds_id(db)
+        try:
+            uf_id = get_undeposited_funds_id(db)
+        except MissingControlAccount:
+            uf_id = None
         if uf_id:
             deposit_acct = db.query(Account).filter(Account.id == uf_id).first()
 
@@ -1440,7 +1467,10 @@ def _import_cash_sale(db: Session, trns: dict, spls: list) -> Invoice:
     # Payment journal: DR deposit account / CR A/R, clearing the A/R debit
     # _import_invoice posted — the ledger nets to cash + income, matching
     # the app's own sales-receipt flow.
-    ar_id = get_ar_account_id(db)
+    try:
+        ar_id = get_ar_account_id(db)
+    except MissingControlAccount:
+        ar_id = None
     if ar_id and deposit_acct and total > 0:
         journal_lines = [
             {
@@ -1489,6 +1519,7 @@ def _import_estimate(db: Session, trns: dict, spls: list) -> Estimate:
         # 6c82e9a, so the importer must not sneak them in the back door.
         return None
     customer, job = resolve_customer_and_job(db, cust_name)
+    assert customer is not None  # nonblank name + create=True above
 
     est_date = _parse_iif_date(trns.get("DATE", ""))
     total = abs(_parse_decimal(trns.get("AMOUNT", "")))

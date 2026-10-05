@@ -10,6 +10,7 @@
 # Validate: POST /api/iif/validate -> checks .iif without importing
 # ============================================================================
 
+import logging
 from datetime import date, datetime
 from typing import Optional
 
@@ -37,6 +38,8 @@ from app.services.iif_import import import_all, validate_iif
 from app.services.upload_limits import read_limited
 
 router = APIRouter(prefix="/api/iif", tags=["iif"])
+
+logger = logging.getLogger(__name__)
 
 
 def _iif_response(content: str, filename: str) -> Response:
@@ -167,7 +170,7 @@ async def import_iif(file: UploadFile = File(...), db: Session = Depends(get_db)
     Processes accounts, customers, vendors, items, and transactions.
     Skips duplicates and collects per-row errors.
     """
-    if not file.filename.lower().endswith(".iif"):
+    if not (file.filename or "").lower().endswith(".iif"):
         raise HTTPException(400, "File must have .iif extension")
 
     content = await read_limited(file, label="IIF file")
@@ -179,9 +182,10 @@ async def import_iif(file: UploadFile = File(...), db: Session = Depends(get_db)
 
     try:
         result = import_all(db, text)
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise HTTPException(500, f"Import failed: {str(e)}")
+        logger.exception("IIF import failed")
+        raise HTTPException(500, "Import failed — the server log has the details")
 
     return result
 
@@ -189,7 +193,7 @@ async def import_iif(file: UploadFile = File(...), db: Session = Depends(get_db)
 @router.post("/validate", response_model=IIFValidationReport)
 async def validate_iif_file(file: UploadFile = File(...)):
     """Validate an IIF file without importing — pre-flight check."""
-    if not file.filename.lower().endswith(".iif"):
+    if not (file.filename or "").lower().endswith(".iif"):
         raise HTTPException(400, "File must have .iif extension")
 
     content = await read_limited(file, label="IIF file")

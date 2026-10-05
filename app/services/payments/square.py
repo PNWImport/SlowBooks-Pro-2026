@@ -33,6 +33,8 @@ from app.models.invoices import Invoice
 from app.services.accounting import _q
 from app.services.payments import _http
 from app.services.payments.base import CheckoutSession, PaymentProvider, PaymentResult
+from app.services.donor_documents import document_label
+from app.services.terminology import document_reference, terms_for
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,9 @@ def build_payment_link_request(
     base_url: str,
     idempotency_key: Optional[str] = None,
 ) -> dict:
+    # what the payer sees on the hosted page; the ids and metadata
+    # the webhook resolves by are untouched
+    terms = terms_for(settings)
     amount_cents = int(_q(invoice.balance_due) * 100)
     return {
         "method": "POST",
@@ -73,7 +78,9 @@ def build_payment_link_request(
         "json": {
             "idempotency_key": idempotency_key or f"inv-{invoice.id}-{uuid.uuid4()}",
             "quick_pay": {
-                "name": f"Invoice #{invoice.invoice_number}",
+                "name": document_reference(
+                    document_label(invoice, terms), invoice.invoice_number
+                ),
                 "price_money": {"amount": amount_cents, "currency": "USD"},
                 "location_id": settings["square_location_id"],
             },
@@ -83,7 +90,9 @@ def build_payment_link_request(
                     f"?status=success&provider=square"
                 ),
             },
-            "payment_note": f"Invoice #{invoice.invoice_number}",
+            "payment_note": document_reference(
+                document_label(invoice, terms), invoice.invoice_number
+            ),
         },
     }
 

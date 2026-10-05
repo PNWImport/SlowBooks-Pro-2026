@@ -5,14 +5,14 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.invoices import InvoiceStatus
-from app.schemas.common import StrictModel, TaxRate, validate_non_negative_line
+from app.schemas.common import Money, StrictModel, TaxRate, validate_non_negative_line
 
 
 class InvoiceLineCreate(StrictModel):
     item_id: Optional[int] = None
     description: Optional[str] = None
     quantity: Decimal = Decimal("1")
-    rate: Decimal = Decimal("0")
+    rate: Money = Decimal("0")
     amount: Decimal = Decimal("0")
     class_name: Optional[str] = None
     job_id: Optional[int] = None
@@ -70,7 +70,7 @@ class InvoiceCreate(StrictModel):
     lines: list[InvoiceLineCreate] = []
     # Nonprofit: pledge face; goods/services the donor received (gala dinner)
     is_pledge: bool = False
-    fair_value_amount: Optional[Decimal] = None
+    fair_value_amount: Optional[Money] = None
     fair_value_description: Optional[str] = Field(None, max_length=200)
 
     @field_validator("lines")
@@ -95,7 +95,7 @@ class InvoiceUpdate(StrictModel):
     currency: Optional[str] = None
     exchange_rate: Optional[Decimal] = None
     is_pledge: Optional[bool] = None
-    fair_value_amount: Optional[Decimal] = None
+    fair_value_amount: Optional[Money] = None
     fair_value_description: Optional[str] = Field(None, max_length=200)
     lines: Optional[list[InvoiceLineCreate]] = None
 

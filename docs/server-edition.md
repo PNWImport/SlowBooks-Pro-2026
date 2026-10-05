@@ -89,6 +89,11 @@ Your books survive uninstall — the script never deletes data.
 
 ## Adding your team
 
+On a multi-user install the sign-in screen lists active usernames, so each
+person selects their name and enters only their password. Names—not roles—are
+visible before sign-in, so Server Edition remains appropriate only on a trusted
+network.
+
 1. Sign in as the admin → **Settings → Users**.
 2. Add each person with a username, password, and role. The moment a
    second user exists, the login screen gains a username field and the

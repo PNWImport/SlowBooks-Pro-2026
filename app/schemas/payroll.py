@@ -1,7 +1,8 @@
+from decimal import Decimal
 from datetime import date
 from typing import Optional
 from pydantic import BaseModel, model_validator
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 from app.models.payroll import EmployeeRole, FilingStatus, PayFrequency, PayType
 from app.schemas.benefits import PayStubBenefitResponse
@@ -15,8 +16,8 @@ class EmployeeCreate(StrictModel):
     last_name: str
     ssn_last_four: Optional[str] = None
     pay_type: PayType = PayType.HOURLY
-    pay_rate: float = 0
-    cost_rate: Optional[float] = None
+    pay_rate: Money = Decimal("0")
+    cost_rate: Optional[Money] = None
     burden_pct: Optional[float] = None
     employee_group_id: Optional[int] = None
     # Typed against the model enums so a bad value is a 422 at the edge
@@ -25,10 +26,10 @@ class EmployeeCreate(StrictModel):
     filing_status: FilingStatus = FilingStatus.SINGLE
     # 2020+ Form W-4
     multiple_jobs: bool = False
-    dependents_amount: float = 0
-    other_income_annual: float = 0
-    deductions_annual: float = 0
-    extra_withholding: float = 0
+    dependents_amount: Money = Decimal("0")
+    other_income_annual: Money = Decimal("0")
+    deductions_annual: Money = Decimal("0")
+    extra_withholding: Money = Decimal("0")
     address1: Optional[str] = None
     address2: Optional[str] = None
     city: Optional[str] = None
@@ -40,7 +41,7 @@ class EmployeeCreate(StrictModel):
     residence_locality: Optional[str] = None
     wc_class_code: Optional[str] = None
     state_allowances: int = 0
-    state_extra_withholding: float = 0
+    state_extra_withholding: Money = Decimal("0")
     state_rate_override: Optional[float] = None
     local_tax_rate: Optional[float] = None
     email: Optional[str] = None
@@ -55,17 +56,17 @@ class EmployeeUpdate(StrictModel):
     last_name: Optional[str] = None
     ssn_last_four: Optional[str] = None
     pay_type: Optional[PayType] = None
-    pay_rate: Optional[float] = None
-    cost_rate: Optional[float] = None
+    pay_rate: Optional[Money] = None
+    cost_rate: Optional[Money] = None
     burden_pct: Optional[float] = None
     employee_group_id: Optional[int] = None
     pay_frequency: Optional[PayFrequency] = None
     filing_status: Optional[FilingStatus] = None
     multiple_jobs: Optional[bool] = None
-    dependents_amount: Optional[float] = None
-    other_income_annual: Optional[float] = None
-    deductions_annual: Optional[float] = None
-    extra_withholding: Optional[float] = None
+    dependents_amount: Optional[Money] = None
+    other_income_annual: Optional[Money] = None
+    deductions_annual: Optional[Money] = None
+    extra_withholding: Optional[Money] = None
     address1: Optional[str] = None
     address2: Optional[str] = None
     city: Optional[str] = None
@@ -77,7 +78,7 @@ class EmployeeUpdate(StrictModel):
     residence_locality: Optional[str] = None
     wc_class_code: Optional[str] = None
     state_allowances: Optional[int] = None
-    state_extra_withholding: Optional[float] = None
+    state_extra_withholding: Optional[Money] = None
     state_rate_override: Optional[float] = None
     local_tax_rate: Optional[float] = None
     email: Optional[str] = None

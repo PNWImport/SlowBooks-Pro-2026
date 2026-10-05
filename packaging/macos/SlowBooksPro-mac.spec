@@ -61,6 +61,10 @@ datas += _tree("app/templates", "app/templates")
 # they must exist on disk in the bundle, not just inside the PYZ.
 datas += _tree("migrations", "migrations")
 
+# Named by app.main's startup refusal for a half-upgraded database (#132).
+# See #144: the message has to point somewhere the reader can actually go.
+datas += [(os.path.join(ROOT, "scripts", "repair-schema.py"), "scripts")]
+
 # PyInstaller's WeasyPrint hook uses ctypes.util.find_library(), which does
 # not find Homebrew libraries on Apple Silicon. Seed the six libraries that
 # WeasyPrint dlopens; PyInstaller follows and rewrites their dependency
@@ -84,6 +88,11 @@ hiddenimports = (
         # alembic.ini logging config and desktop SQLite dialect
         "logging.config",
         "sqlalchemy.dialects.sqlite",
+        # WeasyPrint is imported lazily since #121 (so the suite runs on a
+        # machine without the native stack). PyInstaller's scanner does walk
+        # function-level imports, but the PDF engine is not something to
+        # leave to "usually" — name it, so its hook always fires.
+        "weasyprint",
     ]
 )
 
@@ -102,9 +111,79 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    excludes=["psycopg2", "psycopg2_binary"],
+    excludes=[
+        "psycopg2",
+        "psycopg2_binary",
+        # #141 — see the HarfBuzz block below. These bring Pillow's own
+        # HarfBuzz, which collides with the one Pango needs.
+        "PIL._imagingft",
+        "PIL.ImageFont",
+    ],
     noarchive=False,
 )
+# ---------------------------------------------------------------------------
+# One HarfBuzz, and it must be Homebrew's (issue #141, reported by mdornich)
+# ---------------------------------------------------------------------------
+# When Pillow's `_imagingft` is collected, PyInstaller brings Pillow's own
+# HarfBuzz with it and the two builds collide under one install name:
+#
+#   PIL/.dylibs/libharfbuzz.0.dylib   Pillow's,   ~1.81 MB  <- owns the VERSIONED name
+#   libharfbuzz.dylib                 Homebrew's, ~1.24 MB  <- unversioned ONLY
+#   libharfbuzz-subset.0.dylib        Homebrew's, ~1.43 MB
+#
+# The `binaries` list above seeds Homebrew's under the versioned name, but
+# PIL's hook wins the filename and Homebrew's real library lands unversioned
+# where nothing resolves to it. Pango asks for @rpath/libharfbuzz.0.dylib and
+# gets Pillow's, while libharfbuzz-subset is Homebrew's — and those symbols
+# exist only in the Homebrew build. The first PDF render dies in native code.
+#
+# EXCLUDE THE MODULE, DO NOT DROP THE LIBRARY. That distinction is @macbase1's
+# and it was measured, not argued. Removing Pillow's dylib from `a.binaries`
+# after Analysis is too late, and fails two ways:
+#
+#   * on its own it leaves ZERO versioned copies, because Homebrew's is
+#     already sitting under the unversioned name — an affected builder then
+#     cannot build at all;
+#   * re-seeding Homebrew's versioned name afterwards BUILDS, and produces a
+#     DANGLING SYMLINK into PIL/, because PyInstaller creates the cross-link
+#     before the spec removes the file under it. That bundle signs, notarizes,
+#     and dies at the first PDF — the original symptom, reached by the repair.
+#
+# Excluding `PIL._imagingft` / `PIL.ImageFont` is early enough: the library is
+# never collected, so Homebrew's keeps the versioned name it was seeded with.
+#
+# Safe because nothing in app/ draws text with Pillow — it appears only in
+# ocr_service.py and ocr_regions.py, for image preprocessing, and neither
+# imports ImageFont or ImageDraw. tests/test_macos_harfbuzz_collision.py fails
+# if that ever stops being true.
+#
+# (An earlier version of this comment claimed the pinned wheel ships no raqm
+# or fribidi, so shaping is off. @macbase1 measured pillow 12.3.0 from that
+# same pin reporting `harfbuzz: True, raqm: True`. The conclusion stands but
+# it rests only on the argument above, not on that one.)
+_HARFBUZZ_VERSIONED = [
+    dest
+    for (dest, _src, _kind) in a.binaries
+    if os.path.basename(dest) == "libharfbuzz.0.dylib"
+]
+if len(_HARFBUZZ_VERSIONED) != 1:
+    raise SystemExit(
+        f"[spec] #141: expected exactly one libharfbuzz.0.dylib in the bundle, "
+        f"found {len(_HARFBUZZ_VERSIONED)}: {_HARFBUZZ_VERSIONED}. Pango "
+        f"resolves @rpath/libharfbuzz.0.dylib; zero copies is an import "
+        f"failure and two is a silent collision that kills the first PDF "
+        f"render. If Pillow's copy is back, something is pulling in "
+        f"PIL._imagingft past the excludes below."
+    )
+if "PIL" in _HARFBUZZ_VERSIONED[0].split(os.sep):
+    raise SystemExit(
+        f"[spec] #141: the only libharfbuzz.0.dylib is Pillow's "
+        f"({_HARFBUZZ_VERSIONED[0]}); libharfbuzz-subset is Homebrew's and "
+        f"they are not interchangeable."
+    )
+print(f"[spec] #141: one HarfBuzz, at {_HARFBUZZ_VERSIONED[0]}")
+
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
@@ -123,6 +202,25 @@ coll = COLLECT(
     name="SlowBooksPro",
 )
 
+def _build_sha() -> str:
+    sha = os.environ.get("APP_BUILD_SHA", "").strip()
+    if not sha:
+        try:
+            import subprocess
+
+            sha = subprocess.run(
+                ["git", "-C", ROOT, "rev-parse", "HEAD"],
+                capture_output=True, text=True, check=True,
+            ).stdout.strip()
+        except Exception:
+            sha = ""
+    return sha[:12] or "unknown"
+
+
+def _bundle_version() -> str:
+    return f"{os.environ.get('APP_VERSION', '0.0.0')}+{_build_sha()}"
+
+
 app = BUNDLE(
     coll,
     name="SlowBooks Pro.app",
@@ -130,7 +228,11 @@ app = BUNDLE(
     bundle_identifier="com.vonholtencodes.slowbookspro",
     info_plist={
         "CFBundleShortVersionString": os.environ.get("APP_VERSION", "0.0.0"),
-        "CFBundleVersion": os.environ.get("APP_VERSION", "0.0.0"),
+        # Build identity (testing-repo #28): two builds of one release must
+        # be distinguishable from the bundle alone. CI passes APP_BUILD_SHA;
+        # a local build reads the checkout. The workflow refuses a bundle
+        # whose CFBundleVersion is just the short version.
+        "CFBundleVersion": _bundle_version(),
         "LSMinimumSystemVersion": "14.0",
         "LSArchitecturePriority": ["arm64"],
         "NSHighResolutionCapable": True,

@@ -7,8 +7,207 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
-### 2.9.4 — Unreleased
+- Refuse migration journal references over 100 characters before posting, preventing inconsistent replay identity handling across database backends.
 
+Target version: **2.18.0**, following upstream 2.17.3. These branch changes are not yet released.
+
+- Incorporate upstream through `90ba2b7` (2.16.2–2.17.3): payments, credits and
+  bill payments refuse other parties' documents with named messages; invoice
+  edits post through the create path; duplicates recompute tax from the customer;
+  OpenAI reasoning models get `max_completion_tokens` and no temperature; money
+  columns widen to Numeric(15, 2), with a local join migration that also widens
+  this branch's payroll columns.
+- Fix every recomputing invoice edit returning 500 after the upstream intake
+  (`assert_not_reconciled` now takes the session on this branch).
+- AI: Claude 4.7 and later (every Claude 5 model, including the default) are no
+  longer sent a temperature, which their API refuses with a 400. Bundled models
+  add `claude-opus-5-5`, `claude-fable-5-1`, `gpt-6-sol`, `gpt-6-luna`,
+  `chat-latest` and `grok-4.7`. Ask SlowBooks sends GPT-6 Sol/Luna
+  `reasoning_effort: "none"` (the only setting at which Chat Completions allows
+  their tools) and refuses GPT-6 Astra, whose tools require the Responses API.
+- Dependencies: uvicorn 0.54, starlette 1.7, alembic 1.20, PyJWT 2.15,
+  psycopg2-binary 2.9.13, python-dotenv 1.2.3 and current transitive packages;
+  vendored Chart.js 4.5.1 (npm registry integrity verified). SQLAlchemy stays
+  below 2.1 and ruff below 0.7 deliberately.
+- CI: every action pinned to a release commit SHA at its current major
+  (checkout 7, setup-python 7, setup-node 7, upload-artifact 7,
+  download-artifact 8, github-script 9, codeql-action 4, azure/login 3,
+  softprops/action-gh-release 3); Trusted Signing moves to its renamed
+  `azure/artifact-signing-action@v2` with `signing-account-name`; macOS jobs
+  move off `macos-14` (unsupported from November 2, 2026) to `macos-15`.
+  Dependabot now proposes weekly pip, Actions and Docker updates.
+- Kubernetes: the migrate Job ran `/bin/bash`, which the Alpine image lacks,
+  and waits for Postgres instead of spending its retries; the bundled Postgres
+  speaks TLS (the Secret's `sslmode=require` refused every connection); app
+  probes no longer follow the FORCE_HTTPS redirect into a TLS handshake the pod
+  does not serve. All pods run non-root with seccomp RuntimeDefault, no
+  privilege escalation, dropped capabilities and read-only roots; postgres runs
+  as the Alpine image's uid 70; images are tagged, not `latest`. New
+  NetworkPolicies deny ingress by default and open only ingress → app,
+  app/migrate → Postgres and app → Redis. Verified on a kind cluster.
+- CI hygiene, verified by running the workflow locally under `act`: fix a
+  parent-watcher test that assumed a PID-1 process reaper `act`'s container
+  doesn't provide; skip the coverage-artifact upload step only under `act`
+  (`upload-artifact@v7` isn't yet supported by its artifact server); isolate
+  test-generated uploads/backups from the real `app/static/uploads` and
+  `backups/` directories via `SLOWBOOKS_DATA_DIR`; stop 151 money-typed model
+  and schema fields from serializing a bare `int`; make
+  `reconciliation.completed_at` timezone-aware; update Alembic's renamed
+  `path_separator` config key; adopt `httpx2` for Starlette's `TestClient`;
+  replace legacy `Query.get()` with `Session.get()`; close five leaked SQLite
+  engines in `test_schema_repair.py`. Full suite: 4,968 tests, 0 failed,
+  0 errors; CI test job under `act`: 4,952 passed, 0 failed.
+
+- Serialize migration imports before duplicate/opening-balance checks on both
+  PostgreSQL and SQLite; overlapping imports must not double-post journals.
+- Reserve SQLite writes before reconciliation's open-session check so two
+  simultaneous starters cannot create duplicate open reconciliations.
+
+- Incorporate upstream through `a1022f8`: recognize Wave full-export debit/credit
+  headers, refuse all-zero ledgers, count skipped journals, and skip previously
+  imported transaction references and synthesized opening balances.
+
+- Refuse schema-repair retry drops unless a pending migration creates the
+  blocking table; preserve unrelated empty tables when upgrades fail.
+
+- Incorporate upstream through `80f2ad8`: year-to-date P&L and balance-sheet
+  trend cards, current-month date boundaries, live chart theme redraws,
+  nonprofit phrase casing, and desktop permission-denial regressions.
+
+- Make chart replacement atomic on invalid input; bind apply to the reviewed
+  plan and current chart; preserve bank/type invariants; apply parent-only
+  changes; and reject cyclic account hierarchies.
+
+- Reject missing parents and indirect cycles in ordinary account edits, including
+  concurrent PostgreSQL/SQLite edits; escape diagnostic error text to prevent forged
+  log lines while retaining traceback details.
+
+- Use the supported Alpine runtime image with the PDF/OCR/PostgreSQL toolchain,
+  and remove build-only pip from the final image; expand CI formatting/lint
+  checks to packaging and migrations and run all frontend tests.
+- Clean up failed server database dumps and preserve safe backup retention when
+  paths contain spaces.
+- Safely handle absent upload filenames and retry/exception paths in accounting
+  imports and recurring invoice creation.
+- Make missing-record and malformed-artifact boundaries explicit in payroll,
+  reconciliation, nonprofit reporting, IIF imports and audit verification.
+- Reject fractional cents consistently across operator-entered accounting and
+  payroll amounts while preserving the separate precision of quantities, tax
+  rates, exchange rates and inventory calculations.
+- Prevent bill and batch-payment allocations from settling documents owned by
+  another vendor or customer, and reject nonpositive allocations.
+- Prevent deposits from exceeding available Undeposited Funds and serialize
+  concurrent deposit posting against that balance.
+- Reverse invoice inventory and COGS from recorded movements and journal lines,
+  preserving historical costs and accounts after quantity edits or item-setting
+  changes.
+- Reject fractional-cent customer/vendor credit applications, and reverse
+  recorded inventory movements when voiding bills or credits even if an item's
+  inventory tracking setting has changed since the document was created.
+- Return desktop sign-out to the company picker, list active usernames before
+  sign-in, and open the last company automatically until the picker is chosen.
+- Preserve parked accountant-sharing and Canada plans as explicitly noncommittal
+  design notes, indexed alongside the repository's shipped design records.
+- Remove obsolete QuickBooks storage-internals provenance from code comments
+  and describe the application as an independent replacement.
+- Repair Wave Account Transactions imports and add a Copy action for newly
+  created API tokens; retain the real-file and workflow attribution in tests.
+- Keep attachment downloads ahead of dynamic routes, make generic hidden state
+  effective, and restore Quick Entry log contrast across themes.
+- Add vendor credits with application/void workflows, AP/AR aging parity and a
+  joined migration path; safely repair half-upgraded SQLite and PostgreSQL only
+  after proving blockers and dependent children are pending-created and empty.
+- Preview saved and unsaved invoice-email templates through the same sandboxed
+  renderer used to send them, with secret redaction and actionable blank-variable
+  notes; show the invoice dialog preview in a sandboxed iframe as its note changes.
+- Add Windows portability CI with per-test timeouts and avoid the macOS HarfBuzz
+  collision by excluding Pillow font modules before bundle analysis.
+- Apply company vocabulary to server messages and AI labels while composing
+  ledger/payment references from each document's own face.
+- Keep the generic AI provider's required model field visible and browser-
+  bounded on first selection, and identify both self-hosted and custom endpoints.
+- Give Windows installations without WebView2 an actionable runtime/installer
+  message and optional loopback browser fallback; keep the server timer default
+  unless an explicit resolution is configured, with matched cleanup.
+- Release closed event loops retained by anyio's test registry and make
+  Windows-sensitive source assertions read UTF-8 explicitly.
+- Import Bank of America detail CSVs with bounded header discovery, balance-row
+  exclusion and deduplication; show import progress and restore buttons on failure.
+- Retry transient macOS signing timestamp failures only; include commit identity
+  in the macOS bundle so builds of one release can be distinguished.
+- Embed app-version metadata in Windows executables and reject missing or
+  incorrect metadata before signing the build.
+- Keep headless/smoke launches from changing the desktop's selected company,
+  while preserving LAN TLS enforcement; sanitize URL-parser and scan-image errors.
+- Add native Windows/macOS PDF receipt rasterization with Poppler fallback and
+  renderer status in Settings; keep library/process errors out of responses.
+- Correct cash-flow reporting to follow bank-kind cash journals, excluding
+  non-cash activity, internal bank transfers and opening carry-forwards.
+- Claim bank-review batches before processing and leave busy postings unchanged
+  for retry instead of waiting with conflicting statement/ledger locks.
+- Repair Banking source-document links and legacy Check Register navigation;
+  reject manual matches to voided entries and refresh locked ledger lines before
+  allowing expense or journal voids against reconciliation state.
+- Revalidate automatic bank-match candidates before linking, and refresh locked
+  reconciliation state before matching or unmatching a statement line.
+
+### Accumulated branch changes
+
+- Allow QBO OAuth callbacks without a session cookie while retaining state
+  validation; hide provider errors from callback responses (upstream `7c0d274`).
+- Sanitize QBO/IIF route and per-row failures without leaking provider, SQL or
+  driver payloads; retain authored IIF validation messages and row rollback.
+- Redact stored credentials from editable donor acknowledgment subjects and
+  bodies, sharing the settings API's secret registry (upstream `2fd6758`).
+- Initialize new PostgreSQL companies with migrations and seeded accounts,
+  not just empty tables; do not register failed initialization attempts
+  (upstream `dba2839`).
+- Keep PostgreSQL backup failure details in server logs instead of exposing
+  raw tool output in API responses.
+- Recalculate estimate totals when only the tax rate changes; preserve
+  due-on-receipt terms and job/cost attribution when converting estimates.
+- Reject nonpositive and cross-customer credit applications, and require an
+  original invoice reference to exist and belong to the credit memo customer.
+- Preserve credit-memo job attribution in original postings and use shared
+  due-on-receipt terms semantics when creating bills.
+- Duplicate invoice sale lines without carrying over separately assessed late
+  fees, preventing an unbalanced-journal error after late fees were applied.
+- Attribute late fees to the invoice's job and reverse their separate postings
+  when voiding the invoice, retaining each fee's posting date and accounting tags.
+- Preserve original job, class, cost and functional tags when voiding invoices,
+  so the reversal also cancels the amounts in dimension-specific reports.
+- Carry duplicated invoice cost codes into journal lines as well as document lines.
+- Preserve job and line-level job/class attribution when duplicating invoices,
+  including the journal entry, plus line cost codes and tax-exempt flags;
+  use the shared terms parser so duplicated
+  due-on-receipt invoices remain due that day.
+- Use canonical Decimal rounding for check amount words, carrying rounded cents
+  into dollars and placing negative signs on the amount rather than the cents.
+- Repair the adjacent preceding benefit-rate interval when deleting a dated
+  rate, preserving explicit expiry dates, intentional gaps, and later rates.
+- Reject duplicate group benefit codes with a conflict response before replacing
+  existing assignments, instead of raising a database integrity error.
+
+- Skip repeated customer, vendor, and item names within a single CSV import.
+- Preserve QBO mapping dependencies during exports and inactive/non-taxable
+  flags during imports; avoid applying historical payments twice to invoices.
+- Keep negative income negative in AI profit summaries and apply the requested
+  tax-summary date range to expenses as well as invoices.
+- Reject malformed/non-finite FX responses and clean up temporary session keys
+  when persistence fails.
+- Reject cross-customer IIF payment allocations and deduplicate payments whose
+  customer label includes a job suffix.
+- Reject missing journal accounts and non-finite amounts before journal creation.
+- Exclude voided payments from downloaded and batch-emailed customer statements.
+- Escape names in statement/collection emails and retain Decimal precision when
+  summing collection balances and income-by-customer totals.
+- Handle malformed AI response envelopes and non-text content without leaking
+  parser exceptions or returning objects where text is required.
+- Handle malformed OCR intake timestamps safely and normalize explicit timezones
+  before receipt expiry checks.
+- Bind OCR intake metadata to its own receipt ID and filename so malformed
+  expiry records cannot delete a different receipt.
+- Upsert repeated budget keys within one batch and reject invalid months.
 - Fix valid dates being rejected when recording sales tax payments; expand schema collision checks.
 - Refreshed AI defaults, made every model ID editable, and completed custom-endpoint validation and wiring.
 - Pin Custom and Worker AI connections to the public address approved by the SSRF guard.
@@ -33,6 +232,258 @@ on what the software does, not on what sprint shipped what.
 - Corrected CT/MN paid-leave caps; added regression and migration checks.
 - Bound high-growth transaction lists and eliminate N+1 loads for time/job,
   journals, recurring invoices, payables, payroll benefits, and remittances.
+
+### v2.17.3 — Payments land on the right account
+
+**Pay Bills paid one vendor's bills with another vendor's payment.** The
+screen lists every vendor's open bills, and sent all the ticked bills as one
+payment to the first bill's vendor. On the QA company, ticking a CPA's bill
+and a supplier's recorded one 5,638.26 payment to the CPA that also marked
+the supplier's bill paid; the vendor balances, the check register and the
+1099 figures were all wrong from then on. Pay Bills now makes one payment
+per vendor, and asks you to pay one vendor at a time when you enter a check
+number, since one check cannot pay two vendors.
+
+**A payment pays down its own customer's or vendor's documents only.** A
+customer payment could be applied to another customer's invoice (#189,
+@Bit-Sage), and the same was true of applying a credit memo, a batch payment
+line, and a bill payment to another vendor's bill. Each returned success and
+reduced the other party's balance. All four now refuse with a message naming
+the document and write nothing; a batch with one wrong line is refused whole.
+Vendor credits already checked this.
+
+If you paid several vendors at once from Pay Bills in an earlier version,
+check Vendor Balances: a payment may be recorded against the first vendor
+for bills that belonged to others. Void it and pay each vendor separately.
+
+No schema change.
+
+### v2.17.2 — Editing an invoice keeps its job costing
+
+**Saving an invoice from the edit screen stripped its job costing.** An edit
+rebuilt the invoice's ledger entry by a separate route from creating one,
+and that route dropped the job, class and cost code from every line of the
+entry; the invoice form, which has no cells for them, never sent the
+per-line values back either. Revenue quietly left the job-cost reports each
+time an invoice was saved. On the QA company, re-saving all 960 invoices
+unchanged took their ledger lines from 565 job and 875 cost-code tags to
+none. Both halves are fixed: an edit now posts through the same code as a
+new invoice (#187, @Bit-Sage), and the form sends each line's job, class
+and cost code back. The same 960 re-saves now keep all 565 and 875, and the
+trial balance does not move.
+
+Where it showed: **Job Cost Detail**, which splits a job's revenue by cost
+code — one of the QA company's jobs went from seven cost codes to a single
+*uncoded* line on 2.17.1. Job Profitability, which files a line under the
+invoice's own job when the line has none, kept reading correctly for
+invoices that carry their job on the header, which is why the loss was easy
+to miss.
+
+**An edited invoice posts the way a new one does** (#187). A foreign-currency
+invoice's edit posts at its exchange rate — it posted document-currency
+amounts to the home ledger before; changing the invoice date moves its
+ledger entry with it, subject to the closing date; and a total can no
+longer be edited below what has already been paid. Paid and partly-paid
+follow the payments.
+
+**API.** `PUT /api/invoices/{id}` with `status: "void"` is refused with a
+message naming `POST /api/invoices/{id}/void`; an empty `status` is refused;
+a requested `paid` or `partial` on an invoice whose payments say otherwise
+is not applied.
+
+No schema change.
+
+### v2.17.1 — OpenAI works again
+
+**AI analysis with OpenAI failed on current models** (#185, @Sciumo). OpenAI's
+reasoning models — the gpt-5 line, including SlowBooks' default
+`gpt-5.4-mini`, and the o-series — refuse `max_tokens` and any temperature
+but their default, so the request was rejected before it ran, the Test button
+included. OpenAI is now sent `max_completion_tokens`, and no temperature for
+its reasoning models. Grok, Groq, Cloudflare and custom endpoints send what
+they always sent.
+
+**Room to think.** A reasoning model spends hidden reasoning out of the same
+token budget as its answer, so the 1,024 tokens that suit every other
+provider could run out before the answer began. OpenAI's reasoning models get
+a ceiling of 8,192 — billed only as used — and a reply that stops at the limit
+with nothing written now says so, instead of "empty response (body shape
+unexpected)".
+
+No schema change.
+
+### v2.17.0 — Your ledger, in a spreadsheet
+
+**Trial Balance and General Ledger save as a spreadsheet and a printable
+file** (#179, @cnbarry1); Profit & Loss and Balance Sheet, which already
+printed, gain the spreadsheet. Each report has *Save CSV* and *Save PDF*
+buttons. The files hold the figures on the screen: the trial
+balance with debit, credit and net per account and totals that agree; the
+general ledger with every posted line, a balance brought forward, a running
+balance, the kind of document each line came from, and a period total per
+account whose net equals that account's trial balance line. Balances read
+in each account's natural sign, the way the balance sheet shows them: an
+asset or expense is debit minus credit, a liability, equity or income account
+credit minus debit, so a payable you owe and income you earned read positive.
+Amounts are
+written as plain numbers, so a spreadsheet sums them without a conversion
+step; text cells keep the formula guard every other export has. The on-screen
+general ledger gains the same running balance and brought-forward row.
+Exporting reads the books and writes nothing.
+
+**Bank feeds from any SimpleFIN provider** (#181, @cnbarry1). SlowBooks has
+always followed the claim URL inside a setup token, wherever it points, as
+long as it is HTTPS and not a private or local address; the Banking page and
+the setup guide named only bridge.simplefin.org. They now say any SimpleFIN
+provider works.
+
+No schema change. An existing company file opens with no upgrade step.
+
+### v2.16.3 — The Docker image starts again
+
+**A freshly built Docker image failed to start.** SQLAlchemy 2.1.0, released
+this week, makes a plain `postgresql://` address use the psycopg 3 driver; the
+image installs psycopg2, so the app could not import and the container exited.
+Anyone building the server or Docker install from scratch since the release
+was affected, on 2.16.1 and 2.16.2 alike. SQLAlchemy is pinned below 2.1, the
+version every release has been tested on; moving to 2.1 will be its own
+release. v2.16.2 was tagged past the red check that showed this — a miss in
+the release process, and the Linux QA lane now builds the image from nothing
+every time.
+
+The desktop apps use SQLite and are unaffected by the Docker fault.
+
+**The What's New box on the splash reads in the dark theme.** It had the
+light panel the licence block had before 2.15.0 and was never given a dark
+one: 2.34 : 1 in dark, now 11.95 to 15.23, measured in a rendered browser.
+Found by the macOS lane and reproduced at the window by the owner.
+
+No schema change.
+
+### v2.16.2 — Tax-exempt customers, wider amounts, and two forms put right
+
+**The estimate's line items line up with their headings** (#176, @cnbarry1).
+The header read Item, Description, Cost code, Cost, Qty while the cells
+underneath ran Qty, Cost code, Cost — so the quantity sat under *Cost code*
+and the cost code under *Cost*. The cells follow the header now; picking an
+item fills its standard cost as the line's cost, blank if it has none and
+yours to overwrite; the item select keeps a readable width; and the form
+opens wide, its table scrolling sideways when the window is narrower still.
+
+**The Job Cost Entry dialog shows all of its cost lines** (#174, @cnbarry1).
+Eleven columns in a 700-pixel dialog whose table hid its overflow: the
+Bill? column and the remove button were cut off with no way to reach them,
+and the selects had shrunk to a few characters. The dialog opens as wide as
+the window allows, the table scrolls sideways when that is still not enough,
+and every control keeps a readable width. Any dialog with a wide table can
+ask for the same with `openModal(title, html, { wide: true })`.
+
+**Hosting your own books on a cloud server has a guide**, `docs/cloud-hosting.md`
+— one VPS, Docker, a proxy with a real certificate, backups off the box, and
+what the setup does and does not give you. On the way, the production
+compose file now passes `TRUST_PROXY_HEADERS` into the container, so the
+proxy trust the TLS guide describes takes effect under Docker.
+
+**A customer marked non-taxable pays no sales tax on any line.** The
+exemption only filled lines that left their tax flag unset, and every sales
+form sends each line's Tax box, defaulted from the item — so a reseller or
+exempt customer billed from the window was charged tax. Invoices,
+estimates, recurring templates and sales receipts all honour the customer
+now, and the forms clear and disable the Tax boxes and say why. Found by
+the Windows lane on this release's gate. Documents already saved keep the
+tax they were saved with; check any open invoice to a reseller.
+
+**A new document built from an old one gets the customer's current tax.**
+Converting an estimate, duplicating an invoice and running a recurring
+template copied the source's stored tax, so a reseller estimate saved before
+this release became a new invoice billing tax and crediting Sales Tax
+Payable. All three now compute the tax from the customer as they stand
+today. Found by the Windows lane on this release's gate, on an upgraded file.
+
+**The estimate screen shows the tax it will charge.** It taxed the subtotal
+on screen instead of the ticked lines, so an unticked Tax box — for any
+customer — still showed tax before saving; the saved estimate was always
+right. It reads the same as the invoice screen now (macOS lane, this gate).
+
+**The licence link on the splash reads at AA in the light theme** (4.29 : 1
+before, 5.44 now, measured in a rendered browser). The dark theme's licence
+block, fixed in 2.15.0, measures 7.23 to 15.23.
+
+**Money columns hold up to 9,999,999,999,999.99** (#173, @6lb). Every
+amount column widens from 12 to 15 digits, for currencies whose everyday
+amounts are large — 9,999,999,999.99 dong is about US$400,000. Rates,
+quantities and exchange rates are unchanged.
+
+**Schema change:** one migration widens the money columns. The desktop app
+and the Docker image apply it when a company file opens; a self-managed
+server runs `alembic upgrade head`. Nothing is converted — the stored
+amounts are the same numbers in a wider column.
+
+### v2.16.1 — Wave's full export imports its journals
+
+**Wave's full export imports its journals** (#169, @rcavatar1-debug). Wave's
+"Get all transactions" file heads its sides *Debit Amount (Two Column
+Approach)* and *Credit Amount (Two Column Approach)*; neither was recognised,
+so every line read 0.00, the dry run said "14,372 journals ready to import",
+and the import wrote none of them. The same file's *Amount (One column)* is
+signed by what it does to the account, not by side, and is no longer read as
+"positive = debit" when the file has its own debit and credit columns.
+
+**A ledger whose amounts all read zero is refused, by name.** 0 = 0
+balances, so an unrecognised amount column passed the dry run and imported
+nothing — the hole behind this report and behind 2.11.1's Wave fix before it,
+which fixed the headers and not the hole. The dry run now fails with the
+file's own header row in the message, for every migration source; a few
+amount-less journals among real ones are a warning and are counted as
+skipped in the import result.
+
+**A second click on Import does not double the books.** Nothing stopped a
+repeat import from posting every journal again. A journal whose transaction
+id an earlier import from the same source already posted is skipped; the dry
+run says how many, the result carries `duplicate_journals`, and a later
+export with new transactions imports only the new ones. The synthesized
+opening-balance journal is likewise posted once.
+
+No schema change. An existing company file opens with no upgrade step.
+
+### v2.16.0 — The year at a glance
+
+**Two new overview cards, both opt-in** (#166, @jarvis4openclaw): *P&L: Year to
+Date* — income, expenses and net for the year with cumulative net by month —
+and *Balance Sheet Trend* — assets, liabilities and equity at each of the
+last twelve month-ends, the current month to date, as a line chart. The trend
+folds current net income into equity the way the Balance Sheet report does,
+so it balances at every point and its latest point equals the report. Pick
+them under Customize; neither is in a default layout. A nonprofit sees
+Activities, Statement of Financial Position and Net Assets.
+
+**The chart import dialog offers a CSV template** (#164), the same file the
+site hands out, served by the app so an offline install has it.
+
+**A lower-case word takes a wholly lower-case phrase.** A nonprofit's card
+description read "liabilities and net Assets": the vocabulary swap lowered only
+the first letter of a multi-word replacement. Found on this release's gate; the
+server's swap and the page's carry the same rule.
+
+**A theme toggle redraws the charts on screen.** Canvas ink is painted with the
+theme that was active when the chart was made, so toggling the theme with the
+Balance Sheet Trend on screen left light-mode axis text on a dark panel
+(1.06 : 1) until the next visit; the Analytics page had carried the same flaw
+since it shipped. Found by the Windows lane on this release's gate.
+
+No schema change. An existing company file opens with no upgrade step.
+
+### v2.15.0 — Your chart, from your file
+
+**Import a chart of accounts** (#139, #161, @tresero). Chart of Accounts →
+Import… reads the application's export columns, a spreadsheet with Number /
+Name / Type, or hledger account-list output. The first pass is a dry run;
+the second applies the reviewed plan. Existing accounts match by number then
+name, and control accounts are renamed in place instead of duplicated.
+*Replace the seeded chart* deactivates only unused, unmentioned accounts.
+
+Parent-only hledger segments that name a control account now reuse that
+control account, and re-importing an unchanged file is a no-op.
 
 ### v2.9.3 — SimpleFIN request pinned to the address the guard approved
 
@@ -1708,6 +2159,15 @@ else moved into `docs/`.
 - Test suite runs in under 30 seconds with zero network dependencies.
 
 ### Fixed
+- Tax-category mappings now reject nonexistent chart-of-account IDs before
+  persistence instead of relying on backend-specific foreign-key failures.
+- Pending-deposit results now report the remaining portion of a partially
+  deposited source payment instead of repeating its full original amount.
+- Purchase-order tax-rate-only edits now recompute tax and total, and updates
+  reject unknown vendors or statuses before persistence.
+- Recurring templates now reject unsupported or null frequencies and end dates
+  before their start date on both creation and update instead of leaking a
+  database integrity error.
 - Dark mode now works on every report subtotal row (missing `--gray-50`
   definition).
 - `--text-main` typo fixed.

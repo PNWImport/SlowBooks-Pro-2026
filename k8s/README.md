@@ -27,12 +27,13 @@ change one deliberately the test tells you which assumption you just broke.
 | `deployment.yaml` | The app |
 | `service.yaml` | ClusterIP |
 | `ingress.yaml` | TLS termination + routing (ingress-nginx) |
+| `networkpolicy.yaml` | Default-deny ingress; app ← ingress namespace, Postgres ← app + migrate, Redis ← app |
 
 ---
 
 ## Deploy
 
-**1. Build and push the image.** The manifests reference `slowbooks:latest`;
+**1. Build and push the image.** The manifests reference `slowbooks:2.18.0`;
 point them at your registry via `images:` in `kustomization.yaml`.
 
 ```bash
@@ -147,12 +148,43 @@ or Azure Database:
 Keep `sslmode=require` in the URL — the app's startup checks refuse to boot
 in production without TLS on the database connection.
 
+The bundled `postgres.yaml` speaks TLS for exactly this reason: an init
+container writes a self-signed certificate at each pod start, which
+`sslmode=require` accepts (it encrypts without verifying the server). For
+`sslmode=verify-full`, mount a CA-issued certificate and key from a Secret at
+`/tls` and drop the init container.
+
+---
+
+## Health probes
+
+`FORCE_HTTPS` is on, so plain-HTTP `/health` answers `307` to `https://` on the
+pod's own port. An `httpGet` probe follows that redirect into a TLS handshake
+the pod does not serve (TLS ends at the ingress), and the pod is restarted
+forever. The probes therefore run `scripts/docker_healthcheck.py`, the same
+check the Compose file uses: `200`, `307` or `308` means the worker is answering.
+
+## Hardening and accepted scanner findings
+
+Every pod runs non-root with the `RuntimeDefault` seccomp profile, no privilege
+escalation, all capabilities dropped and a read-only root filesystem (writable
+paths are bounded `emptyDir` volumes). `trivy config` reports no HIGH or
+CRITICAL findings. The remaining ones are accepted:
+
+- **KSV-0011, no CPU limit.** Requests are set; limits would throttle the
+  bursty PDF/OCR work. Add one if your cluster policy requires it.
+- **KSV-0020/0021, UID/GID ≤ 10000.** Those IDs are baked into the images
+  (app 1000, postgres 70, redis 999); a higher UID needs a rebuilt image.
+- **KSV-01010, "sensitive" ConfigMap.** `AUDIT_CHECKPOINT_KEY_ID` is a key
+  identifier; the signing secret itself is in the Secret.
+
 ---
 
 ## What this does not cover
 
-- **NetworkPolicies.** Nothing restricts pod-to-pod traffic. Postgres and
-  Redis are reachable from anything in the namespace.
+- **Egress policy.** `networkpolicy.yaml` restricts ingress only; outbound
+  traffic (DNS, SMTP, bank feeds, AI providers) is unrestricted. Your CNI
+  must enforce NetworkPolicy for those rules to apply.
 - **PodDisruptionBudget / HPA.** Both are meaningless at one replica; add
   them alongside the RWX switch.
 - **Backups.** `backups/` is a volume, not a backup strategy — nothing

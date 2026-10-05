@@ -93,10 +93,23 @@ def test_probes_target_an_auth_exempt_path():
     container = _app_container()
     for probe in ("startupProbe", "readinessProbe", "livenessProbe"):
         assert probe in container, f"{probe} missing"
-        path = container[probe]["httpGet"]["path"]
-        assert (
-            f'"{path}"' in main_py
-        ), f"{probe} hits {path}, which is not in main.py's auth-exempt list"
+        path = container[probe]["exec"]["command"][-1]
+        assert path == "/app/scripts/docker_healthcheck.py", path
+    script = (K8S.parent / "scripts" / "docker_healthcheck.py").read_text()
+    assert "http://127.0.0.1:3001/health" in script
+    assert '"/health"' in main_py, "/health is not in main.py's auth-exempt list"
+
+
+def test_probes_do_not_follow_the_https_redirect():
+    """FORCE_HTTPS is on in the ConfigMap, so plain-HTTP /health redirects to
+    https:// on the pod's own port. An httpGet probe follows it into a TLS
+    handshake the pod does not serve; the exec probe accepts 307/308 as the
+    worker answering, the same rule as the Compose healthcheck."""
+    container = _app_container()
+    for probe in ("startupProbe", "readinessProbe", "livenessProbe"):
+        assert "httpGet" not in container[probe], probe
+    script = (K8S.parent / "scripts" / "docker_healthcheck.py").read_text()
+    assert "{200, 307, 308}" in script and "_NoRedirect" in script
 
 
 def test_rate_limit_counters_are_shared():
@@ -219,3 +232,46 @@ def test_app_and_migrate_share_the_same_image():
         "containers"
     ][0]["image"]
     assert app_image == job_image
+
+
+def test_network_policies_isolate_the_database_and_cache():
+    """Default-deny ingress; Postgres opens only to the app and the migrate
+    Job, Redis only to the app, the app only to the ingress namespace."""
+    docs = [
+        d for d in yaml.safe_load_all((K8S / "networkpolicy.yaml").read_text()) if d
+    ]
+    by_name = {d["metadata"]["name"]: d["spec"] for d in docs}
+    assert by_name["default-deny-ingress"]["podSelector"] == {}
+    assert by_name["default-deny-ingress"]["policyTypes"] == ["Ingress"]
+
+    def sources(name):
+        return [
+            peer.get("podSelector", {}).get("matchLabels", {}).get("app")
+            or peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
+            for rule in by_name[name]["ingress"]
+            for peer in rule["from"]
+        ]
+
+    assert sorted(sources("postgres-from-app")) == ["slowbooks", "slowbooks-migrate"]
+    assert sources("redis-from-app") == ["slowbooks"]
+    assert sources("slowbooks-from-ingress") == ["ingress-nginx"]
+
+
+def test_postgres_speaks_tls_for_sslmode_require():
+    """The Secret's DATABASE_URL uses sslmode=require; a Postgres without TLS
+    refuses every connection from the app and the migrate Job."""
+    text = (K8S / "postgres.yaml").read_text()
+    assert '"ssl=on"' in text and "ssl_key_file=/tls/server.key" in text
+    assert "sslmode=require" in (K8S / "secret.example.yaml").read_text()
+
+
+def test_migrate_job_uses_a_shell_the_alpine_image_has():
+    job = next(
+        d
+        for d in yaml.safe_load_all((K8S / "migrate-job.yaml").read_text())
+        if d and d["kind"] == "Job"
+    )
+    for c in job["spec"]["template"]["spec"]["containers"] + job["spec"]["template"][
+        "spec"
+    ].get("initContainers", []):
+        assert "/bin/bash" not in (c.get("command") or []), c["name"]

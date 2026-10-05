@@ -28,11 +28,14 @@ from app.services.qbo_common import (
     get_mapping_by_qbo_id,
 )
 from app.services.qbo_service import get_qbo_client
+from app.services.safe_errors import safe_message
 
 
 def _safe(obj, attr, default=None):
     """Safe attribute access for QBO objects."""
-    return getattr(obj, attr, default) or default
+    value = getattr(obj, attr, default)
+    # False is meaningful for Active/Taxable; it is not a missing field.
+    return default if value is None or value == "" else value
 
 
 def _safe_decimal(obj, attr) -> Decimal:
@@ -59,6 +62,7 @@ def _parse_qbo_date(s) -> date:
 
 
 # ============================================================================
+
 # Import functions
 # ============================================================================
 
@@ -80,11 +84,15 @@ def import_accounts(db: Session) -> dict:
         )
     except Exception as e:
         errors.append(
-            {"entity": "accounts", "message": f"Failed to query QBO: {str(e)}"}
+            {
+                "entity": "accounts",
+                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
+            }
         )
         return {"imported": 0, "errors": errors}
 
     for qbo_acct in qbo_accounts:
+        qbo_id = ""
         try:
             qbo_id = _safe(qbo_acct, "Id", "")
             if not qbo_id:
@@ -137,7 +145,11 @@ def import_accounts(db: Session) -> dict:
 
         except Exception as e:
             errors.append(
-                {"entity": "account", "qbo_id": str(qbo_id), "message": str(e)}
+                {
+                    "entity": "account",
+                    "qbo_id": str(qbo_id),
+                    "message": safe_message(e, "QBO import"),
+                }
             )
 
     return {"imported": imported, "errors": errors}
@@ -155,7 +167,10 @@ def import_customers(db: Session) -> dict:
         qbo_customers = QBOCustomer.all(qb=client)
     except Exception as e:
         errors.append(
-            {"entity": "customers", "message": f"Failed to query QBO: {str(e)}"}
+            {
+                "entity": "customers",
+                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
+            }
         )
         return {"imported": 0, "errors": errors}
 
@@ -164,6 +179,7 @@ def import_customers(db: Session) -> dict:
     qbo_customers = sorted(qbo_customers, key=lambda c: bool(_safe(c, "Job", False)))
 
     for qbo_cust in qbo_customers:
+        qbo_id = ""
         try:
             qbo_id = _safe(qbo_cust, "Id", "")
             if not qbo_id:
@@ -294,7 +310,11 @@ def import_customers(db: Session) -> dict:
 
         except Exception as e:
             errors.append(
-                {"entity": "customer", "qbo_id": str(qbo_id), "message": str(e)}
+                {
+                    "entity": "customer",
+                    "qbo_id": str(qbo_id),
+                    "message": safe_message(e, "QBO import"),
+                }
             )
 
     return {"imported": imported, "errors": errors}
@@ -312,11 +332,15 @@ def import_vendors(db: Session) -> dict:
         qbo_vendors = QBOVendor.all(qb=client)
     except Exception as e:
         errors.append(
-            {"entity": "vendors", "message": f"Failed to query QBO: {str(e)}"}
+            {
+                "entity": "vendors",
+                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
+            }
         )
         return {"imported": 0, "errors": errors}
 
     for qbo_vend in qbo_vendors:
+        qbo_id = ""
         try:
             qbo_id = _safe(qbo_vend, "Id", "")
             if not qbo_id:
@@ -385,7 +409,11 @@ def import_vendors(db: Session) -> dict:
 
         except Exception as e:
             errors.append(
-                {"entity": "vendor", "qbo_id": str(qbo_id), "message": str(e)}
+                {
+                    "entity": "vendor",
+                    "qbo_id": str(qbo_id),
+                    "message": safe_message(e, "QBO import"),
+                }
             )
 
     return {"imported": imported, "errors": errors}
@@ -402,10 +430,16 @@ def import_items(db: Session) -> dict:
     try:
         qbo_items = QBOItem.all(qb=client)
     except Exception as e:
-        errors.append({"entity": "items", "message": f"Failed to query QBO: {str(e)}"})
+        errors.append(
+            {
+                "entity": "items",
+                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
+            }
+        )
         return {"imported": 0, "errors": errors}
 
     for qbo_item in qbo_items:
+        qbo_id = ""
         try:
             qbo_id = _safe(qbo_item, "Id", "")
             if not qbo_id:
@@ -465,7 +499,13 @@ def import_items(db: Session) -> dict:
             imported += 1
 
         except Exception as e:
-            errors.append({"entity": "item", "qbo_id": str(qbo_id), "message": str(e)})
+            errors.append(
+                {
+                    "entity": "item",
+                    "qbo_id": str(qbo_id),
+                    "message": safe_message(e, "QBO import"),
+                }
+            )
 
     return {"imported": imported, "errors": errors}
 
@@ -482,11 +522,15 @@ def import_invoices(db: Session) -> dict:
         qbo_invoices = QBOInvoice.all(qb=client)
     except Exception as e:
         errors.append(
-            {"entity": "invoices", "message": f"Failed to query QBO: {str(e)}"}
+            {
+                "entity": "invoices",
+                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
+            }
         )
         return {"imported": 0, "errors": errors}
 
     for qbo_inv in qbo_invoices:
+        qbo_id = ""
         try:
             qbo_id = _safe(qbo_inv, "Id", "")
             if not qbo_id:
@@ -639,7 +683,11 @@ def import_invoices(db: Session) -> dict:
 
         except Exception as e:
             errors.append(
-                {"entity": "invoice", "qbo_id": str(qbo_id), "message": str(e)}
+                {
+                    "entity": "invoice",
+                    "qbo_id": str(qbo_id),
+                    "message": safe_message(e, "QBO import"),
+                }
             )
 
     return {"imported": imported, "errors": errors}
@@ -657,11 +705,15 @@ def import_payments(db: Session) -> dict:
         qbo_payments = QBOPayment.all(qb=client)
     except Exception as e:
         errors.append(
-            {"entity": "payments", "message": f"Failed to query QBO: {str(e)}"}
+            {
+                "entity": "payments",
+                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
+            }
         )
         return {"imported": 0, "errors": errors}
 
     for qbo_pmt in qbo_payments:
+        qbo_id = ""
         try:
             qbo_id = _safe(qbo_pmt, "Id", "")
             if not qbo_id:
@@ -746,15 +798,10 @@ def import_payments(db: Session) -> dict:
                                 )
                                 db.add(alloc)
 
-                                # Update invoice status
-                                inv.amount_paid = (inv.amount_paid or Decimal("0")) + (
-                                    line_amount or amount
-                                )
-                                inv.balance_due = inv.total - inv.amount_paid
-                                if inv.balance_due <= 0:
-                                    inv.status = InvoiceStatus.PAID
-                                elif inv.amount_paid > 0:
-                                    inv.status = InvoiceStatus.PARTIAL
+                                # This is historical payment import, not a new
+                                # receipt of funds. The invoice's QBO Balance
+                                # already includes these payments. Preserve
+                                # that snapshot instead of applying them twice.
 
             create_mapping(
                 db, "payment", payment.id, qbo_id, _safe(qbo_pmt, "SyncToken")
@@ -763,7 +810,11 @@ def import_payments(db: Session) -> dict:
 
         except Exception as e:
             errors.append(
-                {"entity": "payment", "qbo_id": str(qbo_id), "message": str(e)}
+                {
+                    "entity": "payment",
+                    "qbo_id": str(qbo_id),
+                    "message": safe_message(e, "QBO import"),
+                }
             )
 
     return {"imported": imported, "errors": errors}
@@ -787,11 +838,15 @@ def import_sales_receipts(db: Session) -> dict:
         qbo_receipts = QBOSalesReceipt.all(qb=client)
     except Exception as e:
         errors.append(
-            {"entity": "sales_receipts", "message": f"Failed to query QBO: {str(e)}"}
+            {
+                "entity": "sales_receipts",
+                "message": "Failed to query QBO: " + safe_message(e, "QBO import"),
+            }
         )
         return {"imported": 0, "errors": errors}
 
     for qbo_sr in qbo_receipts:
+        qbo_id = ""
         try:
             qbo_id = _safe(qbo_sr, "Id", "")
             if not qbo_id:
@@ -960,7 +1015,11 @@ def import_sales_receipts(db: Session) -> dict:
 
         except Exception as e:
             errors.append(
-                {"entity": "sales_receipt", "qbo_id": str(qbo_id), "message": str(e)}
+                {
+                    "entity": "sales_receipt",
+                    "qbo_id": str(qbo_id),
+                    "message": safe_message(e, "QBO import"),
+                }
             )
 
     return {"imported": imported, "errors": errors}

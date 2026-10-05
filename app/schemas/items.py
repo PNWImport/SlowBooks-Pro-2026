@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 from app.models.items import ItemType, MovementType
 
@@ -12,8 +12,8 @@ class ItemCreate(StrictModel):
     name: str
     item_type: ItemType
     description: Optional[str] = None
-    rate: Decimal = Decimal("0")
-    cost: Decimal = Decimal("0")
+    rate: Money = Decimal("0")
+    cost: Money = Decimal("0")
     income_account_id: Optional[int] = None
     expense_account_id: Optional[int] = None
     is_taxable: bool = True
@@ -28,8 +28,8 @@ class ItemUpdate(StrictModel):
     name: Optional[str] = None
     item_type: Optional[ItemType] = None
     description: Optional[str] = None
-    rate: Optional[Decimal] = None
-    cost: Optional[Decimal] = None
+    rate: Optional[Money] = None
+    cost: Optional[Money] = None
     income_account_id: Optional[int] = None
     expense_account_id: Optional[int] = None
     is_taxable: Optional[bool] = None

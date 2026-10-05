@@ -41,7 +41,9 @@ const TERMS_NONPROFIT = {
     "P&L": "Activities",
     "P&L by Class": "Activities by Fund",
     "P&L: This Month vs Last": "Activities: This Month vs Last",
+    "P&L: Year to Date": "Activities: Year to Date",
     "Balance Sheet": "Statement of Financial Position",
+    "Balance Sheet Trend": "Statement of Financial Position Trend",
     "Class": "Fund",
     "Classes": "Funds",
     "Job": "Grant",
@@ -87,8 +89,13 @@ const Terms = {
         return s.replace(Terms._re, (found) => {
             const exact = Object.keys(d).find(k => k.toLowerCase() === found.toLowerCase());
             const out = exact ? d[exact] : found;
-            if (found === found.toUpperCase()) return out.toUpperCase();
-            if (found[0] === found[0].toLowerCase()) return out[0].toLowerCase() + out.slice(1);
+            // an all-caps KEY (P&L, A/R) is not a shouted sentence
+            if (found === found.toUpperCase() && !(exact && exact === exact.toUpperCase())) return out.toUpperCase();
+            // a lower-case word takes a lower-case phrase ("equity" -> "net assets",
+            // not "net Assets"); an acronym inside the replacement keeps its capitals
+            if (found[0] === found[0].toLowerCase()) {
+                return out.split(' ').map(w => (w.length > 1 && w === w.toUpperCase() && /[A-Z]/.test(w)) ? w : w.toLowerCase()).join(' ');
+            }
             return out;
         });
     },

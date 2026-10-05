@@ -1,6 +1,8 @@
 # ============================================================================
 # SimpleFIN bank feeds — pull account balances + transactions from a
-# SimpleFIN Bridge (bridge.simplefin.org) the *user* signs up for.
+# SimpleFIN server the *user* signs up for: the reference Bridge
+# (bridge.simplefin.org) or any other provider that issues setup tokens.
+# Nothing here is tied to one host; the claim URL inside the token decides.
 #
 # Protocol (https://www.simplefin.org/protocol.html):
 #   1. User pastes a one-time SETUP TOKEN (base64 of a claim URL).

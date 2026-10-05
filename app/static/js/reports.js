@@ -439,7 +439,7 @@ const ReportsPage = {
     async profitLoss(prefill) {
         await ReportsPage.openPeriodModal(T("Profit & Loss"), "this_year_to_date", async (_period, range) => {
             const data = await API.get(`/reports/profit-loss?start_date=${range.start}&end_date=${range.end}`);
-            const pdfBtn = `<div style="text-align:right; margin-bottom:6px;"><button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/profit-loss/pdf?start_date=${range.start}&end_date=${range.end}','_blank')">Save PDF</button></div>`;
+            const pdfBtn = ReportsPage._exportButtons('profit-loss', `start_date=${range.start}&end_date=${range.end}`);
             // Build the onclick payload outside the template so we can
             // HTML-escape the embedded double quotes from JSON.stringify().
             // Otherwise the inner " breaks the outer onclick="…" attribute.
@@ -478,7 +478,7 @@ const ReportsPage = {
     async balanceSheet(prefill) {
         await ReportsPage.openPeriodModal(T("Balance Sheet"), "this_year_to_date", async (_period, params) => {
             const data = await API.get(`/reports/balance-sheet?as_of_date=${params.as_of_date}`);
-            const pdfBtn = `<div style="text-align:right; margin-bottom:6px;"><button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/balance-sheet/pdf?as_of_date=${params.as_of_date}','_blank')">Save PDF</button></div>`;
+            const pdfBtn = ReportsPage._exportButtons('balance-sheet', `as_of_date=${params.as_of_date}`);
             const drillCall = (i) => escapeHtml(
                 `ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_name)},null,${JSON.stringify(params.as_of_date)})`
             );
@@ -540,27 +540,32 @@ const ReportsPage = {
     async generalLedger(prefill) {
         await ReportsPage.openPeriodModal("General Ledger", "this_year_to_date", async (_period, range) => {
             const data = await API.get(`/reports/general-ledger?start_date=${range.start}&end_date=${range.end}`);
-            let html = `<p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}</p>`;
+            let html = `${ReportsPage._exportButtons('general-ledger', `start_date=${range.start}&end_date=${range.end}`)}
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}</p>`;
             if (data.accounts.length === 0) {
                 html += `<div class="empty-state"><p>No journal entries found</p></div>`;
             } else {
                 for (const acct of data.accounts) {
                     html += `<h3 style="margin:12px 0 4px; font-size:12px; color:var(--qb-navy);">${escapeHtml(acct.account_number)} &mdash; ${escapeHtml(acct.account_name)}</h3>`;
                     html += `<div class="table-container"><table>
-                        <thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Reference</th><th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th></tr></thead><tbody>`;
+                        <thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Reference</th><th scope="col">Source</th><th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th><th scope="col" class="amount">Balance</th></tr></thead><tbody>`;
+                    html += `<tr style="color:var(--gray-500);"><td></td><td colspan="5">Balance brought forward</td><td class="amount">${formatCurrency(acct.opening_balance)}</td></tr>`;
                     for (const e of acct.entries) {
                         html += `<tr>
                             <td>${formatDate(e.date)}</td>
                             <td>${escapeHtml(e.description)}</td>
                             <td>${escapeHtml(e.reference)}</td>
+                            <td style="font-size:10px; color:var(--gray-500);">${escapeHtml(e.source_type)}</td>
                             <td class="amount">${e.debit > 0 ? formatCurrency(e.debit) : ""}</td>
                             <td class="amount">${e.credit > 0 ? formatCurrency(e.credit) : ""}</td>
+                            <td class="amount">${formatCurrency(e.running_balance)}</td>
                         </tr>`;
                     }
                     html += `<tr style="font-weight:600; background:var(--gray-50);">
-                        <td colspan="3">Total</td>
+                        <td colspan="4">Period total</td>
                         <td class="amount">${formatCurrency(acct.total_debit)}</td>
                         <td class="amount">${formatCurrency(acct.total_credit)}</td>
+                        <td class="amount">${formatCurrency(acct.closing_balance)}</td>
                     </tr></tbody></table></div>`;
                 }
             }
@@ -721,7 +726,7 @@ const ReportsPage = {
                 <td class="amount">${formatCurrency(data.total_credit)}</td>
                 <td class="amount" style="color:${diffColor}">${formatCurrency(data.difference)}</td>
             </tr>`;
-            return `
+            return `${ReportsPage._exportButtons('trial-balance', `start_date=${range.start}&end_date=${range.end}`)}
                 <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}</p>
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Number</th><th scope="col">Account</th><th scope="col">Type</th><th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th><th scope="col" class="amount">Net</th></tr></thead>

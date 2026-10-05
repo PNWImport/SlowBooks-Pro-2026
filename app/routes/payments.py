@@ -95,25 +95,8 @@ def create_payment(data: PaymentCreate, db: Session = Depends(get_db)):
     if alloc_total > data.amount:
         raise HTTPException(status_code=400, detail="Allocations exceed payment amount")
 
-    payment = Payment(
-        customer_id=data.customer_id,
-        currency=pay_currency,
-        exchange_rate=pay_rate,
-        date=data.date,
-        amount=data.amount,
-        method=data.method,
-        check_number=data.check_number,
-        reference=data.reference,
-        deposit_to_account_id=data.deposit_to_account_id,
-        notes=data.notes,
-    )
-    db.add(payment)
-    db.flush()
-
-    # Home-currency value of A/R relieved per allocation (at each
-    # invoice's booked rate) — the FX gain/loss basis.
-    ar_home_credits: list[Decimal] = []
-    # Apply allocations to invoices
+    # Validate every allocation owner before creating or applying the payment.
+    allocated_invoices = []
     for alloc_data in data.allocations:
         # Lock the invoice row for the read-check-write so two concurrent
         # payments to the same invoice can't both pass the balance check and
@@ -132,8 +115,30 @@ def create_payment(data: PaymentCreate, db: Session = Depends(get_db)):
         if invoice.customer_id != data.customer_id:
             raise HTTPException(
                 status_code=400,
-                detail="Allocated invoice does not belong to the payment customer",
+                detail=f"Invoice {invoice.invoice_number} does not belong to payment customer",
             )
+        allocated_invoices.append(invoice)
+
+    payment = Payment(
+        customer_id=data.customer_id,
+        currency=pay_currency,
+        exchange_rate=pay_rate,
+        date=data.date,
+        amount=data.amount,
+        method=data.method,
+        check_number=data.check_number,
+        reference=data.reference,
+        deposit_to_account_id=data.deposit_to_account_id,
+        notes=data.notes,
+    )
+    db.add(payment)
+    db.flush()
+
+    # Home-currency value of A/R relieved per allocation (at each
+    # invoice's booked rate) — the FX gain/loss basis.
+    ar_home_credits: list[Decimal] = []
+    # Apply allocations to the invoices locked and validated above.
+    for alloc_data, invoice in zip(data.allocations, allocated_invoices):
         if alloc_data.amount > invoice.balance_due:
             raise HTTPException(
                 status_code=400,

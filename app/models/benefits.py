@@ -25,6 +25,7 @@
 #                      cannot rewrite what was withheld.
 # ============================================================================
 
+from decimal import Decimal
 from sqlalchemy import (
     Boolean,
     Column,
@@ -139,13 +140,13 @@ class BenefitRate(Base):
     effective_to = Column(Date, nullable=True)
 
     # Dollars (fixed_amount, amount_per_hour) or percent (percent_*)
-    employee_rate = Column(Numeric(12, 4), nullable=False, default=0)
-    employer_rate = Column(Numeric(12, 4), nullable=False, default=0)
-    per_period_cap = Column(Numeric(12, 2), nullable=True)
-    annual_cap = Column(Numeric(12, 2), nullable=True)
+    employee_rate = Column(Numeric(12, 4), nullable=False, default=Decimal("0"))
+    employer_rate = Column(Numeric(12, 4), nullable=False, default=Decimal("0"))
+    per_period_cap = Column(Numeric(15, 2), nullable=True)
+    annual_cap = Column(Numeric(15, 2), nullable=True)
     # Only wages up to this YTD ceiling count toward a percent-method code
-    wage_base_ceiling = Column(Numeric(12, 2), nullable=True)
-    employer_annual_cap = Column(Numeric(12, 2), nullable=True)
+    wage_base_ceiling = Column(Numeric(15, 2), nullable=True)
+    employer_annual_cap = Column(Numeric(15, 2), nullable=True)
     # match_percent: employer matches employer_rate % of the employee's
     # contribution, on at most this percent of gross
     employer_match_limit_pct = Column(Numeric(6, 2), nullable=True)
@@ -193,8 +194,8 @@ class EmployeeGroupBenefit(Base):
     benefit_code_id = Column(Integer, ForeignKey("benefit_codes.id"), nullable=False)
     employee_rate = Column(Numeric(12, 4), nullable=True)
     employer_rate = Column(Numeric(12, 4), nullable=True)
-    per_period_cap = Column(Numeric(12, 2), nullable=True)
-    annual_cap = Column(Numeric(12, 2), nullable=True)
+    per_period_cap = Column(Numeric(15, 2), nullable=True)
+    annual_cap = Column(Numeric(15, 2), nullable=True)
 
     group = relationship("EmployeeGroup", back_populates="codes")
     benefit_code = relationship("BenefitCode")
@@ -213,10 +214,10 @@ class EmployeeBenefit(Base):
     # Overrides; NULL = take the group's value, then the code's dated rate
     employee_rate = Column(Numeric(12, 4), nullable=True)
     employer_rate = Column(Numeric(12, 4), nullable=True)
-    per_period_cap = Column(Numeric(12, 2), nullable=True)
-    annual_cap = Column(Numeric(12, 2), nullable=True)
+    per_period_cap = Column(Numeric(15, 2), nullable=True)
+    annual_cap = Column(Numeric(15, 2), nullable=True)
     # Running balance for balance-tracking codes (loans). NULL = not tracked.
-    balance_remaining = Column(Numeric(12, 2), nullable=True)
+    balance_remaining = Column(Numeric(15, 2), nullable=True)
     start_date = Column(Date, nullable=True)
     end_date = Column(Date, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
@@ -245,8 +246,8 @@ class BenefitYTD(Base):
     )
     benefit_code_id = Column(Integer, ForeignKey("benefit_codes.id"), nullable=False)
     year = Column(Integer, nullable=False)
-    employee_amount = Column(Numeric(12, 2), nullable=False, default=0)
-    employer_amount = Column(Numeric(12, 2), nullable=False, default=0)
+    employee_amount = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
+    employer_amount = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -272,8 +273,8 @@ class PayStubBenefit(Base):
     category = Column(String(10), nullable=False)
     sequence = Column(Integer, nullable=False, default=100)
     calc_method = Column(String(24), nullable=False)
-    employee_rate = Column(Numeric(12, 4), nullable=False, default=0)
-    employer_rate = Column(Numeric(12, 4), nullable=False, default=0)
+    employee_rate = Column(Numeric(12, 4), nullable=False, default=Decimal("0"))
+    employer_rate = Column(Numeric(12, 4), nullable=False, default=Decimal("0"))
     reduces_federal = Column(Boolean, nullable=False, default=False)
     reduces_state = Column(Boolean, nullable=False, default=False)
     reduces_fica = Column(Boolean, nullable=False, default=False)
@@ -283,8 +284,8 @@ class PayStubBenefit(Base):
     burden_routing = Column(String(12), nullable=False, default="fringe_pool")
     rule_json = Column(Text, nullable=True)
     # The amounts
-    employee_amount = Column(Numeric(12, 2), nullable=False, default=0)
-    employer_amount = Column(Numeric(12, 2), nullable=False, default=0)
+    employee_amount = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
+    employer_amount = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
 
     pay_stub = relationship("PayStub", back_populates="benefits")
     benefit_code = relationship("BenefitCode")

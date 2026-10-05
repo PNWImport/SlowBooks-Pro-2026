@@ -3,11 +3,10 @@
 # See docs/design/receipt-intake.md + docs/design/receipt-intake-spec.md.
 #
 # Deterministic regex/anchor extraction over Tesseract output — no AI in v1.
-# ZERO Python dependencies by design: we shell out to the user-installed
-# `tesseract` binary (never bundled) and, for PDFs, the poppler-utils tools
-# (pdftoppm/pdfinfo). Both are detected at runtime and degrade gracefully:
-# the route layer turns "binary missing" into a friendly message and the app
-# runs exactly as before.
+# OCR uses the OS engine on supported desktop builds or user-installed
+# Tesseract. PDF page 1 uses Windows.Data.Pdf or Quartz when available,
+# with poppler-utils as the fallback/Linux renderer (pdf_raster.py).
+# Missing engines/renderers degrade gracefully without blocking the app.
 # ============================================================================
 
 import json
@@ -16,7 +15,6 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import time
 from calendar import monthrange
 from datetime import datetime, timedelta
@@ -71,6 +69,9 @@ def tesseract_info() -> dict:
         return _cache["info"]
     info = _probe_tesseract()
     info["poppler"] = _poppler_available()
+    from app.services import pdf_raster
+
+    info["pdf"] = pdf_raster.pdf_renderer(poppler_ok=info["poppler"])
     _cache.update(at=now, info=info)
     return info
 
@@ -329,71 +330,15 @@ def preprocess_page(data: bytes):
 
 
 # ---------------------------------------------------------------------------
-# PDF handling — poppler-utils (pdftoppm/pdfinfo), page 1 only (spec §3)
+# PDF handling — native renderer with poppler fallback, page 1 only (spec §3)
 # ---------------------------------------------------------------------------
 
 
 def rasterize_pdf(data: bytes, dpi: int = PDF_DPI):
-    """Rasterize PDF page 1 to PNG bytes. Returns (png_bytes, page_count).
+    """Rasterize page 1 using the native renderer, then poppler fallback."""
+    from app.services import pdf_raster
 
-    Raises ValueError on missing poppler-utils or a corrupt PDF. Uses temp
-    files (poppler reads files, not stdin); cleaned up in all paths.
-    """
-    if not poppler_available():
-        raise ValueError(
-            "PDF scanning requires poppler-utils (pdftoppm/pdfinfo). "
-            "Install it to scan PDFs — images still work without it."
-        )
-    with tempfile.TemporaryDirectory(prefix="slowbooks-ocr-") as tmp:
-        pdf_path = Path(tmp) / "input.pdf"
-        pdf_path.write_bytes(data)
-
-        page_count = 1
-        try:
-            info = subprocess.run(
-                ["pdfinfo", str(pdf_path)], capture_output=True, text=True, timeout=15
-            )
-            if info.returncode == 0:
-                m = re.search(r"^Pages:\s*(\d+)", info.stdout, re.MULTILINE)
-                if m:
-                    page_count = int(m.group(1))
-        except (OSError, subprocess.TimeoutExpired):
-            pass  # page count is informational only
-
-        prefix = Path(tmp) / "page"
-        try:
-            proc = subprocess.run(
-                [
-                    "pdftoppm",
-                    "-png",
-                    "-r",
-                    str(dpi),
-                    "-f",
-                    "1",
-                    "-l",
-                    "1",
-                    "-singlefile",
-                    str(pdf_path),
-                    str(prefix),
-                ],
-                capture_output=True,
-                timeout=30,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise ValueError(f"pdftoppm could not run: {exc}") from exc
-        if proc.returncode != 0:
-            raise ValueError(
-                "Could not read the PDF"
-                + (
-                    ": " + (proc.stderr or b"").decode("utf-8", errors="replace")[:300]
-                    if proc.stderr
-                    else ""
-                )
-            )
-        png_path = Path(f"{prefix}.png")
-        if not png_path.is_file():
-            raise ValueError("Could not rasterize the PDF (no page output)")
-        return png_path.read_bytes(), page_count
+    return pdf_raster.rasterize(data, dpi, poppler_ok=poppler_available())
 
 
 # ---------------------------------------------------------------------------
@@ -788,8 +733,6 @@ def parse_reference(text: str) -> Optional[str]:
             continue
         if re.match(r"^\d{1,2}/\d{1,2}(?:/\d{2,4})?$", token):
             continue  # a date after "Receipt" — not a number
-        if token.lower() in ("no", "num", "number", "id"):
-            continue
         return token[:40]
     return None
 
@@ -876,6 +819,30 @@ def save_intake(data: bytes, original_filename: str, mime_type: str) -> str:
     return intake_id
 
 
+def _intake_created_at(meta, intake_id: str) -> datetime:
+    """Validate sidecar dates and normalize aware timestamps to local time.
+
+    Existing sidecars store naive local timestamps; preserve their meaning
+    while allowing ISO timestamps with an explicit UTC offset.
+    """
+    if not isinstance(meta, dict) or not isinstance(meta.get("created_at"), str):
+        raise ValueError("invalid intake timestamp")
+    if not _INTAKE_ID_RE.fullmatch(intake_id) or meta.get("intake_id") != intake_id:
+        raise ValueError("invalid intake identity")
+    stored = meta.get("stored_name") or f"{intake_id}.png"
+    if (
+        not isinstance(stored, str)
+        or Path(stored).name != stored
+        or Path(stored).stem != intake_id
+        or Path(stored).suffix not in _INTAKE_EXTS
+    ):
+        raise ValueError("invalid intake filename")
+    created = datetime.fromisoformat(meta["created_at"])
+    if created.tzinfo is not None:
+        created = created.astimezone().replace(tzinfo=None)
+    return created
+
+
 def get_intake(intake_id: str) -> Optional[dict]:
     """Load an unexpired intake with its file bytes, or None."""
     if not _INTAKE_ID_RE.fullmatch(intake_id or ""):
@@ -891,7 +858,7 @@ def get_intake(intake_id: str) -> Optional[dict]:
     except (OSError, json.JSONDecodeError):
         return None
     try:
-        created = datetime.fromisoformat(meta["created_at"])
+        created = _intake_created_at(meta, intake_id)
     except (KeyError, ValueError):
         delete_intake(intake_id)
         return None
@@ -935,7 +902,7 @@ def list_intake() -> list[dict]:
     ):
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            created = datetime.fromisoformat(meta["created_at"])
+            created = _intake_created_at(meta, meta_path.stem)
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             continue
         age_h = (now - created).total_seconds() / 3600
@@ -964,7 +931,7 @@ def sweep_intake() -> int:
     for meta_path in INTAKE_DIR.glob("*.json"):
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            created = datetime.fromisoformat(meta["created_at"])
+            created = _intake_created_at(meta, meta_path.stem)
         except (OSError, KeyError, ValueError, json.JSONDecodeError):
             try:
                 meta_path.unlink()

@@ -23,12 +23,38 @@ spec:
         app: slowbooks-migrate
     spec:
       restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      # The headless Postgres service has no DNS record until its pod is
+      # ready; wait (up to ~5 min) instead of spending the Job's retries.
+      initContainers:
+        - name: wait-for-db
+          image: slowbooks:2.18.0
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              i=0
+              until pg_isready -h slowbooks-postgres -p 5432 -t 3; do
+                i=$((i + 1)); [ "$i" -ge 100 ] && exit 1; sleep 3
+              done
+          resources:
+            requests: { cpu: "10m", memory: "32Mi" }
+            limits: { memory: "64Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+            readOnlyRootFilesystem: true
       containers:
         - name: migrate
-          image: slowbooks:latest
+          image: slowbooks:2.18.0
           imagePullPolicy: IfNotPresent
           # Bypass the entrypoint: no server, just schema + seed.
-          command: ["/bin/bash", "-c"]
+          command: ["/bin/sh", "-c"]  # Alpine image: busybox sh, no bash
           args:
             - |
               set -e

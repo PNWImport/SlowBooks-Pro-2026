@@ -3,7 +3,6 @@
 # Feature 1: DR Expense, CR AP (2000) on create; DR AP, CR Bank on payment
 # ============================================================================
 
-from datetime import timedelta
 import re
 from decimal import Decimal
 
@@ -12,6 +11,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
 from app.routes._helpers import clamp_pagination
+from app.routes.invoices.helpers import _due_date_from_terms
 from app.models.bills import Bill, BillLine, BillStatus
 from app.models.contacts import Vendor
 from app.models.items import Item
@@ -125,11 +125,7 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
 
     due_date = data.due_date
     if not due_date and data.terms:
-        try:
-            days = int(data.terms.lower().replace("net ", ""))
-            due_date = data.date + timedelta(days=days)
-        except ValueError:
-            due_date = data.date + timedelta(days=30)
+        due_date = _due_date_from_terms(data.date, data.terms)
 
     subtotal, tax_amount, total = compute_line_totals(data.lines, data.tax_rate)
 
@@ -363,19 +359,28 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
     # Phase 11: reverse inventory receipts (the reversing JE already undoes
     # the Inventory Asset side; we just need the movement rows)
     from app.services.inventory_service import _append_movement
-    from app.models.items import MovementType as _MovementType
+    from app.models.items import InventoryMovement, MovementType as _MovementType
 
-    for line in bill.lines:
-        if not line.item_id:
-            continue
-        item = db.query(Item).filter(Item.id == line.item_id).first()
-        if item and item.track_inventory and line.quantity > 0:
+    # Item tracking can change after receipt. Only recorded stock movements
+    # determine what a void must undo; current item settings do not.
+    movements = (
+        db.query(InventoryMovement)
+        .filter(
+            InventoryMovement.source_type == "bill",
+            InventoryMovement.source_id == bill.id,
+        )
+        .order_by(InventoryMovement.id)
+        .all()
+    )
+    for movement in movements:
+        item = db.query(Item).filter(Item.id == movement.item_id).first()
+        if item is not None:
             _append_movement(
                 db,
                 item,
                 _MovementType.VOID,
-                quantity=-Decimal(str(line.quantity)),
-                unit_cost=Decimal(str(line.rate)),
+                quantity=-movement.quantity,
+                unit_cost=movement.unit_cost,
                 source_type="bill_void",
                 source_id=bill.id,
                 memo=f"VOID Bill {bill.bill_number}",

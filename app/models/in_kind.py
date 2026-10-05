@@ -10,6 +10,7 @@
 # gift, not the charity (IRS Publication 1771).
 # ============================================================================
 
+from decimal import Decimal
 from sqlalchemy import (
     Column,
     Date,
@@ -38,7 +39,7 @@ class InKindGift(Base):
     memo = Column(Text, nullable=True)
     status = Column(String(10), nullable=False, default="posted")
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
-    total = Column(Numeric(12, 2), nullable=False, default=0)
+    total = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
 
@@ -69,9 +70,11 @@ class InKindGiftLine(Base):
         index=True,
     )
     description = Column(Text, nullable=False)
-    quantity = Column(Numeric(12, 2), nullable=False, default=1)
-    fair_value = Column(Numeric(12, 2), nullable=False, default=0)  # per unit
-    amount = Column(Numeric(12, 2), nullable=False, default=0)
+    quantity = Column(Numeric(15, 2), nullable=False, default=Decimal("1"))
+    fair_value = Column(
+        Numeric(15, 2), nullable=False, default=Decimal("0")
+    )  # per unit
+    amount = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
     debit_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
     credit_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)

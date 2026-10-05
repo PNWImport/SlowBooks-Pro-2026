@@ -1,6 +1,6 @@
 # Data Model
 
-Schema reference for the Slowbooks PostgreSQL database. 94 tables on
+Schema reference for the Slowbooks PostgreSQL database. 97 tables on
 a double-entry accounting foundation. For migration history, see the
 files under `migrations/versions/`; for model code, see `app/models/`.
 
@@ -34,6 +34,9 @@ files under `migrations/versions/`; for model code, see `app/models/`.
 | `bill_payment_allocations` | Maps bill payments to bills |
 | `credit_memos` | Customer credit memos |
 | `credit_memo_lines` | Credit memo line items |
+| `vendor_credits` | Supplier credits against Accounts Payable |
+| `vendor_credit_lines` | Vendor credit line items and expense accounts |
+| `vendor_credit_applications` | Vendor credits applied to bills |
 | `credit_applications` | Maps credit memos to invoices |
 | `recurring_invoices` | Recurring invoice templates |
 | `recurring_invoice_lines` | Recurring invoice line items |

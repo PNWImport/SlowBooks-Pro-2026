@@ -143,6 +143,26 @@ def test_claim_access_url(monkeypatch):
     assert sf.claim_access_url(_token()) == ACCESS_URL
 
 
+def test_a_token_from_another_simplefin_provider_is_claimed_at_its_own_host(
+    monkeypatch,
+):
+    # #181: tokens are not only issued by bridge.simplefin.org. The claim URL
+    # inside the token decides the host; the path shape is the provider's.
+    other_claim = "https://sync.provider.example/api/sfin/claim/7f3a"
+    other_access = "https://u:p@sync.provider.example/api/sfin"
+    seen = {}
+
+    def fake_send(req, **kw):
+        seen.update(req)
+        return _resp(text=other_access)
+
+    monkeypatch.setattr(sf, "send", fake_send)
+    assert sf.claim_access_url(_token(other_claim)) == other_access
+    assert seen["url"] == other_claim
+    req = sf.build_accounts_request(other_access)
+    assert req["url"] == "https://sync.provider.example/api/sfin/accounts"
+
+
 def test_claim_access_url_rejected_token(monkeypatch):
     monkeypatch.setattr(sf, "send", lambda req, **kw: _resp(status=403))
     with pytest.raises(sf.SimpleFINError):
@@ -193,7 +213,8 @@ def test_sync_imports_dedups_and_applies_rules(db_session):
     assert {t.import_id for t in txns} == {"TXN-1", "TXN-2"}
     assert all(t.import_source == "simplefin" for t in txns)
     bait = next(t for t in txns if t.import_id == "TXN-1")
-    assert bait.match_status == "auto"
+    assert bait.match_status == "unmatched"
+    assert bait.transaction_line_id is None
     assert bait.category_account_id == expense.id
 
     # Second sync of the same window: everything dedups

@@ -77,7 +77,7 @@ const JobCostsPage = {
                 <div style="font-size:11px;color:var(--gray-500);margin-bottom:6px">
                     Pick equipment to charge its hourly rate; pick an employee for internal labor (enter the hours and loaded rate). Leave the accounts blank to use the cost code's / cost type's defaults.
                 </div>
-                <div class="table-container"><table class="line-items-table">
+                <div class="table-container table-container--scroll"><table class="line-items-table">
                     <thead><tr><th scope="col">Cost code</th><th scope="col">Type</th><th scope="col">Description</th><th scope="col">Employee / Equipment</th><th scope="col" class="col-qty">Qty</th><th scope="col" class="col-rate">Rate</th><th scope="col" class="col-amount">Amount</th><th scope="col">Cost acct</th><th scope="col">Offset acct</th><th scope="col" title="Billable">Bill?</th><th scope="col"></th></tr></thead>
                     <tbody id="jc-lines">${JobCostsPage.lineHtml(0)}</tbody>
                 </table></div>
@@ -87,7 +87,7 @@ const JobCostsPage = {
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Post ${T('Job')} Cost</button>
                 </div>
-            </form>`);
+            </form>`, { wide: true });
         JobCostsPage._lineCount = 1;
     },
 
@@ -99,15 +99,15 @@ const JobCostsPage = {
             + (JobCostsPage._equipment.length ? `<optgroup label="Equipment">${JobCostsPage._equipment.map(q => `<option value="eq:${q.id}" data-rate="${q.hourly_rate}">${escapeHtml(q.name)} (${formatCurrency(q.hourly_rate)}/hr)</option>`).join('')}</optgroup>` : '');
         const acctOpts = JobCostsPage._opt(JobCostsPage._accounts, 'id', a => `${a.account_number || ''} ${a.name}`.trim(), null, 'default');
         return `<tr data-jcline="${idx}">
-            <td><select class="jc-code" style="max-width:170px">${codeOpts}</select></td>
+            <td><select class="jc-code" style="min-width:150px;max-width:190px">${codeOpts}</select></td>
             <td><select class="jc-type">${typeOpts}</select></td>
-            <td><input class="jc-desc" style="min-width:140px"></td>
-            <td><select class="jc-who" onchange="JobCostsPage.whoChanged(this)">${who}</select></td>
+            <td><input class="jc-desc" style="min-width:160px"></td>
+            <td><select class="jc-who" style="min-width:160px" onchange="JobCostsPage.whoChanged(this)">${who}</select></td>
             <td><input class="jc-qty" type="number" step="0.01" value="1" oninput="JobCostsPage.recalc()"></td>
             <td><input class="jc-rate" type="number" step="0.0001" value="0" oninput="JobCostsPage.recalc()"></td>
             <td class="col-amount jc-amount">$0.00</td>
-            <td><select class="jc-debit" style="max-width:150px">${acctOpts}</select></td>
-            <td><select class="jc-credit" style="max-width:150px">${acctOpts}</select></td>
+            <td><select class="jc-debit" style="min-width:140px;max-width:170px">${acctOpts}</select></td>
+            <td><select class="jc-credit" style="min-width:140px;max-width:170px">${acctOpts}</select></td>
             <td style="text-align:center"><input type="checkbox" class="jc-billable"></td>
             <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="this.closest('tr').remove();JobCostsPage.recalc()">X</button></td>
         </tr>`;

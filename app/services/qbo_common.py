@@ -101,3 +101,6 @@ def create_mapping(
         qbo_sync_token=sync_token,
     )
     db.add(m)
+    # Sessions disable autoflush. Later records in this import/export depend
+    # on seeing the mapping immediately (parents, customers, items, invoices).
+    db.flush()

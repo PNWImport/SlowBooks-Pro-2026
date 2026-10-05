@@ -71,6 +71,85 @@ def test_payment_cannot_settle_another_customers_invoice(client, invoice, db_ses
     assert db_session.query(Payment).count() == 0
 
 
+def test_bill_payment_cannot_settle_another_vendors_bill(
+    client, db_session, seed_accounts
+):
+    from app.models.bills import BillPayment
+    from app.models.contacts import Vendor
+
+    billed_vendor = Vendor(name="Billed Vendor", is_active=True)
+    paying_vendor = Vendor(name="Paying Vendor", is_active=True)
+    db_session.add_all([billed_vendor, paying_vendor])
+    db_session.commit()
+    bill = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": billed_vendor.id,
+            "date": "2026-07-01",
+            "lines": [{"description": "Supplies", "quantity": 1, "rate": "100.00"}],
+        },
+    )
+    assert bill.status_code == 201, bill.text
+    response = client.post(
+        "/api/bill-payments",
+        json={
+            "vendor_id": paying_vendor.id,
+            "date": "2026-07-02",
+            "amount": "100.00",
+            "allocations": [{"bill_id": bill.json()["id"], "amount": "100.00"}],
+        },
+    )
+    assert response.status_code == 400, response.text
+    db_session.expire_all()
+    assert client.get(f"/api/bills/{bill.json()['id']}").json()["status"] == "unpaid"
+    assert db_session.query(BillPayment).count() == 0
+
+
+def test_batch_payment_cannot_settle_another_customers_invoice(
+    client, invoice, db_session
+):
+    from app.models.payments import Payment
+
+    other = Customer(name="Batch customer", is_active=True)
+    db_session.add(other)
+    db_session.commit()
+    response = client.post(
+        "/api/batch-payments",
+        json={
+            "date": "2026-07-02",
+            "allocations": [
+                {
+                    "customer_id": other.id,
+                    "invoice_id": invoice.id,
+                    "amount": "100.00",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 400, response.text
+    db_session.refresh(invoice)
+    assert invoice.balance_due == Decimal("100.00")
+    assert db_session.query(Payment).count() == 0
+
+
+@pytest.mark.parametrize("amount", ["0.001", "0.005", "1.001"])
+def test_batch_payment_rejects_fractional_cents(client, invoice, amount):
+    response = client.post(
+        "/api/batch-payments",
+        json={
+            "date": "2026-07-02",
+            "allocations": [
+                {
+                    "customer_id": invoice.customer_id,
+                    "invoice_id": invoice.id,
+                    "amount": amount,
+                }
+            ],
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
 def test_unknown_provider_is_400_not_500(unauthed_client, invoice):
     resp = unauthed_client.post(
         "/api/payments/nonexistent/create-checkout-session",

@@ -369,7 +369,7 @@ def _ai_error_detail(exc: AIProviderError) -> str:
 
 
 # Tiny in-process cache so the UI can poll without hammering paid APIs.
-# Keyed by (provider, model, period_name) → (expiry_epoch, payload_dict).
+# Keyed by (provider, model, period_name, start, end) → (expiry_epoch, payload_dict).
 # Cache TTL is 10 minutes. Cleared on config changes.
 _AI_CACHE: dict = {}
 _AI_CACHE_TTL_SECONDS = 600
@@ -462,9 +462,9 @@ def put_ai_config(
 ):
     """Update AI provider / model / key / account_id.
 
-    If `api_key` is omitted or empty, the existing encrypted value is
-    kept. If present and non-empty, it is encrypted with Fernet before
-    being stored.
+    Omitting `api_key` keeps the existing encrypted value. An explicit empty
+    or whitespace-only value removes it; a non-empty value is encrypted
+    with Fernet before storage.
     """
     provider = (payload.provider or "").strip().lower()
     if provider and provider not in AI_PROVIDERS:
@@ -522,19 +522,17 @@ def put_ai_config(
     # the API is a poor property for a credential (2.9.0 gate, skytech).
     # The Settings page only sends api_key when the field was typed into,
     # or when the user clicked Remove — never a blank round-trip.
-    should_update_key = isinstance(new_api_key, str) and new_api_key.strip() != ""
-    should_clear_key = isinstance(new_api_key, str) and new_api_key.strip() == ""
-
     set_setting(db, _AI_PROVIDER_KEY, provider)
     set_setting(db, _AI_MODEL_KEY, model)
     set_setting(db, _AI_CF_ACCOUNT_KEY, account_id)
     set_setting(db, _AI_WORKER_URL_KEY, worker_url)
     set_setting(db, _AI_ENDPOINT_URL_KEY, endpoint_url)
-    if should_update_key:
-        encrypted = encrypt_value(new_api_key.strip())
-        set_setting(db, _AI_API_KEY, encrypted)
-    elif should_clear_key:
-        set_setting(db, _AI_API_KEY, "")
+    if isinstance(new_api_key, str):
+        cleaned_api_key = new_api_key.strip()
+        if cleaned_api_key:
+            set_setting(db, _AI_API_KEY, encrypt_value(cleaned_api_key))
+        else:
+            set_setting(db, _AI_API_KEY, "")
 
     db.commit()
     _clear_ai_cache()
@@ -607,7 +605,7 @@ def ai_insights(
     """Run the configured AI provider over the current dashboard snapshot.
 
     Returns `{insights, provider, provider_label, model, generated_at, cached}`.
-    Caches per (provider, model, period_name) for 10 minutes unless
+    Caches per (provider, model, period_name, start, end) for 10 minutes unless
     `force=true` is supplied.
     """
     cfg = _read_ai_config(db)
@@ -675,10 +673,26 @@ def ai_insights(
 
 
 @router.get("/ai-actions")
-def list_ai_actions():
+def list_ai_actions(db: Session = Depends(get_db)):
     """List the curated AI analysis actions, grouped by category for the
     UI dropdown. No secrets, no per-row LLM calls — purely catalogue."""
-    return {"groups": ai_list_actions()}
+    from app.services.terminology import terms_from_db
+
+    terms = terms_from_db(db)
+    groups = ai_list_actions()
+    if terms.is_nonprofit:
+        groups = [
+            {
+                **group,
+                "category": terms.text(group["category"]),
+                "actions": [
+                    {**action, "label": terms.text(action["label"])}
+                    for action in group["actions"]
+                ],
+            }
+            for group in groups
+        ]
+    return {"groups": groups}
 
 
 @router.post("/ai-actions/{action_key}")

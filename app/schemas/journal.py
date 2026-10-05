@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 
 class JournalLineCreate(StrictModel):
@@ -13,8 +13,8 @@ class JournalLineCreate(StrictModel):
     cost_code_id: Optional[int] = None
     function: Optional[str] = None
     is_billable: bool = False
-    debit: Decimal = Decimal("0")
-    credit: Decimal = Decimal("0")
+    debit: Money = Decimal("0")
+    credit: Money = Decimal("0")
     description: Optional[str] = None
 
 

@@ -52,8 +52,12 @@ def list_pending_deposits(db: Session = Depends(get_db)):
     results = []
     running_credit = total_credits
     for tl, txn in lines:
-        if running_credit >= tl.debit:
-            running_credit -= tl.debit
+        pending_amount = tl.debit
+        if running_credit > 0:
+            applied = min(running_credit, pending_amount)
+            running_credit -= applied
+            pending_amount -= applied
+        if pending_amount <= 0:
             continue
         results.append(
             PendingDepositResponse(
@@ -63,7 +67,7 @@ def list_pending_deposits(db: Session = Depends(get_db)):
                 description=txn.description or "",
                 reference=txn.reference or "",
                 source_type=txn.source_type or "",
-                amount=float(tl.debit),
+                amount=float(pending_amount),
             )
         )
 
@@ -86,9 +90,28 @@ def create_deposit(data: DepositCreate, db: Session = Depends(get_db)):
             status_code=400, detail="Undeposited Funds account not found"
         )
 
+    # Serialize the availability check across deposits. Without this, two
+    # workers can both observe the same pending cash and credit account 1200
+    # twice. The account-row lock is portable to PostgreSQL; SQLite's write
+    # serialization still protects its single-file runtime.
+    db.query(Account).filter(Account.id == uf_id).with_for_update().one()
+
     total = Decimal(str(data.total))
     if total <= 0:
         raise HTTPException(status_code=400, detail="Deposit amount must be positive")
+    uf_lines = db.query(TransactionLine).filter(TransactionLine.account_id == uf_id)
+    available = sum(
+        (
+            Decimal(str(line.debit or 0)) - Decimal(str(line.credit or 0))
+            for line in uf_lines
+        ),
+        Decimal("0"),
+    )
+    if total > available:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Deposit exceeds pending Undeposited Funds balance of ${available:.2f}",
+        )
 
     journal_lines = [
         {

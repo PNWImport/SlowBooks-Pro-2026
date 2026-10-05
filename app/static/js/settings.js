@@ -209,7 +209,7 @@ const SettingsPage = {
                     <h3>QuickBooks Online</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         Configure your Intuit Developer app credentials for QBO integration.
-                        Get these from <a href="https://developer.intuit.com" target="_blank" style="color:var(--qb-blue);">developer.intuit.com</a>.
+                        Get these from <a href="https://developer.intuit.com" target="_blank" style="color:var(--text-link);">developer.intuit.com</a>.
                     </div>
                     <div class="form-grid">
                         <div class="form-group"><label>Enable QBO Integration</label>
@@ -417,7 +417,10 @@ const SettingsPage = {
                     </p>
                     <div id="api-token-reveal" style="display:none; margin-bottom:12px; padding:10px; border:1px solid var(--qb-gold); border-radius:4px; background:rgba(224,158,36,0.08); font-size:12px;">
                         <strong>Copy this token now — it will never be shown again:</strong>
-                        <div style="font-family:var(--font-mono); margin-top:6px; word-break:break-all;" id="api-token-secret"></div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+                            <div style="font-family:var(--font-mono); word-break:break-all; flex:1;" id="api-token-secret"></div>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.copyApiTokenSecret()">Copy</button>
+                        </div>
                     </div>
                     <div id="api-token-list" style="margin-bottom:12px;"></div>
                     <div class="form-grid" style="align-items:end;">
@@ -514,9 +517,14 @@ const SettingsPage = {
             $('#api-token-secret').textContent = created.token;
             $('#api-token-reveal').style.display = '';
             $('#token-new-label').value = '';
-            toast('Token created — copy it now, it will not be shown again');
+            toast('Token created — press Copy below, it will not be shown again');
             SettingsPage.loadApiTokens();
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    copyApiTokenSecret() {
+        const el = $('#api-token-secret');
+        return copyToClipboard(el ? el.textContent : '', 'Token', el);
     },
 
     async updateApiToken(id, patch) {
@@ -655,9 +663,15 @@ const SettingsPage = {
                 const langs = (s.languages || []).join(', ') || '—';
                 const engineNames = { tesseract: 'Tesseract OCR', vision: 'Apple Vision (built into macOS)', winrt: 'Windows OCR (built into Windows)' };
                 const engineLabel = engineNames[s.engine] || 'OCR engine';
-                el.innerHTML = `<strong style="color:#166534;">${escapeHtml(engineLabel)} is ready</strong>`
+                const pdfNames = { windows: 'built into Windows', macos: 'built into macOS', poppler: 'via poppler-utils' };
+                const pdfNote = s.pdf
+                    ? ` &middot; PDFs: ${escapeHtml(pdfNames[s.pdf] || s.pdf)}`
+                    : '<div style="font-size:11px; color:#b45309; margin-top:4px;">PDF scanning is not available on this machine (images still scan). '
+                      + 'Linux: <code>sudo apt-get install poppler-utils</code>; other platforms: <code>brew install poppler</code> / poppler for Windows on PATH.</div>';
+                el.innerHTML = `<strong style="color:var(--text-success);">${escapeHtml(engineLabel)} is ready</strong>`
                     + (s.version ? ` <span style="color:var(--text-muted);">(${escapeHtml(s.version)})</span>` : '')
-                    + ` &middot; languages: ${escapeHtml(langs)}`;
+                    + ` &middot; languages: ${escapeHtml(langs)}`
+                    + pdfNote;
             } else {
                 el.innerHTML = '<strong style="color:#b45309;">No OCR engine is available — scanning is disabled.</strong>'
                     + '<div style="font-size:11px; color:var(--text-muted); margin-top:4px;">macOS and Windows normally use the engine built into the OS; installing Tesseract enables scanning anywhere.</div>'
@@ -665,9 +679,8 @@ const SettingsPage = {
                     + 'Ubuntu: <code>sudo apt-get install tesseract-ocr</code> &middot; '
                     + 'macOS: <code>brew install tesseract</code> &middot; '
                     + 'Windows: install the UB Mannheim Tesseract build.<br>'
-                    + 'PDFs also need poppler-utils: '
-                    + '<code>sudo apt-get install poppler-utils</code> (Ubuntu) / '
-                    + '<code>brew install poppler</code> (macOS).'
+                    + 'PDF receipts render without extra software on Windows and macOS; '
+                    + 'on Linux install poppler-utils: <code>sudo apt-get install poppler-utils</code>.'
                     + '</div>';
             }
         } catch (e) {
@@ -738,9 +751,17 @@ const SettingsPage = {
     },
 
     async editTemplate(id) {
-        const t = await API.get(`/email-templates/${id}`);
+        let t, invoices = [];
+        try {
+            t = await API.get(`/email-templates/${id}`);
+            if (t.template_type === 'invoice') {
+                // Enough to pick one to preview against; the endpoint would
+                // otherwise return up to 500, each with its lines.
+                invoices = await API.get('/invoices?is_sales_receipt=false&limit=50');
+            }
+        } catch (err) { toast(err.message, 'error'); return; }
         openModal('Edit Email Template', `
-            <form onsubmit="SettingsPage.saveTemplate(event, ${id})">
+            <form id="email-template-editor" onsubmit="SettingsPage.saveTemplate(event, ${id})">
                 <div class="form-grid">
                     <div class="form-group"><label>Name</label>
                         <input name="name" value="${escapeHtml(t.name)}" readonly style="background:var(--gray-100);"></div>
@@ -753,13 +774,65 @@ const SettingsPage = {
                 </div>
                 <div style="font-size:10px; color:var(--text-muted); margin:8px 0;">
                     Variables: {{ invoice.invoice_number }}, {{ invoice.total }}, {{ invoice.due_date }}, {{ customer_name }},
-                    {{ company.company_name }}, {{ pay_url }}, {{ amount }}. Filters: | currency, | fdate
+                    {{ company.company_name }}, {{ doc_label }}, {{ pay_url }}. Filters: | currency, | fdate
+                    <br><span style="opacity:.8;">{{ doc_label }} reads &ldquo;Invoice&rdquo; or &ldquo;Sales Receipt&rdquo; to match the document.
+                    {{ pay_url }} is only set when a payment provider is enabled &mdash; guard it with {% if pay_url %}.</span>
                 </div>
+                ${t.template_type === 'invoice' ? `<div style="margin-top:12px;">
+                    <label>Preview against ${T('invoice')}
+                        <select id="email-template-invoice">${invoices.map(inv => `<option value="${inv.id}">#${escapeHtml(inv.invoice_number)} — ${escapeHtml(inv.customer_name || '')}</option>`).join('')}</select></label>
+                    <button type="button" class="btn btn-secondary" onclick="SettingsPage.previewTemplate()" ${invoices.length ? '' : 'disabled'}>Preview</button>
+                    <p style="font-size:11px; color:var(--text-muted);">Renders what you have typed, without saving or sending.</p>
+                    <div id="email-template-preview"></div>
+                </div>` : ''}
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Save Template</button>
                 </div>
             </form>`);
+    },
+
+    async previewTemplate() {
+        const form = document.getElementById('email-template-editor');
+        const picker = document.getElementById('email-template-invoice');
+        const out = document.getElementById('email-template-preview');
+        if (!form || !picker || !out) return;
+        out.innerHTML = '';
+        try {
+            const p = await API.post('/email-templates/preview', {
+                invoice_id: Number(picker.value),
+                subject_template: form.elements.subject_template.value,
+                body_template: form.elements.body_template.value,
+            });
+            // A blank where the author expected content is the one outcome
+            // that explains nothing. The server reports what resolved to
+            // nothing; say so next to the preview rather than leaving them
+            // looking at a hole.
+            // Two kinds of blank. Telling an operator that pay_url is "not
+            // available" contradicted the variable list two inches above,
+            // which says it is available and conditional.
+            const unavailable = p.unavailable || [];
+            const conditional = p.conditional || [];
+            const lines = [];
+            if (unavailable.length) {
+                lines.push(`<strong>Not available to an email template:</strong>
+                    ${unavailable.map(escapeHtml).join(', ')} — these came out blank and
+                    the email would send with the same gaps.`);
+            }
+            for (const c of conditional) {
+                lines.push(`<strong>${escapeHtml(c.name)} is not set for this ${T('Invoice').toLowerCase()}:</strong>
+                    ${escapeHtml(c.why)}.`);
+            }
+            const note = lines.length
+                ? `<p class="form-hint" style="margin-top:8px;color:var(--text-warning,#92400e);">
+                       ${lines.join('<br>')}</p>`
+                : '';
+            out.innerHTML = `<p style="margin-top:8px;"><strong>Subject:</strong> ${escapeHtml(p.subject)}</p>
+                ${note}
+                <iframe id="email-template-rendered" sandbox="" title="Template preview" style="width:100%;height:320px;border:1px solid var(--gray-300);background:white;"></iframe>`;
+            const frame = document.getElementById('email-template-rendered');
+            if (frame) frame.srcdoc = p.html_body;
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     async saveTemplate(e, id) {
@@ -830,8 +903,8 @@ const SettingsPage = {
                 </select>
                 <input type="text" id="ai-settings-model-custom"
                        value="${escapeHtml(SettingsPage._isCustomModel(currentSpec, displayedModel) ? displayedModel : '')}"
-                       placeholder="Type any provider model ID"
                        maxlength="255"
+                       placeholder="Type any provider model ID"
                        style="margin-top:6px; ${SettingsPage._isCustomModel(currentSpec, displayedModel) ? '' : 'display:none;'}">
                 <small>Choose a tested default or select Custom… to enter a current model ID.</small>
             </label>

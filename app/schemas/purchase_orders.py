@@ -3,14 +3,20 @@ from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.schemas.common import StrictModel, TaxRateFloat, validate_non_negative_line
+from app.schemas.common import (
+    Money,
+    StrictModel,
+    TaxRateFloat,
+    validate_non_negative_line,
+)
+from app.models.purchase_orders import POStatus
 
 
 class POLineCreate(StrictModel):
     item_id: Optional[int] = None
     description: Optional[str] = None
     quantity: float = 1
-    rate: float = 0
+    rate: Money = Decimal("0")
     job_id: Optional[int] = None
     cost_code_id: Optional[int] = None
     line_order: int = 0
@@ -58,7 +64,7 @@ class POUpdate(StrictModel):
     date: Optional[dt_date] = None
     expected_date: Optional[dt_date] = None
     ship_to: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[POStatus] = None
     tax_rate: Optional[TaxRateFloat] = None
     notes: Optional[str] = None
     job_id: Optional[int] = None

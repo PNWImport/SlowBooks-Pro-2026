@@ -1,5 +1,6 @@
 """Upgrade either published parent without losing existing settings."""
 
+from contextlib import closing
 import os
 from pathlib import Path
 import sqlite3
@@ -36,17 +37,27 @@ def test_owner_merge_upgrade_from_each_parent(tmp_path, parent):
     marker = "synthetic-preservation-check-" * 60
     if parent != "base":
         upgrade(parent)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute(
                 "INSERT INTO settings (key, value) VALUES (?, ?)",
                 ("merge_preservation_probe", marker),
             )
     upgrade("head")
     upgrade("head")
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         assert db.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("fb23cd45ef67",)
+            ("c7d1e4a92b30",)
         ]
+        # Whichever parent ran first, no money column is left at precision 12.
+        narrow = [
+            (table, row[1])
+            for (table,) in db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+            for row in db.execute(f'PRAGMA table_info("{table}")')
+            if row[2].upper().replace(" ", "") == "NUMERIC(12,2)"
+        ]
+        assert narrow == []
         pay_schedule_columns = {
             row[1] for row in db.execute("PRAGMA table_info(pay_schedules)")
         }

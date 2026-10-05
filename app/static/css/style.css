@@ -1,8 +1,5 @@
 /* ============================================================================
- * Slowbooks Pro 2026 — UI Stylesheet
- * Reconstructed from QBW32.EXE resource table (RT_RCDATA "QBSKIN")
- * Original skin engine: CQBSkinManager at offset 0x00260000
- * Color palette extracted from QB2003 "Default Blue" theme (SKIN_BLUE.DAT)
+ * SlowBooks Pro 2026 — UI Stylesheet
  * ============================================================================ */
 
 /* Skip-to-content link — first tab stop on every page, hidden until focused.
@@ -33,13 +30,20 @@
 @import url('https://fonts.googleapis.com/css2?family=Tahoma&display=swap');
 
 :root {
-    /* -- QB2003 "Default Blue" skin palette (extracted via Resource Hacker) -- */
+    /* -- the classic "Default Blue" palette -- */
     --qb-navy:        #003366;
     --qb-navy-dark:   #002244;
     --qb-navy-mid:    #004488;
     --qb-blue:        #336699;
     --qb-blue-light:  #4a7fb5;
     --qb-blue-accent: #5b9bd5;
+    /* Link colour. There was no rule for a bare <a> at all, so the browser
+       chose — and its default #0000EE sits at 1.73:1 on the dark panel,
+       against a product documenting WCAG AA. Attachment filenames, the
+       SimpleFIN bridge link and "Get a key" are all bare anchors.
+       Measured: 12.6:1 here, 7.2:1 in dark. (macbase1, 2.10.3 gate) */
+    --text-link:      #003366;
+    --text-success:   #166534;   /* 7.13:1 on white */
     --qb-teal:        #669999;
     --qb-green:       #339966;
     --qb-green-dark:  #2d7d56;
@@ -109,8 +113,7 @@ body {
 }
 
 /* ========================================================================
- * TOP BAR — Reconstructed from CQBMenuBar + CQBToolBar
- * Original was a CToolBarCtrl with 24x24 toolbar buttons (IDB_TOOLBAR)
+ * TOP BAR — menu row with 24x24 toolbar buttons
  * ======================================================================== */
 
 #topbar {
@@ -213,9 +216,7 @@ body {
 }
 
 /* ========================================================================
- * SIDEBAR / NAVIGATOR — CQBNavigator "Icon Bar"
- * Original: left-docked panel with 32x32 icons in a vertical CToolBarCtrl
- * Colors from SKIN_BLUE.DAT NavPanel section
+ * SIDEBAR / NAVIGATOR — left-docked panel with 32x32 icons
  * ======================================================================== */
 
 #main-area {
@@ -310,7 +311,9 @@ body {
     padding: 8px 14px;
     border-top: 1px solid rgba(255,255,255,0.08);
     font-size: 9px;
-    color: rgba(255,255,255,0.25);
+    /* 0.25 alpha measured 2.53:1 against the sidebar. 0.50 is 5.24:1 —
+       still clearly secondary, now legible. */
+    color: rgba(255,255,255,0.50);
     text-align: center;
     user-select: none;
 }
@@ -319,7 +322,7 @@ body {
     display: block;
     margin-bottom: 4px;
     font-size: 10px;
-    color: rgba(255,255,255,0.35);
+    color: inherit;
     text-decoration: none;
 }
 
@@ -329,20 +332,56 @@ body {
 }
 
 /* Desktop-install update notice (fed by /api/system/update-check) */
+/* The update notice sits at the TOP of the sidebar. In the footer it was
+   only seen by someone who scrolled the whole menu, so people stayed on old
+   versions without knowing there was one. Deliberately a quiet banner and
+   not a dialog: apparent the moment the app opens, never blocking, and it
+   occupies no space at all when you are up to date. */
+#sidebar-update:empty { display: none; }
+
 .update-badge {
-    display: block;
-    margin-bottom: 4px;
-    padding: 3px 6px;
-    border-radius: 3px;
-    background: rgba(224, 158, 36, 0.18);
-    border: 1px solid rgba(224, 158, 36, 0.55);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 10px 0 2px;
+    padding: 7px 9px;
+    border-radius: 4px;
+    background: rgba(224, 158, 36, 0.16);
+    border: 1px solid rgba(224, 158, 36, 0.45);
+    border-left: 3px solid #e09e24;
     color: #e8b64c;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
+    line-height: 1.35;
     text-decoration: none;
     user-select: auto;
+    transition: background 120ms ease, border-color 120ms ease;
 }
-.update-badge:hover { background: rgba(224, 158, 36, 0.32); }
+
+.update-badge:hover {
+    background: rgba(224, 158, 36, 0.30);
+    border-color: rgba(224, 158, 36, 0.85);
+}
+
+.update-badge__arrow {
+    flex: 0 0 auto;
+    font-size: 13px;
+    line-height: 1;
+}
+
+.update-badge__text { display: block; }
+
+/* The call to action is the quiet half — present, not shouting. */
+.update-badge__cta {
+    display: block;
+    margin-top: 1px;
+    font-weight: 500;
+    font-size: 10px;
+    opacity: 0.85;
+}
+
+/* Respect a reduced-motion preference by having no motion to begin with —
+   this notice never animates, pulses or slides. */
 
 /* ========================================================================
  * CONTENT AREA
@@ -360,8 +399,7 @@ body {
 }
 
 /* ========================================================================
- * STATUS BAR — CQBStatusBar at bottom of CMainFrame
- * Original showed: "Ready" | Company file path | Current date
+ * STATUS BAR — "Ready" | company file path | current date
  * ======================================================================== */
 
 #statusbar {
@@ -415,8 +453,7 @@ body {
 }
 
 /* ========================================================================
- * BUTTONS — Reconstructed from CQBButton custom control
- * Original had a subtle 3D bevel effect (Windows Classic theme)
+ * BUTTONS — subtle 3D bevel, in the Windows Classic spirit
  * ======================================================================== */
 
 .btn {
@@ -486,8 +523,7 @@ body {
 }
 
 /* ========================================================================
- * TABLES — CListCtrl in Report View mode
- * QB2003 used alternating row colors and thin column separators
+ * TABLES — report view: alternating row colors, thin column separators
  * ======================================================================== */
 
 .table-container {
@@ -673,7 +709,7 @@ td.amount, th.amount {
 
 /* ========================================================================
  * BADGES — Status indicators
- * Original used colored text in the CListCtrl, no pill shapes
+ * Colored text, no pill shapes
  * We kept the pills because they look better, but matched the colors
  * ======================================================================== */
 
@@ -693,6 +729,8 @@ td.amount, th.amount {
 .badge-paid    { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
 .badge-recorded { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
 .badge-void    { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+.badge-issued  { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }
+.badge-applied { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
 .badge-pending { background: #fef3c7; color: #92400e; border: 1px solid #fbbf24; }
 .badge-accepted{ background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
 .badge-rejected{ background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
@@ -703,8 +741,7 @@ td.amount, th.amount {
 .badge-labor   { background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; }
 
 /* ========================================================================
- * MODAL — Mimics QB2003's popup data entry windows
- * Original used WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU dialog style
+ * MODAL — in the spirit of QB2003's popup data entry windows
  * ======================================================================== */
 
 .modal-overlay {
@@ -718,6 +755,39 @@ td.amount, th.amount {
     z-index: 200;
 }
 
+
+/* A bare <a> had no rule anywhere, so the user agent picked the colour and
+   the dark theme had no way to change it — 1.73:1 (macbase1's sweep, which
+   found 58 elements below AA from three causes; this was the worst).
+   Components with their own link styling are unaffected: they set `color`
+   at higher specificity. */
+a {
+    color: var(--text-link);
+}
+
+a:hover { text-decoration: underline; }
+
+/* ------------------------------------------------------------------------
+   Utility: .hidden
+   ------------------------------------------------------------------------
+   The JS hides elements by adding this class — ten call sites across three
+   files — but there was no generic rule, only `.modal-overlay.hidden` and
+   `.splash-overlay.hidden`. Everything else kept the class and stayed on
+   screen. The global search dropdown was the visible casualty: it never
+   closed on click-away, on clearing the box, or on navigating, and at rest
+   it painted a 2px white sliver under the toolbar in every session, which
+   is the grey edge visible along the top of desktop screenshots for
+   releases. Found by the marketing agent building the training videos.
+
+   `!important` because the elements that carry this class set `display`
+   through their own rules at equal or higher specificity; without it the
+   trap is merely reset for the next component.
+
+   Note this is the .hidden CLASS. The HTML `hidden` ATTRIBUTE is separate
+   and untouched (`[hidden]` is handled by the shell's own reset).
+   ------------------------------------------------------------------------ */
+.hidden { display: none !important; }
+
 .modal-overlay.hidden { display: none; }
 
 .modal {
@@ -729,6 +799,23 @@ td.amount, th.amount {
     max-height: calc(100vh - 80px);
     overflow-y: auto;
     box-shadow: 4px 4px 12px rgba(0,0,0,0.3);
+}
+
+/* A dialog for a form with a wide line-item table: as wide as the window
+   allows, up to 1280px. Opened with openModal(title, html, { wide: true }). */
+.modal.modal--wide {
+    max-width: min(1280px, 96vw);
+}
+
+/* A line-item table with more columns than the dialog is wide scrolls
+   sideways inside its container instead of losing its last columns behind
+   overflow: hidden (#174: the job cost entry's Bill? column and the remove
+   button were cut off, with no way to reach them). */
+.table-container--scroll {
+    overflow-x: auto;
+}
+.table-container--scroll .line-items-table {
+    min-width: 1180px;
 }
 
 .modal-header {
@@ -815,8 +902,7 @@ td.amount, th.amount {
 }
 
 /* ========================================================================
- * LINE ITEMS TABLE — The invoice/estimate grid
- * QB2003 used CQBGridCtrl, a custom owner-draw CListCtrl subclass
+ * LINE ITEMS TABLE — the invoice/estimate grid
  * ======================================================================== */
 
 .line-items-table {
@@ -941,7 +1027,6 @@ tr.clickable { cursor: pointer; }
 
 /* ========================================================================
  * SPLASH / ABOUT DIALOG
- * Reconstructed from CAboutDlg (IDD_ABOUTBOX resource id=0x0064)
  * ======================================================================== */
 
 .splash-overlay {
@@ -1080,7 +1165,7 @@ tr.clickable { cursor: pointer; }
 }
 
 /* ========================================================================
- * GLOBAL SEARCH — CQBSearchEngine @ 0x00250000
+ * GLOBAL SEARCH
  * ======================================================================== */
 
 .tb-search {
@@ -1166,7 +1251,13 @@ tr.clickable { cursor: pointer; }
     max-height: 200px;
     overflow-y: auto;
     border: 1px solid var(--panel-border);
-    background: white;
+    /* Was a hardcoded `white`, which the dark theme could not override — the
+       log text is near-white there, so the running confirmation of what you
+       just saved was invisible at about 1.1:1 contrast. Quick Entry exists
+       to batch entries and read that log back, and the product documents
+       WCAG AA. Token, so both themes follow. */
+    background: var(--panel-bg);
+    color: var(--text-primary);
     padding: 4px 8px;
 }
 
@@ -1984,4 +2075,43 @@ tr.clickable { cursor: pointer; }
 @media (max-width: 560px) {
     .dash-grid { grid-template-columns: 1fr; }
     .dash-card--stat, .dash-card--half, .dash-card--full { grid-column: span 1; }
+}
+
+/* Control accounts (issue #122) — the posting code finds these by number, so
+   the Chart of Accounts marks them and the edit form locks the number and the
+   type. The row still gets an Edit button: renaming is allowed, and the API
+   is the authority on what is refused. */
+.badge-control {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 2px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fbbf24;
+    vertical-align: middle;
+    cursor: help;
+}
+
+.hint--locked {
+    background: #fffbeb;
+    border: 1px solid #fbbf24;
+    border-left: 3px solid #d97706;
+    border-radius: 3px;
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #78350f;
+}
+
+.hint--locked em { color: #92400e; font-style: normal; font-weight: 600; }
+
+.form-group input[disabled],
+.form-group select[disabled] {
+    background: #f1f3f6;
+    color: var(--text-muted, #6b7090);
+    cursor: not-allowed;
 }

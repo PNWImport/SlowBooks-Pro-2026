@@ -26,6 +26,7 @@ def import_customers(db: Session, csv_text: str) -> dict:
     created = 0
     skipped = 0
     errors = []
+    imported_names = set()
 
     for i, row in enumerate(reader, start=2):
         try:
@@ -35,7 +36,7 @@ def import_customers(db: Session, csv_text: str) -> dict:
                 continue
 
             existing = db.query(Customer).filter(Customer.name == name).first()
-            if existing:
+            if existing or name in imported_names:
                 skipped += 1
                 continue
 
@@ -52,6 +53,7 @@ def import_customers(db: Session, csv_text: str) -> dict:
                     terms=row.get("Terms", "Net 30"),
                 )
             )
+            imported_names.add(name)
             created += 1
         except Exception:
             logger.exception("Failed to import customer row %d", i)
@@ -66,6 +68,7 @@ def import_vendors(db: Session, csv_text: str) -> dict:
     created = 0
     skipped = 0
     errors = []
+    imported_names = set()
 
     for i, row in enumerate(reader, start=2):
         try:
@@ -75,7 +78,7 @@ def import_vendors(db: Session, csv_text: str) -> dict:
                 continue
 
             existing = db.query(Vendor).filter(Vendor.name == name).first()
-            if existing:
+            if existing or name in imported_names:
                 skipped += 1
                 continue
 
@@ -92,6 +95,7 @@ def import_vendors(db: Session, csv_text: str) -> dict:
                     terms=row.get("Terms", "Net 30"),
                 )
             )
+            imported_names.add(name)
             created += 1
         except Exception:
             logger.exception("Failed to import vendor row %d", i)
@@ -106,6 +110,7 @@ def import_items(db: Session, csv_text: str) -> dict:
     created = 0
     skipped = 0
     errors = []
+    imported_names = set()
 
     type_map = {
         "product": ItemType.PRODUCT,
@@ -122,7 +127,7 @@ def import_items(db: Session, csv_text: str) -> dict:
                 continue
 
             existing = db.query(Item).filter(Item.name == name).first()
-            if existing:
+            if existing or name in imported_names:
                 skipped += 1
                 continue
 
@@ -138,6 +143,7 @@ def import_items(db: Session, csv_text: str) -> dict:
                     cost=float(row.get("Cost", 0)),
                 )
             )
+            imported_names.add(name)
             created += 1
         except Exception:
             logger.exception("Failed to import item row %d", i)

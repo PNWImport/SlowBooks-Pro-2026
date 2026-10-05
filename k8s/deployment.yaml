@@ -25,10 +25,12 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
+        runAsGroup: 1000
         fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: slowbooks
-          image: slowbooks:latest
+          image: slowbooks:2.18.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -39,17 +41,22 @@ spec:
             - secretRef:
                 name: slowbooks-secrets
           # /health is on the auth-exempt list in app/main.py, so probes do
-          # not need credentials.
+          # not need credentials. With FORCE_HTTPS on, plain-HTTP /health
+          # answers 307 to https:// on this same port; an httpGet probe follows
+          # that redirect into a TLS handshake the pod does not serve (TLS ends
+          # at the ingress) and the pod never becomes ready. The Compose
+          # healthcheck script accepts 200/307/308 without following.
           startupProbe:
-            httpGet: { path: /health, port: http }
+            exec: { command: ["python", "/app/scripts/docker_healthcheck.py"] }
             periodSeconds: 5
+            timeoutSeconds: 5
             failureThreshold: 30   # up to 150s for a cold start
           readinessProbe:
-            httpGet: { path: /health, port: http }
+            exec: { command: ["python", "/app/scripts/docker_healthcheck.py"] }
             periodSeconds: 10
-            timeoutSeconds: 3
+            timeoutSeconds: 5
           livenessProbe:
-            httpGet: { path: /health, port: http }
+            exec: { command: ["python", "/app/scripts/docker_healthcheck.py"] }
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3

@@ -25,10 +25,73 @@ os.environ["SESSION_IDLE_TIMEOUT_SECONDS"] = "0"  # Disable idle expiry in tests
 os.environ.setdefault("SLOWBOOKS_OCR_ENGINE", "tesseract")
 # Point the app at an in-memory DB by default; fixtures override per-test.
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+# Uploads, attachments and backups go to a throwaway directory, never the
+# checkout's app/static/uploads or backups/ (a developer's real files on a
+# working install). Tests of the override itself set or clear it per-test.
+if "SLOWBOOKS_DATA_DIR" not in os.environ:
+    import tempfile as _tempfile
+
+    os.environ["SLOWBOOKS_DATA_DIR"] = _tempfile.mkdtemp(prefix="slowbooks-test-data-")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# WeasyPrint's native stack (issue #121)
+#
+# Rendering a PDF needs pango/cairo/gobject. Importing the app no longer does
+# (app/services/pdf_service.py imports WeasyPrint lazily), so the suite runs
+# on a machine without them — which matters because CI runs pytest on Linux
+# only, and the Windows box that would have caught @wilsons043's encoding bug
+# could not import the app at all.
+#
+# A test that actually renders still cannot pass without the stack. Rather
+# than guess which tests those are with a marker anyone can forget, we let
+# the test run and turn the library's own ImportError into a SKIP — so a test
+# skips exactly when it needed the missing library, and never otherwise.
+# ---------------------------------------------------------------------------
+
+try:  # noqa: SIM105
+    import weasyprint as _weasyprint  # noqa: F401
+
+    WEASYPRINT_AVAILABLE = True
+except Exception:
+    WEASYPRINT_AVAILABLE = False
+
+
+def _is_missing_native_stack(exc: BaseException) -> bool:
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, (ImportError, OSError)):
+            text = str(exc).lower()
+            if (
+                "weasyprint" in text
+                or "gobject" in text
+                or "pango" in text
+                or "cairo" in text
+            ):
+                return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    outcome = yield
+    if WEASYPRINT_AVAILABLE:
+        return
+    exc = outcome.excinfo[1] if getattr(outcome, "excinfo", None) else None
+    if exc is not None and _is_missing_native_stack(exc):
+        outcome.force_exception(
+            pytest.skip.Exception(
+                "needs WeasyPrint's native stack (pango/cairo/gobject), which "
+                "is not installed on this machine — the rest of the suite runs"
+            )
+        )
+
+
 from starlette.requests import HTTPConnection  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
@@ -37,7 +100,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 
 # Import all model modules so Base.metadata sees every table before create_all.
 # Without these imports, tables defined in unimported modules wouldn't be created.
-from app.models import (  # noqa: F401
+from app.models import (  # noqa: F401,E402
     accounts,
     attachments,
     audit,
@@ -51,6 +114,7 @@ from app.models import (  # noqa: F401
     companies,
     contacts,
     credit_memos,
+    vendor_credits,
     deductions,
     document_audit as document_audit_model,
     email_log,
@@ -85,42 +149,55 @@ from app.main import app  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
+_SUITE_SESSION_FACTORY = sessionmaker(autocommit=False, autoflush=False)
+
+
+def _shared_factory(engine):
+    """Reuse listener registration while retaining a fresh engine per test."""
+    from app.services.audit import register_audit_hooks
+
+    _SUITE_SESSION_FACTORY.configure(bind=engine)
+    register_audit_hooks(_SUITE_SESSION_FACTORY)
+    return _SUITE_SESSION_FACTORY
+
+
 @pytest.fixture
 def db_engine():
     """Per-test in-memory SQLite engine with full schema."""
-    from app.services.audit import register_audit_hooks
-
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     Base.metadata.create_all(bind=engine)
-    # Point the app module at this engine so SessionLocal-based code (audit
-    # hooks, etc.) also land in the same DB. The audit `after_flush` hook
-    # is registered against the session factory, so we must re-register it
-    # on the new factory — otherwise the audit_log mechanism is silently
-    # bypassed in tests.
+    # Route and direct-service sessions share this isolated DB and the same
+    # long-lived audit-hook target; no per-test listener targets accumulate.
     db_module.engine = engine
-    db_module.SessionLocal = sessionmaker(
-        autocommit=False, autoflush=False, bind=engine
-    )
-    register_audit_hooks(db_module.SessionLocal)
+    db_module.SessionLocal = _shared_factory(engine)
     yield engine
     engine.dispose()
 
 
 @pytest.fixture
 def TestSession(db_engine):
-    """Per-test session factory. The `client` fixture wires get_db to this,
-    so any audit hook the production app expects must be re-attached here
-    (the registration in main.py only fires for the original SessionLocal,
-    which conftest replaces above)."""
-    from app.services.audit import register_audit_hooks
+    """Shared factory, bound to this test's isolated database."""
+    return _shared_factory(db_engine)
 
-    factory = sessionmaker(autocommit=False, autoflush=False, bind=db_engine)
-    register_audit_hooks(factory)
-    return factory
+
+@pytest.fixture(autouse=True)
+def _release_closed_event_loops():
+    """Remove closed loops retained by anyio's private per-run registry.
+
+    Anyio versions without this implementation detail simply skip cleanup.
+    """
+    yield
+    try:
+        from anyio.lowlevel import _run_vars
+    except Exception:
+        return
+    for loop in list(_run_vars):
+        if getattr(loop, "is_closed", lambda: False)():
+            _run_vars.pop(loop, None)
 
 
 @pytest.fixture
@@ -144,6 +221,7 @@ def seed_accounts(db_session):
             account_number=data["account_number"],
             name=data["name"],
             account_type=AccountType(data["account_type"]),
+            bank_kind=data.get("bank_kind"),
             is_system=True,
             balance=Decimal("0"),
         )

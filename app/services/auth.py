@@ -121,7 +121,7 @@ def get_session_secret() -> str:
     key_path = Path(__file__).resolve().parents[2] / ".slowbooks-session.key"
     if key_path.exists():
         try:
-            existing = key_path.read_text().strip()
+            existing = key_path.read_text(encoding="utf-8").strip()
             if existing:
                 logger.info("session secret loaded from %s", key_path)
                 return existing
@@ -130,20 +130,30 @@ def get_session_secret() -> str:
 
     new_key = secrets.token_urlsafe(48)
     persisted = False
+    tmp = None
     try:
         import tempfile
 
         fd, tmp = tempfile.mkstemp(dir=str(key_path.parent), prefix=".session-key-")
-        os.write(fd, new_key.encode())
-        os.close(fd)
+        try:
+            os.write(fd, new_key.encode())
+        finally:
+            os.close(fd)
         os.chmod(tmp, 0o600)
         os.replace(tmp, str(key_path))
+        tmp = None
         persisted = True
     except OSError as exc:
         logger.warning("could not persist session secret to %s: %s", key_path, exc)
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                logger.warning("could not remove temporary session key %s", tmp)
     if key_path.exists():
         try:
-            existing = key_path.read_text().strip()
+            existing = key_path.read_text(encoding="utf-8").strip()
             if existing:
                 if persisted:
                     logger.info("new session secret written to %s", key_path)
@@ -272,7 +282,7 @@ def authenticate(db: Session, password: str, username: str | None = None):
             return None
         user = (
             _users_query(db)
-            .filter(User.username == username.strip().lower(), User.is_active)
+            .filter(User.username == (username or "").strip().lower(), User.is_active)
             .first()
         )
     else:

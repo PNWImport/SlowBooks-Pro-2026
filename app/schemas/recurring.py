@@ -1,15 +1,21 @@
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.schemas.common import StrictModel, TaxRateFloat, validate_non_negative_line
+from app.schemas.common import (
+    Money,
+    StrictModel,
+    TaxRateFloat,
+    validate_non_negative_line,
+)
 
 
 class RecurringLineCreate(StrictModel):
     item_id: Optional[int] = None
     description: Optional[str] = None
     quantity: float = 1
-    rate: float = 0
+    rate: Money = Decimal("0")
     is_taxable: Optional[bool] = None
     line_order: int = 0
 
@@ -49,6 +55,20 @@ class RecurringCreate(StrictModel):
             raise ValueError("recurring invoice must have at least one line")
         return v
 
+    @field_validator("frequency")
+    @classmethod
+    def _frequency(cls, value):
+        value = (value or "").strip().lower()
+        if value not in {"weekly", "monthly", "quarterly", "yearly"}:
+            raise ValueError("frequency must be weekly, monthly, quarterly, or yearly")
+        return value
+
+    @model_validator(mode="after")
+    def _date_order(self):
+        if self.end_date is not None and self.end_date < self.start_date:
+            raise ValueError("end_date cannot be before start_date")
+        return self
+
 
 class RecurringUpdate(StrictModel):
     frequency: Optional[str] = None
@@ -60,6 +80,16 @@ class RecurringUpdate(StrictModel):
     class_id: Optional[int] = None
     job_id: Optional[int] = None
     lines: Optional[list[RecurringLineCreate]] = None
+
+    @field_validator("frequency")
+    @classmethod
+    def _frequency(cls, value):
+        if value is None:
+            raise ValueError("frequency cannot be null")
+        value = value.strip().lower()
+        if value not in {"weekly", "monthly", "quarterly", "yearly"}:
+            raise ValueError("frequency must be weekly, monthly, quarterly, or yearly")
+        return value
 
 
 class RecurringResponse(BaseModel):

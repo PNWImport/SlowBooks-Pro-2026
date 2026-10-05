@@ -19,6 +19,7 @@
 # documents that explain the postings.
 # ============================================================================
 
+from decimal import Decimal
 from sqlalchemy import (
     Boolean,
     Column,
@@ -46,7 +47,7 @@ class RestrictionRelease(Base):
     number = Column(String(30), nullable=False, unique=True)
     date = Column(Date, nullable=False, index=True)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=False, index=True)
-    amount = Column(Numeric(12, 2), nullable=False)
+    amount = Column(Numeric(15, 2), nullable=False)
     # The period whose spending this release covers (informational)
     period_start = Column(Date, nullable=True)
     period_end = Column(Date, nullable=True)
@@ -107,7 +108,7 @@ class AllocationRuleTarget(Base):
     function = Column(String(20), nullable=True)
     # Hours basis: the job (grant) whose time entries weight this target
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
-    weight = Column(Numeric(12, 4), nullable=False, default=1)
+    weight = Column(Numeric(12, 4), nullable=False, default=Decimal("1"))
     line_order = Column(Integer, nullable=False, default=0)
 
     rule = relationship("AllocationRule", back_populates="targets")
@@ -127,7 +128,7 @@ class FunctionalAllocation(Base):
     memo = Column(Text, nullable=True)
     status = Column(String(10), nullable=False, default="posted")
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
-    total = Column(Numeric(12, 2), nullable=False, default=0)
+    total = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
@@ -158,7 +159,7 @@ class FunctionalAllocationLine(Base):
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
     function = Column(String(20), nullable=True)
     weight = Column(Numeric(12, 4), nullable=True)
-    amount = Column(Numeric(12, 2), nullable=False)
+    amount = Column(Numeric(15, 2), nullable=False)
     description = Column(Text, nullable=True)
     line_order = Column(Integer, nullable=False, default=0)
 

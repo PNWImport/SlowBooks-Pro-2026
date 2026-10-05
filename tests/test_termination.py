@@ -93,7 +93,7 @@ def test_salary_hourly_equivalent_is_annual_over_2080(client, db_session):
     emp_id = _create_employee(client, pay_type="salary", pay_rate=104000)["id"]
     from app.models.payroll import Employee
 
-    emp = db_session.query(Employee).get(emp_id)
+    emp = db_session.get(Employee, emp_id)
     assert hourly_equivalent_rate(emp) == Decimal("50.00")
 
 
@@ -124,7 +124,7 @@ def test_pto_payout_includes_vacation_excludes_sick_by_default(client, db_sessio
     )
     db_session.commit()
 
-    emp = db_session.query(Employee).get(emp_id)
+    emp = db_session.get(Employee, emp_id)
     payout = compute_pto_payout(db_session, emp)
     assert payout["total_payout"] == 1200.00  # 40h * $30, sick excluded
     excluded = [line for line in payout["lines"] if not line["included"]]
@@ -177,7 +177,7 @@ def test_terminate_full_flow(client, db_session, seed_accounts):
     from app.models.payroll import Employee
 
     db_session.expire_all()
-    assert db_session.query(Employee).get(emp_id).portal_token is None
+    assert db_session.get(Employee, emp_id).portal_token is None
 
     # Staged run is a draft off-cycle with the payout as supplemental gross.
     run = client.get(f"/api/payroll/{body['pto_payout_run_id']}").json()

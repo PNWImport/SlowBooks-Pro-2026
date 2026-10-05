@@ -10,7 +10,10 @@ to your SimpleFIN bridge over HTTPS.
 
 1. You sign up for a SimpleFIN bridge — the reference one is
    [bridge.simplefin.org](https://bridge.simplefin.org/) (about **$1.50/month**,
-   paid by you to them; SlowBooks takes nothing).
+   paid by you to them; SlowBooks takes nothing). Any other service that
+   issues SimpleFIN setup tokens works the same way: SlowBooks follows the
+   claim URL inside the token, whatever server it names, as long as it is
+   HTTPS and not a private or local address.
 2. On the bridge's site, you connect your bank(s). The bridge handles the
    bank login, MFA, and aggregation.
 3. The bridge gives you a one-time **setup token**. Paste it into

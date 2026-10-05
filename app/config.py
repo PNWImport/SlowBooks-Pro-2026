@@ -4,6 +4,7 @@
 
 import os
 from pathlib import Path
+from typing import Mapping
 
 from dotenv import load_dotenv
 
@@ -47,7 +48,7 @@ SESSION_IDLE_TIMEOUT_SECONDS = int(
 )
 
 
-def resolve_cors_origins(env: dict | None = None) -> list[str]:
+def resolve_cors_origins(env: Mapping[str, str] | None = None) -> list[str]:
     """Return the explicit CORS origin allowlist for the FastAPI app.
 
     Defaults to loopback-only so a fresh install cannot be hit cross-origin
@@ -64,7 +65,7 @@ def resolve_cors_origins(env: dict | None = None) -> list[str]:
 
 CORS_ALLOW_ORIGINS = resolve_cors_origins()
 
-# CCompanyInfo fields — originally at .QBW header offset 0x40
+# Company identity fields.
 COMPANY_NAME = os.getenv("COMPANY_NAME", "My Company")
 COMPANY_ADDRESS = os.getenv("COMPANY_ADDRESS", "")
 COMPANY_PHONE = os.getenv("COMPANY_PHONE", "")

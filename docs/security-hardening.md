@@ -27,8 +27,8 @@ For the public security policy and responsible-disclosure address, see
 | 12 | Encryption | Ciphertext now prefixed with `v1:` to enable clean key rotation | `app/services/encryption.py` |
 | 13 | Encryption | Support `PAYROLL_ENCRYPTION_SECRET_PREV` for in-flight rotation | `app/services/encryption.py` |
 
-The full suite (~900 tests, one skipping without PostgreSQL) passes after
-every change.
+This is a historical engineering record. Current test counts, scanner
+dispositions and unclosed release gates are in [validation](validation.md).
 
 ---
 
@@ -165,10 +165,19 @@ configured previous key.
 | A06 — Vulnerable Components | Pinned versions, upper-bound caps in `requirements.txt` |
 | A07 — Identification & Authentication Failures | Argon2id passwords, 5/min rate-limited login, 192-bit portal tokens |
 | A08 — Software & Data Integrity | Fernet ciphertext is authenticated (AES + HMAC); session cookie signed |
-| A09 — Logging & Monitoring | No PII (passwords, SSN, account #) in logs; audit hooks on row writes |
+| A09 — Logging & Monitoring | Audit hooks on row writes; safe public error responses; privileged diagnostic logs require restricted access and retention |
 | A10 — SSRF | AI provider URLs validated against private IPs and metadata endpoints |
 
 ---
+
+## Diagnostic logging — September 20 review
+
+`safe_errors` now escapes exception traceback text and operation context so
+embedded CR/LF cannot forge additional log lines. Public responses continue
+to withhold raw driver exceptions. This does **not** establish that all logs
+are free of sensitive values: exception text can contain bound parameters.
+Treat server diagnostics as sensitive; verify deployment log access, retention
+and redaction before enterprise rollout. See the [review record](review-findings-2026-09-20.md).
 
 ## Production deployment checklist
 

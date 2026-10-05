@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.accounts import Account
+from app.services import control_accounts
 from app.models.transactions import TransactionLine
 from app.schemas.accounts import AccountCreate, AccountUpdate, AccountResponse
 from app.routes._helpers import get_or_404
@@ -31,26 +33,100 @@ def _reject_duplicate_number(db: Session, number, exclude_id=None):
         )
 
 
+_BANK_KIND_FOR_TYPE = {"bank": "asset", "credit_card": "liability"}
+
+
+def _check_parent(db: Session, parent_id: int | None, account_id: int | None = None):
+    if parent_id is None:
+        return
+    # SQLite ignores FOR UPDATE. Acquire its write reservation before reading
+    # the graph, following the same transaction rule as accounting.lock_accounts.
+    conn = db.connection()
+    if conn.dialect.name == "sqlite" and not getattr(
+        conn.connection.driver_connection, "in_transaction", False
+    ):
+        conn.exec_driver_sql("BEGIN IMMEDIATE")
+    # Serialize parent edits on PostgreSQL and inspect the current graph after
+    # acquiring locks, so two concurrent edits cannot each create half a cycle.
+    parents = {
+        row.id: row.parent_id
+        for row in db.query(Account.id, Account.parent_id)
+        .order_by(Account.id)
+        .with_for_update()
+        .all()
+    }
+    if parent_id not in parents:
+        raise HTTPException(status_code=400, detail="Parent account not found.")
+    seen = {account_id} if account_id is not None else set()
+    current = parent_id
+    while current is not None:
+        if current in seen:
+            raise HTTPException(
+                status_code=400, detail="Account parent links cannot form a cycle."
+            )
+        seen.add(current)
+        current = parents.get(current)
+
+
+def _check_bank_kind(bank_kind, account_type) -> None:
+    """A bank is an asset, a card is a liability; anything else is a
+    mistake the picker would propagate everywhere."""
+    if bank_kind is None:
+        return
+    want = _BANK_KIND_FOR_TYPE.get(bank_kind)
+    have = getattr(account_type, "value", account_type)
+    if want != have:
+        raise HTTPException(
+            status_code=400,
+            detail=f"bank_kind {bank_kind!r} needs account_type {want!r}, not {have!r}",
+        )
+
+
 @router.get("", response_model=list[AccountResponse])
 def list_accounts(
-    active_only: bool = False, account_type: str = None, db: Session = Depends(get_db)
+    active_only: bool = False,
+    account_type: str = None,
+    bank: bool = False,
+    db: Session = Depends(get_db),
 ):
+    """`?bank=1` lists the bank and credit-card accounts (bank_kind set) —
+    what the register, the transfer form and every paid-from / deposit-to
+    picker use."""
     q = db.query(Account)
     if active_only:
         q = q.filter(Account.is_active)
     if account_type:
         q = q.filter(Account.account_type == account_type)
-    return q.order_by(Account.account_number).all()
+    if bank:
+        q = q.filter(Account.bank_kind.isnot(None))
+    return _in_company_words(db, q.order_by(Account.account_number).all())
 
 
 @router.get("/{account_id}", response_model=AccountResponse)
 def get_account(account_id: int, db: Session = Depends(get_db)):
-    return get_or_404(db, Account, account_id)
+    return _in_company_words(db, [get_or_404(db, Account, account_id)])[0]
+
+
+def _in_company_words(db: Session, accounts):
+    """The control-account purpose ("what customers owe — every invoice and
+    payment") is written in the business words the registry keeps; the
+    chart page prints it beside the account. Say it in the company's."""
+    from app.services.terminology import terms_from_db
+
+    terms = terms_from_db(db)
+    out = [AccountResponse.model_validate(a) for a in accounts]
+    if terms.is_nonprofit:
+        for r in out:
+            if r.control_purpose:
+                r.control_purpose = terms.text(r.control_purpose)
+    return out
 
 
 @router.post("", response_model=AccountResponse, status_code=201)
 def create_account(data: AccountCreate, db: Session = Depends(get_db)):
     _reject_duplicate_number(db, data.account_number)
+    _check_bank_kind(data.bank_kind, data.account_type)
+    _check_parent(db, data.parent_id)
     account = Account(**data.model_dump())
     db.add(account)
     try:
@@ -70,11 +146,38 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
     account = get_or_404(db, Account, account_id)
     fields = data.model_dump(exclude_unset=True)
 
+    # Issue #119: the posting code resolves these accounts BY NUMBER, so
+    # renumbering one makes every later document skip its journal entry —
+    # silently, with a trial balance that still balances. Renaming is fine
+    # and stays allowed; only the number and the type are load-bearing.
+    # (Not gated on is_system: every seeded account carries that flag, and
+    # renumbering an ordinary expense account is a reasonable request.)
+    if control_accounts.is_control_number(account.account_number):
+        name, purpose = control_accounts.describe(account.account_number)
+        for field, what in (("account_number", "number"), ("account_type", "type")):
+            if field in fields and fields[field] != getattr(account, field):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{account.account_number} {name} is a control account — "
+                        f"the software finds it by its number to post {purpose}. "
+                        f"Changing its {what} would stop new documents reaching "
+                        f"the ledger. You can rename it."
+                    ),
+                )
+
     if "account_number" in fields:
         _reject_duplicate_number(db, fields["account_number"], exclude_id=account_id)
     if fields.get("parent_id") == account_id:
         raise HTTPException(
             status_code=400, detail="An account cannot be its own parent."
+        )
+    if "parent_id" in fields:
+        _check_parent(db, fields["parent_id"], account_id)
+    if "bank_kind" in fields or "account_type" in fields:
+        _check_bank_kind(
+            fields.get("bank_kind", account.bank_kind),
+            fields.get("account_type", account.account_type),
         )
 
     for key, val in fields.items():
@@ -91,11 +194,61 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
     return account
 
 
+def _referencing_rows(db: Session, account_id: int) -> list[tuple[str, int]]:
+    """[(table, count)] for every row in the database pointing at this
+    account, derived from the schema rather than a hand-kept list.
+
+    Thirty-five columns across seventeen models reference `accounts.id`, and
+    that number grows with every feature — vendor credits added one this
+    week. A list maintained by hand would be wrong within a release, and the
+    symptom of it being wrong is a foreign-key violation surfacing as a 500.
+    Walking the metadata cannot fall behind the schema.
+    """
+    from app.database import Base
+
+    found: list[tuple[str, int]] = []
+    for table in Base.metadata.sorted_tables:
+        for fk in table.foreign_keys:
+            if fk.column.table.name != "accounts":
+                continue
+            n = (
+                db.query(func.count())
+                .select_from(table)
+                .filter(fk.parent == account_id)
+                .scalar()
+            ) or 0
+            if n:
+                found.append((table.name.replace("_", " "), n))
+    return found
+
+
 @router.delete("/{account_id}")
 def delete_account(account_id: int, db: Session = Depends(get_db)):
     account = get_or_404(db, Account, account_id)
-    if account.is_system:
-        raise HTTPException(status_code=400, detail="Cannot delete system account")
+
+    # Gated on the control-account registry, NOT on is_system.
+    #
+    # Every one of the 57 accounts a new company is seeded with carries
+    # is_system, so gating on it refused all of them — which left an operator
+    # with someone else's chart of accounts and no way to shrink it: delete
+    # refused, and there was no deactivate control on the page either. That
+    # is the same wrong flag 2.10.2 found hiding the Edit button, in a second
+    # place (issue #139, reported by tresero coming from hledger).
+    #
+    # Fifteen numbers genuinely cannot go: the posting code resolves them
+    # literally, and a document that cannot find one is #119. Those can be
+    # renamed, not removed. The other forty-two are ordinary accounts.
+    if control_accounts.is_control_number(account.account_number):
+        name, purpose = control_accounts.describe(account.account_number)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{account.account_number} {name} is a control account — the "
+                f"software posts to it by number for {purpose}, so it cannot "
+                f"be deleted. You can rename it, or deactivate it to hide it "
+                f"from new entries."
+            ),
+        )
 
     # An account carrying ledger history must not be deleted — the postings
     # would lose their anchor. Refusing is correct; the bug was that the
@@ -113,6 +266,24 @@ def delete_account(account_id: int, db: Session = Depends(get_db)):
                 f"'{account.name}' has {posted} posted transaction line(s) and "
                 f"cannot be deleted. Deactivate it instead (set is_active=false) "
                 f"to hide it from new entries while preserving history."
+            ),
+        )
+
+    # Anything else still pointing at it — an item's income account, a
+    # vendor's default expense account, a bank feed, a budget line. Named,
+    # because "referenced by other records" tells the operator nothing about
+    # where to go and undo it.
+    others = [
+        (t, n) for t, n in _referencing_rows(db, account_id) if t != "transaction lines"
+    ]
+    if others:
+        where = ", ".join(f"{n} in {t}" for t, n in others)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{account.name}' is still in use: {where}. Point those at "
+                f"another account first, or deactivate this one to hide it "
+                f"from new entries."
             ),
         )
 

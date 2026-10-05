@@ -1,6 +1,7 @@
+from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel
-from app.schemas.common import StrictModel
+from app.schemas.common import Money, StrictModel
 
 
 # --- Garnishment orders ----------------------------------------------------
@@ -8,7 +9,7 @@ class GarnishmentOrderCreate(StrictModel):
     employee_id: int
     garnishment_type: str = "creditor"
     calc_method: str = "fixed"
-    amount: float = 0
+    amount: Money = Decimal("0")
     priority: int = 0
     case_number: Optional[str] = None
     agency_name: Optional[str] = None
@@ -38,7 +39,7 @@ class GarnishmentOrderResponse(BaseModel):
 # --- Gross-up --------------------------------------------------------------
 class GrossUpRequest(StrictModel):
     employee_id: int
-    target_net: float
+    target_net: Money
     supplemental: bool = True  # gross-ups are typically bonuses
 
 

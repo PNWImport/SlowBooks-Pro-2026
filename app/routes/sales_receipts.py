@@ -78,6 +78,10 @@ def create_sales_receipt(data: SalesReceiptCreate, db: Session = Depends(get_db)
         db,
     )
     invoice = db.query(Invoice).filter(Invoice.id == inv_resp.id).first()
+    if not invoice:
+        raise HTTPException(
+            status_code=409, detail="Sales receipt invoice was not persisted"
+        )
     invoice.is_sales_receipt = True
     db.commit()
 

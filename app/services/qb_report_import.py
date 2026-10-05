@@ -20,6 +20,7 @@
 
 import csv
 import io
+import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
@@ -38,6 +39,10 @@ from app.services.accounting import (
     get_undeposited_funds_id,
 )
 from app.services.iif_import import _find_account
+from app.services.safe_errors import DataProblem, safe_message
+from app.services.control_accounts import MissingControlAccount
+
+logger = logging.getLogger(__name__)
 
 # Columns the parser needs to see in the report's header row. Memo, Item,
 # Item Description, and Qty are used when present but not required.
@@ -202,8 +207,14 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
         return result
 
     receipts = _group_receipts(rows, cols, header_idx, result["errors"])
-    ar_id = get_ar_account_id(db)
-    default_income_id = get_default_income_account_id(db)
+    try:
+        ar_id = get_ar_account_id(db)
+    except MissingControlAccount:
+        ar_id = None
+    try:
+        default_income_id = get_default_income_account_id(db)
+    except MissingControlAccount:
+        default_income_id = None
 
     for rec in receipts:
         sp = db.begin_nested()
@@ -354,7 +365,10 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
             # Payment for the full total, deposited per the header row.
             deposit_acct = _find_account(db, rec["deposit_account"])
             if not deposit_acct:
-                uf_id = get_undeposited_funds_id(db)
+                try:
+                    uf_id = get_undeposited_funds_id(db)
+                except MissingControlAccount:
+                    uf_id = None
                 if uf_id:
                     deposit_acct = db.query(Account).filter(Account.id == uf_id).first()
             payment = Payment(
@@ -397,6 +411,18 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
                 )
                 payment.transaction_id = txn.id
 
+            if rec["total"] != 0:
+                if not invoice.transaction_id and not ar_id:
+                    result["warnings"].append(
+                        f"Receipt {ref}: imported but invoice journal entry could not "
+                        "be created (missing Accounts Receivable control account)"
+                    )
+                if not payment.transaction_id:
+                    result["warnings"].append(
+                        f"Receipt {ref}: imported but payment journal entry could not "
+                        "be created (missing receivable or deposit account)"
+                    )
+
             db.flush()
             db.refresh(invoice)
             from app.services.inventory_hooks import post_sale_for_invoice
@@ -406,8 +432,13 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
             sp.commit()
             result["imported"] += 1
         except Exception as e:
+            # A DataProblem carries its own sentence; Python's own errors
+            # are bugs — logged with the traceback, answered generically.
             sp.rollback()
-            result["errors"].append(f"Receipt {rec.get('num') or rec['row']}: {e}")
+            result["errors"].append(
+                f"Receipt {rec.get('num') or rec['row']}: "
+                + safe_message(e, "QB report import")
+            )
 
     db.commit()
     return result
@@ -476,14 +507,14 @@ def import_deposit_report(db: Session, csv_text: str) -> dict:
             hdr = block["header"]
             dep_date = _parse_date(_cell(hdr, cols, "Date"))
             if dep_date is None:
-                raise ValueError("deposit row has no parseable date")
+                raise DataProblem("deposit row has no parseable date")
             bank_name = _cell(hdr, cols, "Account")
             bank = _find_account(db, bank_name)
             if not bank:
-                raise ValueError(f"bank account '{bank_name}' not found")
+                raise DataProblem(f"bank account '{bank_name}' not found")
             total = _q(_amount(_cell(hdr, cols, "Amount")))
             if total <= 0:
-                raise ValueError(f"deposit total {total} is not positive")
+                raise DataProblem(f"deposit total {total} is not positive")
 
             # Sum-to-zero: header total + detail amounts must cancel.
             detail = []
@@ -492,14 +523,14 @@ def import_deposit_report(db: Session, csv_text: str) -> dict:
                 acct_name = _cell(drow, cols, "Account")
                 acct = _find_account(db, acct_name)
                 if not acct:
-                    raise ValueError(
+                    raise DataProblem(
                         f"source account '{acct_name}' not found - import "
                         "your chart of accounts (IIF lists) first"
                     )
                 detail.append((acct, amt, _cell(drow, cols, "Name")))
             residual = total + sum(a for _, a, _ in detail)
             if abs(residual) > Decimal("0.01"):
-                raise ValueError(
+                raise DataProblem(
                     f"block does not balance (residual {residual}); "
                     "export the report with all its rows"
                 )
@@ -551,8 +582,13 @@ def import_deposit_report(db: Session, csv_text: str) -> dict:
             sp.commit()
             result["deposits"] += 1
         except Exception as e:
+            # A DataProblem carries its own sentence; Python's own errors
+            # are bugs — logged with the traceback, answered generically.
             sp.rollback()
-            result["errors"].append(f"Deposit block at row {block['row']}: {e}")
+            result["errors"].append(
+                f"Deposit block at row {block['row']}: "
+                + safe_message(e, "QB report import")
+            )
 
     for btype, count in sorted(skipped_types.items()):
         result["warnings"].append(
@@ -591,17 +627,17 @@ def import_check_report(db: Session, csv_text: str) -> dict:
             hdr = block["header"]
             chk_date = _parse_date(_cell(hdr, cols, "Date"))
             if chk_date is None:
-                raise ValueError("check row has no parseable date")
+                raise DataProblem("check row has no parseable date")
             bank_name = _cell(hdr, cols, "Account")
             bank = _find_account(db, bank_name)
             if not bank:
-                raise ValueError(f"bank account '{bank_name}' not found")
+                raise DataProblem(f"bank account '{bank_name}' not found")
             payee = _cell(hdr, cols, "Name")
             num = _cell(hdr, cols, "Num")
             memo = _cell(hdr, cols, "Memo")
             total = _q(abs(_amount(_cell(hdr, cols, "Original Amount"))))
             if total <= 0:
-                raise ValueError("check total is zero")
+                raise DataProblem("check total is zero")
 
             # Sign-aware splits: Paid Amount is negative for a normal
             # expense line and POSITIVE for a contra line — e.g. a payroll
@@ -620,14 +656,14 @@ def import_check_report(db: Session, csv_text: str) -> dict:
                 acct_name = _cell(drow, cols, "Account")
                 acct = _find_account(db, acct_name)
                 if not acct:
-                    raise ValueError(
+                    raise DataProblem(
                         f"account '{acct_name}' not found - import your "
                         "chart of accounts (IIF lists) first"
                     )
                 splits.append((acct, signed, _cell(drow, cols, "Memo")))
             split_sum = sum(a for _, a, _ in splits)
             if abs(split_sum - total) > Decimal("0.01"):
-                raise ValueError(
+                raise DataProblem(
                     f"splits ({split_sum}) do not equal the check total ({total})"
                 )
 
@@ -681,8 +717,13 @@ def import_check_report(db: Session, csv_text: str) -> dict:
             sp.commit()
             result["checks"] += 1
         except Exception as e:
+            # A DataProblem carries its own sentence; Python's own errors
+            # are bugs — logged with the traceback, answered generically.
             sp.rollback()
-            result["errors"].append(f"Check block at row {block['row']}: {e}")
+            result["errors"].append(
+                f"Check block at row {block['row']}: "
+                + safe_message(e, "QB report import")
+            )
 
     for btype, count in sorted(skipped_types.items()):
         result["warnings"].append(

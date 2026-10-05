@@ -121,3 +121,134 @@ def _check_audit_writers(factory, seed_tip):
         report = verify_chain(db)
         assert report["ok"], report
         assert report["rows_verified"] == 8 + int(seed_tip)
+
+
+def test_concurrent_parent_edits_cannot_form_cycle(accounting_sessions):
+    from fastapi import HTTPException
+
+    from app.routes.accounts import update_account
+    from app.schemas.accounts import AccountUpdate
+
+    factory = accounting_sessions
+    with factory() as db:
+        db.add_all(
+            [
+                Account(id=1, name="First", account_type=AccountType.EXPENSE),
+                Account(id=2, name="Second", account_type=AccountType.EXPENSE),
+            ]
+        )
+        db.commit()
+    barrier = Barrier(2)
+
+    def reparent(account_id, parent_id):
+        with factory() as db:
+            # Each request has read its account before either acquires locks.
+            account = db.get(Account, account_id)
+            assert account.parent_id is None
+            barrier.wait(timeout=10)
+            try:
+                update_account(account_id, AccountUpdate(parent_id=parent_id), db)
+            except HTTPException as exc:
+                db.rollback()
+                return exc.status_code
+            return 200
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(reparent, 1, 2), pool.submit(reparent, 2, 1)]
+        results = [future.result(timeout=20) for future in futures]
+    assert sorted(results) == [200, 400]
+    with factory() as db:
+        parents = [row.parent_id for row in db.query(Account).order_by(Account.id)]
+        assert parents in ([2, None], [None, 1])
+
+
+def test_concurrent_migration_imports_do_not_post_twice(
+    accounting_sessions, monkeypatch
+):
+    from threading import BrokenBarrierError
+    from app.models.transactions import Transaction
+    from app.services import migration_common, wave_import
+    from tests.test_wave_import import ACCOUNTING_COA, _accounting_csv
+
+    factory = accounting_sessions
+    specs, errors = wave_import.parse_coa(ACCOUNTING_COA)
+    assert not errors
+    with factory() as db:
+        db.add_all([Account(name=a["name"], account_type=a["type"]) for a in specs])
+        db.commit()
+    original = migration_common.already_imported
+    reads = Barrier(2)
+
+    def overlap(db, source):
+        found = original(db, source)
+        # Force overlapping reads when unprotected. With serialization the
+        # first writer times out here and proceeds; the second sees its commit.
+        try:
+            reads.wait(timeout=1)
+        except BrokenBarrierError:
+            pass
+        return found
+
+    monkeypatch.setattr(migration_common, "already_imported", overlap)
+    start = Barrier(2)
+
+    def run():
+        with factory() as db:
+            start.wait(timeout=10)
+            return wave_import.run_import(
+                db, {"coa": ACCOUNTING_COA, "gl": _accounting_csv(True)}
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(run) for _ in range(2)]
+        results = [f.result(timeout=30) for f in futures]
+    assert sorted(r["imported_journals"] for r in results) == [0, 2]
+    with factory() as db:
+        assert db.query(Transaction).filter_by(source_type="wave_import").count() == 2
+
+
+def test_concurrent_reconciliation_starts_create_only_one_session(
+    accounting_sessions, monkeypatch
+):
+    from threading import BrokenBarrierError
+    from fastapi import HTTPException
+    from sqlalchemy.orm import Session
+    from app.models.banking import Reconciliation
+    from app.services import reconciliation
+
+    factory = accounting_sessions
+    with factory() as db:
+        db.add(
+            Account(id=1, name="Bank", account_type=AccountType.ASSET, bank_kind="bank")
+        )
+        db.commit()
+    inserts = Barrier(2)
+    original_flush = Session.flush
+
+    def overlap(db, *args, **kwargs):
+        if any(isinstance(row, Reconciliation) for row in db.new):
+            try:
+                inserts.wait(timeout=1)
+            except BrokenBarrierError:
+                pass
+        return original_flush(db, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "flush", overlap)
+    start = Barrier(2)
+
+    def open_session():
+        with factory() as db:
+            start.wait(timeout=10)
+            try:
+                reconciliation.start(db, 1, date(2026, 9, 20), Decimal("0"))
+                db.commit()
+                return 201
+            except HTTPException as exc:
+                db.rollback()
+                return exc.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: open_session(), range(2)))
+    assert sorted(results) == [201, 409]
+    with factory() as db:
+        assert db.query(Reconciliation).count() == 1

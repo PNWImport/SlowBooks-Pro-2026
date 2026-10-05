@@ -2,6 +2,7 @@
 reports/2.9.0). Each test names the finding it pins."""
 
 from decimal import Decimal
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -102,7 +103,7 @@ def test_tax_rate_percent_is_rejected_naming_the_unit(client):
     assert "fraction" in r.text and "percent" in r.text
 
 
-def test_tax_rate_fraction_still_books_tax(client):
+def test_tax_rate_fraction_still_books_tax(client, seed_accounts):
     cid = _customer(client)
     r = client.post(
         "/api/invoices",
@@ -191,7 +192,7 @@ def test_pto_enums_in_spec(client):
 # ---- R7: DELETE on a posted document names the void route ----------------
 
 
-def test_delete_invoice_405_names_void(client):
+def test_delete_invoice_405_names_void(client, seed_accounts):
     cid = _customer(client)
     inv = client.post(
         "/api/invoices",
@@ -345,13 +346,13 @@ def test_backup_permission_error_names_folder_and_backup(monkeypatch, tmp_path):
 
 
 def test_mac_bundle_declares_folder_usage_strings():
-    spec = open("packaging/macos/SlowBooksPro-mac.spec").read()
+    spec = Path("packaging/macos/SlowBooksPro-mac.spec").read_text(encoding="utf-8")
     assert "NSDocumentsFolderUsageDescription" in spec
     assert "NSDownloadsFolderUsageDescription" in spec
 
 
 def test_release_staples_the_app_before_the_dmg():
-    src = open("packaging/macos/release.py").read()
+    src = Path("packaging/macos/release.py").read_text(encoding="utf-8")
     app_staple = src.index('_notarize(notary_zip, notary_profile, report_dir, "app")')
     assert src.index("_staple(app, report_dir)") > app_staple
     assert src.index('stage = work_dir / "dmg-stage"') > src.index(
@@ -429,7 +430,7 @@ def test_desktop_fetches_get_inline_not_attachment(client, seed_accounts):
 
 
 def test_shim_never_returns_in_silence_when_the_bridge_is_missing():
-    src = open("app/static/js/desktop_shim.js").read()
+    src = Path("app/static/js/desktop_shim.js").read_text(encoding="utf-8")
     assert src.count("bridgeMissing(") >= 3  # pdf, html, liveness check
     assert "pywebviewready" in src and "checkBridge" in src
     assert "save_document_file" in src
@@ -460,7 +461,7 @@ def test_save_document_file_writes_like_save_pdf(monkeypatch, tmp_path):
 
 
 def test_installer_clears_internal_on_upgrade():
-    iss = open("packaging/windows/SlowBooksPro.iss").read()
+    iss = Path("packaging/windows/SlowBooksPro.iss").read_text(encoding="utf-8")
     assert "[InstallDelete]" in iss
     assert 'Type: filesandordirs; Name: "{app}\\_internal"' in iss
     assert iss.index("[InstallDelete]") < iss.index("[Files]")
@@ -494,7 +495,7 @@ def test_setup_and_settings_keep_the_manifest_name_in_step(tmp_path, monkeypatch
         }
     )
     assert sync_manifest_name("NEONpulse Techshop") is True
-    manifest = json.loads((data / "companies.json").read_text())
+    manifest = json.loads((data / "companies.json").read_text(encoding="utf-8"))
     assert manifest["companies"][0]["name"] == "NEONpulse Techshop"
     assert sync_manifest_name("NEONpulse Techshop") is False  # idempotent
     assert sync_manifest_name("") is False  # blank never renames
@@ -521,7 +522,9 @@ def test_settings_company_name_updates_manifest(client, tmp_path, monkeypatch):
     r = client.put("/api/settings", json={"company_name": "New Name LLC"})
     assert r.status_code == 200, r.text
     assert (
-        json.loads((data / "companies.json").read_text())["companies"][0]["name"]
+        json.loads((data / "companies.json").read_text(encoding="utf-8"))["companies"][
+            0
+        ]["name"]
         == "New Name LLC"
     )
     # and the list reconciles from settings even if the manifest is edited by hand
@@ -571,7 +574,9 @@ def test_sync_refuses_a_name_another_file_already_uses(tmp_path, monkeypatch, ca
         assert sync_manifest_name("neonpulse techshop") is False  # case-insensitive
     names = [
         c["name"]
-        for c in json.loads((data / "companies.json").read_text())["companies"]
+        for c in json.loads((data / "companies.json").read_text(encoding="utf-8"))[
+            "companies"
+        ]
     ]
     assert names == ["QA Host", "NEONpulse Techshop"]
     assert "already uses that name" in caplog.text
@@ -590,7 +595,9 @@ def test_settings_rename_to_another_files_name_is_409(client, tmp_path, monkeypa
     assert client.get("/api/settings").json()["company_name"] != "NEONpulse Techshop"
     names = [
         c["name"]
-        for c in json.loads((data / "companies.json").read_text())["companies"]
+        for c in json.loads((data / "companies.json").read_text(encoding="utf-8"))[
+            "companies"
+        ]
     ]
     assert names == ["QA Host", "NEONpulse Techshop"]
     # renaming to something unique still works and follows through
@@ -600,7 +607,9 @@ def test_settings_rename_to_another_files_name_is_409(client, tmp_path, monkeypa
     )
     names = [
         c["name"]
-        for c in json.loads((data / "companies.json").read_text())["companies"]
+        for c in json.loads((data / "companies.json").read_text(encoding="utf-8"))[
+            "companies"
+        ]
     ]
     assert names == ["QA Host Books", "NEONpulse Techshop"]
 
@@ -649,15 +658,14 @@ def test_migrations_alone_create_every_table_a_foreign_key_references(tmp_path):
     import sqlite3
 
     db = _migrate_fresh_sqlite(tmp_path)
-    con = sqlite3.connect(db)
-    tables = {
-        r[0] for r in con.execute("select name from sqlite_master where type='table'")
-    }
+    with closing(sqlite3.connect(db)) as con:
+        rows = con.execute(
+            "select name, sql from sqlite_master where type='table'"
+        ).fetchall()
+    tables = {name for name, _ in rows}
     assert "users" in tables and "user_preferences" in tables
     dangling = []
-    for name, sql in con.execute(
-        "select name, sql from sqlite_master where type='table'"
-    ):
+    for name, sql in rows:
         for ref in re.findall(r"REFERENCES\s+\"?(\w+)\"?", sql or ""):
             if ref not in tables:
                 dangling.append(f"{name} -> {ref}")
@@ -746,7 +754,7 @@ def test_private_network_flag_relaxes_only_the_transport_guards(monkeypatch, cap
 def test_compose_file_declares_the_single_host_flag():
     import yaml
 
-    compose = yaml.safe_load(open("docker-compose.yml"))
+    compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
     env = compose["services"]["slowbooks"]["environment"]
     assert env["SLOWBOOKS_PRIVATE_NETWORK"].startswith(
         "${SLOWBOOKS_PRIVATE_NETWORK:-1}"
@@ -799,12 +807,11 @@ def test_migrations_create_every_model_table(tmp_path):
     import app.models  # noqa: F401
 
     db = _migrate_fresh_sqlite(tmp_path)
-    migrated = {
-        r[0]
-        for r in sqlite3.connect(db).execute(
-            "select name from sqlite_master where type='table'"
-        )
-    }
+    with closing(sqlite3.connect(db)) as con:
+        migrated = {
+            r[0]
+            for r in con.execute("select name from sqlite_master where type='table'")
+        }
     missing = sorted(set(Base.metadata.tables) - migrated)
     assert missing == [], f"tables only create_all() makes: {missing}"
 
@@ -826,20 +833,20 @@ def test_ai_api_key_can_be_cleared_with_an_explicit_empty_string(client):
 
 
 def test_settings_page_never_round_trips_a_blank_ai_key():
-    src = open("app/static/js/settings.js").read()
+    src = Path("app/static/js/settings.js").read_text(encoding="utf-8")
     assert "keyPayload" in src and "ai-settings-key-remove" in src
     assert "api_key: document.getElementById('ai-settings-key').value," not in src
 
 
 def test_nonprofit_vocabulary_on_analytics_aging_and_donor_card():
-    analytics = open("app/static/js/analytics.js").read()
+    analytics = Path("app/static/js/analytics.js").read_text(encoding="utf-8")
     assert '_agingTable(data.ar_aging, T("Customer"))' in analytics
-    reports = open("app/static/js/reports.js").read()
+    reports = Path("app/static/js/reports.js").read_text(encoding="utf-8")
     assert "Sales totals per donor" not in reports
     assert "Contribution totals per donor" in reports
 
 
 def test_windows_workflow_publishes_checksums():
-    wf = open(".github/workflows/windows.yml").read()
+    wf = Path(".github/workflows/windows.yml").read_text(encoding="utf-8")
     assert "SHA256SUMS.windows" in wf
     assert wf.count("SHA256SUMS.windows") >= 3  # written, uploaded, attached

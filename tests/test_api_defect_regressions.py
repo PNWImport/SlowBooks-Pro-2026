@@ -181,7 +181,14 @@ def test_token_settings_writes_are_otherwise_unaffected(client):
 # ---------------------------------------------------------------------------
 
 
-def test_invoice_email_does_not_raise_typeerror(client, seed_customer):
+def test_invoice_email_does_not_raise_typeerror(
+    client, seed_customer, seed_accounts, monkeypatch
+):
+    # Exercise the real sender's signature without depending on native PDF
+    # libraries; the test is about the caller's keyword arguments (#121).
+    from app.routes.invoices import documents
+
+    monkeypatch.setattr(documents, "generate_invoice_pdf", lambda *a: b"PDF")
     inv = client.post(
         "/api/invoices",
         json={
@@ -197,7 +204,7 @@ def test_invoice_email_does_not_raise_typeerror(client, seed_customer):
     )
     # SMTP is unconfigured under test, so a clean 502 is the expected outcome.
     # What must never come back is the old TypeError surfacing as a 500.
-    assert r.status_code != 500, r.text
+    assert r.status_code == 502, r.text
     assert "unexpected keyword argument" not in r.text
 
 

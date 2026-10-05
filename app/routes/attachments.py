@@ -33,6 +33,7 @@ _ENTITY_TYPE_DIRS = {
     "expense": "expense",
     "estimate": "estimate",
     "purchase_order": "purchase_order",
+    "vendor_credit": "vendor_credit",
     "vendor": "vendor",
     "customer": "customer",
 }
@@ -87,6 +88,21 @@ def _sanitize_filename(raw: str) -> str:
     if not cleaned or cleaned.startswith(".") or "/" in cleaned or "\\" in cleaned:
         raise HTTPException(status_code=400, detail="Invalid filename")
     return cleaned
+
+
+def _split_stored_path(stored: str) -> list[str]:
+    """Split a stored relative path on either separator.
+
+    Rows written by a pre-fix Windows install carry backslashes; they must
+    keep resolving on every platform.
+    """
+    # Normalizing legacy separators must not turn absolute paths into
+    # apparently relative paths and bypass the existing rejection rule.
+    from pathlib import PureWindowsPath
+
+    if stored.startswith(("/", "\\")) or PureWindowsPath(stored).drive:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return [part for part in stored.replace("\\", "/").split("/") if part]
 
 
 def _resolve_within(base: Path, *parts: str) -> Path:
@@ -151,7 +167,11 @@ async def upload_attachment(
         entity_type=entity_type,
         entity_id=entity_id,
         filename=safe_filename,
-        file_path=str(file_path.relative_to(STATIC_BASE)),
+        # POSIX form, always. str() on a WindowsPath yields backslashes, and
+        # a company file written on Windows would then be unable to find its
+        # own attachments when opened on macOS or Linux — joinpath() there
+        # treats "uploads\\attachments\\x.pdf" as one filename.
+        file_path=file_path.relative_to(STATIC_BASE).as_posix(),
         mime_type=file.content_type,
         file_size=len(content),
     )
@@ -167,7 +187,7 @@ def download_attachment(attachment_id: int, db: Session = Depends(get_db)):
     if not attachment:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    file_path = _resolve_within(STATIC_BASE, attachment.file_path)
+    file_path = _resolve_within(STATIC_BASE, *_split_stored_path(attachment.file_path))
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found on disk")
 
@@ -196,7 +216,7 @@ def delete_attachment(attachment_id: int, db: Session = Depends(get_db)):
     if not attachment:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    file_path = _resolve_within(STATIC_BASE, attachment.file_path)
+    file_path = _resolve_within(STATIC_BASE, *_split_stored_path(attachment.file_path))
     try:
         file_path.unlink()
     except FileNotFoundError:

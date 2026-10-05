@@ -1,5 +1,5 @@
 # ============================================================================
-# CSV Bank Transaction Import — Chase checking, Chase credit card, PayPal
+# CSV Bank Transaction Import — Bank of America, Chase, and PayPal
 # Extends Feature 18 (bank feed import) to support CSV bank statement exports.
 #
 # Column mapping & pitfalls documented in the skill. Key rules:
@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.models.banking import BankTransaction
 from app.services.bank_rules_engine import apply_bank_rules
+from app.services.safe_errors import DataProblem
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,12 @@ PAYPAL_NEW_SIG = {
     "From Email Address",
     "Name",
 }
+BOFA_DETAIL_SIG = {"Date", "Description", "Amount", "Running Bal."}
+
+# How far into a file parse_csv will look for the header row. Bank of
+# America puts a statement summary of roughly eight lines above it;
+# every other supported export puts the header on row 1.
+PREAMBLE_SCAN_LINES = 25
 
 
 def detect_format(headers: set[str]) -> str:
@@ -65,6 +72,8 @@ def detect_format(headers: set[str]) -> str:
         return "paypal"
     if PAYPAL_NEW_SIG.issubset(headers):
         return "paypal_new"
+    if BOFA_DETAIL_SIG.issubset(headers):
+        return "bofa_detail"
     return "unknown"
 
 
@@ -82,7 +91,7 @@ def parse_date(val: str) -> date:
         return dateparser.parse(val).date()
     except ImportError:
         pass
-    raise ValueError(f"Cannot parse date: {val}")
+    raise DataProblem(f"Cannot parse date: {val}")
 
 
 # ── Format-specific parsers ──────────────────────────────────────────────
@@ -277,6 +286,68 @@ def parse_paypal_new(reader: csv.DictReader) -> list[dict]:
     return transactions
 
 
+# Description prefixes Bank of America uses for statement metadata rows that
+# sit inside the transaction table. These are balances, not transactions.
+_BOFA_STATEMENT_METADATA = ("beginning balance", "ending balance")
+
+
+def _parse_bofa_amount(val: str) -> Decimal:
+    """Parse Bank of America amounts such as ``1,234.56`` or ``($25.00)``."""
+    normalized = val.strip().replace(",", "").replace("$", "")
+    if normalized.startswith("(") and normalized.endswith(")"):
+        normalized = f"-{normalized[1:-1]}"
+    amount = Decimal(normalized)
+    if not amount.is_finite():
+        raise ValueError("Bank of America amount must be finite")
+    return amount
+
+
+def parse_bofa_detail(reader: csv.DictReader) -> list[dict]:
+    """Parse Bank of America's detailed checking/savings CSV export.
+
+    The export starts with a statement-summary block before the real header.
+    ``parse_csv`` positions the reader at that header.
+
+    A beginning-balance row is statement metadata, not a transaction, so it
+    stays out of the review queue; opening balances are posted separately
+    through the linked ledger account (see ``bank_posting.post_opening_balance``).
+    Bank of America normally emits that row with an empty Amount, which the
+    blank-amount guard below already drops — but it is dropped **by
+    description as well**, because relying on the blank was relying on a
+    detail of one export layout to enforce a rule about what a transaction
+    is. If the row ever carries an amount it would otherwise import as a
+    deposit and overstate the account by the opening balance.
+    """
+    transactions = []
+    for row in reader:
+        date_str = (row.get("Date") or "").strip()
+        description = (row.get("Description") or "").strip()
+        amount_str = (row.get("Amount") or "").strip()
+
+        if not date_str or not amount_str:
+            continue
+        if description.lower().startswith(_BOFA_STATEMENT_METADATA):
+            continue
+
+        try:
+            txn_date = parse_date(date_str)
+            amount = _parse_bofa_amount(amount_str)
+        except (ValueError, InvalidOperation) as e:
+            logger.warning("Skipping Bank of America row: %s", e)
+            continue
+
+        transactions.append(
+            {
+                "date": txn_date,
+                "amount": amount,
+                "payee": description,
+                "description": description,
+                "check_number": None,
+            }
+        )
+    return transactions
+
+
 # ── Dispatch ─────────────────────────────────────────────────────────────
 
 
@@ -293,23 +364,49 @@ def parse_csv(csv_text: str) -> dict:
     if csv_text.startswith("\ufeff"):
         csv_text = csv_text[1:]
 
-    reader = csv.DictReader(io.StringIO(csv_text))
-    if not reader.fieldnames:
+    lines = csv_text.splitlines()
+    if not lines:
         return {
             "format": "unknown",
             "transactions": [],
             "error": "Empty CSV or no headers",
         }
 
-    # Normalize headers: strip whitespace, quotes, and BOM residue
-    headers = {h.strip().strip('"').strip("'") for h in reader.fieldnames if h}
-    fmt = detect_format(headers)
+    # Some exports (notably Bank of America detail CSVs) put a statement
+    # summary before the transaction table, so the header is not physical
+    # row 1. Scan for it — but only across the first PREAMBLE_SCAN_LINES.
+    #
+    # The bound matters. A signature match is a *set subset* test, so a data
+    # row whose values happen to spell a signature's column names would be
+    # taken for a header; the further into the file we look, the more rows
+    # get that chance, and the one we would pick is the one that truncates
+    # the import. Real preambles are short (BofA's is about eight lines), so
+    # a small window buys the feature without buying that risk. It also
+    # keeps an unrecognized 100k-row export from being parsed twice before
+    # we can say "unknown format".
+    reader = None
+    fmt = "unknown"
+    headers: set[str] = set()
+    for index, line in enumerate(lines[:PREAMBLE_SCAN_LINES]):
+        candidate = next(csv.reader([line]), [])
+        candidate_headers = {h.strip().strip('"').strip("'") for h in candidate if h}
+        candidate_format = detect_format(candidate_headers)
+        if candidate_format != "unknown":
+            headers = candidate_headers
+            fmt = candidate_format
+            reader = csv.DictReader(io.StringIO("\n".join(lines[index:])))
+            break
+
+    if reader is None:
+        first_row = next(csv.reader([lines[0]]), [])
+        headers = {h.strip().strip('"').strip("'") for h in first_row if h}
 
     parsers = {
         "chase_checking": parse_chase_checking,
         "chase_credit": parse_chase_credit,
         "paypal": parse_paypal,
         "paypal_new": parse_paypal_new,
+        "bofa_detail": parse_bofa_detail,
     }
 
     parser = parsers.get(fmt)
@@ -332,6 +429,7 @@ _IMPORT_ID_PREFIX = {
     "chase_credit": "cc",
     "paypal": "pp",
     "paypal_new": "pp",
+    "bofa_detail": "bofa",
 }
 
 
@@ -419,13 +517,17 @@ def import_csv_transactions(
 
     db.commit()
 
-    # Auto-apply bank rules (shared engine with the OFX importer)
+    matched = 0
     if imported > 0:
         apply_bank_rules(db, bank_account_id)
+        from app.services.ofx_import import _auto_match_new
+
+        matched = _auto_match_new(db, bank_account_id)
 
     return {
         "imported": imported,
         "skipped": skipped,
+        "matched": matched,
         "errors": [],
         "total": len(transactions),
         "format": result["format"],

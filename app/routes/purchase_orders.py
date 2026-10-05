@@ -133,6 +133,11 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
 
+    if data.vendor_id is not None:
+        vendor = db.query(Vendor).filter(Vendor.id == data.vendor_id).first()
+        if not vendor:
+            raise HTTPException(status_code=404, detail="Vendor not found")
+
     for key, val in data.model_dump(exclude_unset=True, exclude={"lines"}).items():
         if key == "status":
             setattr(po, key, POStatus(val))
@@ -161,6 +166,10 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
         tax_rate = data.tax_rate if data.tax_rate is not None else po.tax_rate
         subtotal, tax_amount, total = compute_line_totals(data.lines, tax_rate)
         po.subtotal = subtotal
+        po.tax_amount = tax_amount
+        po.total = total
+    elif data.tax_rate is not None:
+        _, tax_amount, total = compute_line_totals(po.lines, data.tax_rate)
         po.tax_amount = tax_amount
         po.total = total
 

@@ -111,6 +111,11 @@ def job_profitability(
     Untagged activity lands in the "No job" bucket (job_id None) so the
     report's totals equal the plain P&L for the same period.
     """
+    # The untagged bucket is labelled in the business word; a nonprofit's
+    # report reads "No grant" (vocabulary audit, 2.13.x).
+    from app.services.terminology import terms_from_db
+
+    no_job_label = terms_from_db(db).text(NO_JOB_LABEL)
     pl_types = (AccountType.INCOME, AccountType.COGS, AccountType.EXPENSE)
     attributed = job_attribution().label("job")
     q = (
@@ -146,7 +151,7 @@ def job_profitability(
             job_id,
             {
                 "job_id": job_id,
-                "job_name": job.name if job else NO_JOB_LABEL,
+                "job_name": job.name if job else no_job_label,
                 "customer_id": job.customer_id if job else None,
                 "customer_name": customers.get(job.customer_id, "") if job else "",
                 "status": job.status if job else None,
