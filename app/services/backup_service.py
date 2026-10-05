@@ -16,7 +16,6 @@ import subprocess
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
@@ -168,7 +167,9 @@ def _pg_environment(params: dict) -> dict:
     return env
 
 
-def _create_sqlite_backup(db: Session, notes: str, backup_type: str) -> dict:
+def _create_sqlite_backup(
+    db: Session, notes: str, backup_type: str, tag: str | None = None
+) -> dict:
     """Snapshot the active company's .db file into BACKUP_DIR."""
     src = _sqlite_db_path()
     if src is None or not src.exists():
@@ -177,8 +178,7 @@ def _create_sqlite_backup(db: Session, notes: str, backup_type: str) -> dict:
             "error": "Active database is not a file-backed SQLite database",
         }
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"slowbooks_{timestamp}_{uuid4().hex}.db"
+    filename = _new_backup_filename(tag)
     filepath = BACKUP_DIR / filename
 
     try:
@@ -246,8 +246,7 @@ def create_backup(
         return _create_sqlite_backup(db, notes, backup_type, tag)
 
     params = _parse_db_url(DATABASE_URL)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"slowbooks_{timestamp}_{uuid4().hex}.sql"
+    filename = _new_backup_filename(tag)
     filepath = BACKUP_DIR / filename
 
     env = _pg_environment(params)

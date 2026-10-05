@@ -11,18 +11,22 @@
 import glob
 import os
 import sys
-from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 
-# Embed the existing app version without importing/starting the application.
+# Version resource for the exe (issue #106): FileVersion / ProductVersion /
+# ProductName come from app/__init__.py, so Properties → Details and
+# inventory tools can answer "what version is this" from the binary.
 sys.path.insert(0, SPECPATH)
 import version_info as _version_info  # noqa: E402
 
 VERSION_FILE = os.path.join(SPECPATH, "version_info.txt")
-_version_info.write(Path(ROOT, "app", "__init__.py"), Path(VERSION_FILE))
+APP_VERSION = _version_info.write(
+    __import__("pathlib").Path(ROOT, "app", "__init__.py"),
+    __import__("pathlib").Path(VERSION_FILE),
+)
 
 
 def _tree(src_rel, dest):
@@ -55,6 +59,12 @@ datas += _tree("migrations", "migrations")
 # portable copy can register the startup task without downloading anything:
 #   _internal\scripts\windows\serveredition-install.ps1
 datas += _tree("scripts/windows", "scripts/windows")
+# repair-schema.py is named by app.main's startup refusal when it meets a
+# half-upgraded database (#132). Server Edition is precisely the deployment
+# shape that refusal exists for, and its install scripts ship in this bundle
+# — so the operator most likely to read the message was the one least likely
+# to have the file (#144). An error naming a path the reader cannot reach is
+# the same defect as "deactivate it instead" with no deactivate control.
 datas += [(os.path.join(ROOT, "scripts", "repair-schema.py"), "scripts")]
 
 # The WeasyPrint DLL set staged by CI (empty when building without it, so a

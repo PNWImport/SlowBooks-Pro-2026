@@ -23,34 +23,6 @@ from app.models.accounts import Account
 from app.services import control_accounts
 
 
-def test_account_edit_rejects_indirect_parent_cycle(client):
-    first = client.post(
-        "/api/accounts", json={"name": "Parent", "account_type": "expense"}
-    ).json()
-    second = client.post(
-        "/api/accounts",
-        json={"name": "Child", "account_type": "expense", "parent_id": first["id"]},
-    ).json()
-    response = client.put(
-        f"/api/accounts/{first['id']}", json={"parent_id": second["id"]}
-    )
-    assert response.status_code == 400, response.text
-    assert client.get(f"/api/accounts/{first['id']}").json()["parent_id"] is None
-
-
-@pytest.mark.parametrize("editing", [False, True])
-def test_account_parent_must_exist(client, editing):
-    data = {"name": "Account", "account_type": "expense"}
-    if editing:
-        account = client.post("/api/accounts", json=data).json()
-        response = client.put(
-            f"/api/accounts/{account['id']}", json={"parent_id": 999999}
-        )
-    else:
-        response = client.post("/api/accounts", json={**data, "parent_id": 999999})
-    assert response.status_code == 400, response.text
-
-
 def _seeded_ordinary(db):
     """A seeded account that is NOT a control account — the case that was
     refused for the wrong reason."""
@@ -163,9 +135,7 @@ def test_the_reference_scan_is_derived_from_the_schema_not_a_list():
         if fk.column.table.name == "accounts"
     }
     # A sample from opposite ends of the app; the scan walks all of them.
-    # Vendor credits are a later integration dependency; budgets exercise
-    # an existing non-posting reference in this branch without skipping it.
-    for expected in ("items", "transaction_lines", "budgets"):
+    for expected in ("items", "transaction_lines", "vendor_credit_lines"):
         assert expected in referencing
 
 

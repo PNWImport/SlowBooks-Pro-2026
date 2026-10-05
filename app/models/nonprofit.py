@@ -19,7 +19,6 @@
 # documents that explain the postings.
 # ============================================================================
 
-from decimal import Decimal
 from sqlalchemy import (
     Boolean,
     Column,
@@ -108,7 +107,7 @@ class AllocationRuleTarget(Base):
     function = Column(String(20), nullable=True)
     # Hours basis: the job (grant) whose time entries weight this target
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
-    weight = Column(Numeric(12, 4), nullable=False, default=Decimal("1"))
+    weight = Column(Numeric(12, 4), nullable=False, default=1)
     line_order = Column(Integer, nullable=False, default=0)
 
     rule = relationship("AllocationRule", back_populates="targets")
@@ -128,7 +127,7 @@ class FunctionalAllocation(Base):
     memo = Column(Text, nullable=True)
     status = Column(String(10), nullable=False, default="posted")
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
-    total = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
+    total = Column(Numeric(15, 2), nullable=False, default=0)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(

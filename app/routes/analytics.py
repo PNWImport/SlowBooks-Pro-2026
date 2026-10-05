@@ -465,6 +465,11 @@ def put_ai_config(
 ):
     """Update AI provider / model / key / account_id.
 
+    The administrator's, like every company setting: the key is a
+    company-wide credential, and the endpoint receives the dashboard's
+    figures when anyone runs an analysis (a bookkeeper could point it at
+    any public address).
+
     Omitting `api_key` keeps the existing encrypted value. An explicit empty
     or whitespace-only value removes it; a non-empty value is encrypted
     with Fernet before storage.
@@ -680,7 +685,10 @@ def ai_insights(
 @router.get("/ai-actions")
 def list_ai_actions(db: Session = Depends(get_db)):
     """List the curated AI analysis actions, grouped by category for the
-    UI dropdown. No secrets, no per-row LLM calls — purely catalogue."""
+    UI dropdown. No secrets, no per-row LLM calls — purely catalogue.
+    The labels are written in the business words ("Unpaid invoices
+    summary", "Customers & Sales"); the dropdown says them in the
+    company's."""
     from app.services.terminology import terms_from_db
 
     terms = terms_from_db(db)
@@ -688,14 +696,13 @@ def list_ai_actions(db: Session = Depends(get_db)):
     if terms.is_nonprofit:
         groups = [
             {
-                **group,
-                "category": terms.text(group["category"]),
+                **g,
+                "category": terms.text(g["category"]),
                 "actions": [
-                    {**action, "label": terms.text(action["label"])}
-                    for action in group["actions"]
+                    {**a, "label": terms.text(a["label"])} for a in g["actions"]
                 ],
             }
-            for group in groups
+            for g in groups
         ]
     return {"groups": groups}
 

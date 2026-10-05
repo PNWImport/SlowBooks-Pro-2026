@@ -1,10 +1,8 @@
 from datetime import date
-from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator
 
 from app.schemas.common import (
-    Money,
     StrictModel,
     TaxRateFloat,
     validate_non_negative_line,
@@ -15,7 +13,7 @@ class RecurringLineCreate(StrictModel):
     item_id: Optional[int] = None
     description: Optional[str] = None
     quantity: float = 1
-    rate: Money = Decimal("0")
+    rate: float = 0
     is_taxable: Optional[bool] = None
     line_order: int = 0
 

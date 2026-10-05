@@ -137,7 +137,9 @@ async def import_csv(
 ):
     """Import CSV bank transactions into a bank account.
 
-    Auto-detects format (Bank of America detail, Chase checking/credit, PayPal).
+    Auto-detects format (Bank of America detail, Chase checking/credit,
+    PayPal, or a header naming date / description / amount), or takes the
+    dialog's column `mapping` (JSON) for a layout detection missed.
     Deduplicates by content-derived import_id (re-imports and overlapping
     exports skip; legitimate same-day duplicates still import).
     Auto-applies bank rules after import.

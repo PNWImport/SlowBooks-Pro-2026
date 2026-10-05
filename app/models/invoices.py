@@ -6,7 +6,6 @@
 # We lifted that to 50 because it's not 2003 anymore. Mostly.
 # ============================================================================
 
-from decimal import Decimal
 import enum
 import uuid
 
@@ -64,12 +63,12 @@ class Invoice(Base):
     ship_state = Column(String(50), nullable=True)
     ship_zip = Column(String(20), nullable=True)
 
-    subtotal = Column(Numeric(15, 2), default=Decimal("0"))
-    tax_rate = Column(Numeric(5, 4), default=Decimal("0"))
-    tax_amount = Column(Numeric(15, 2), default=Decimal("0"))
-    total = Column(Numeric(15, 2), default=Decimal("0"))
-    amount_paid = Column(Numeric(15, 2), default=Decimal("0"))
-    balance_due = Column(Numeric(15, 2), default=Decimal("0"))
+    subtotal = Column(Numeric(15, 2), default=0)
+    tax_rate = Column(Numeric(7, 6), default=0)  # a fraction: 8.875% is 0.08875
+    tax_amount = Column(Numeric(15, 2), default=0)
+    total = Column(Numeric(15, 2), default=0)
+    amount_paid = Column(Numeric(15, 2), default=0)
+    balance_due = Column(Numeric(15, 2), default=0)
 
     notes = Column(Text, nullable=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
@@ -141,9 +140,11 @@ class InvoiceLine(Base):
     )
     item_id = Column(Integer, ForeignKey("items.id"), nullable=True)
     description = Column(Text, nullable=True)
-    quantity = Column(Numeric(10, 2), default=Decimal("1"))
-    rate = Column(Numeric(15, 2), default=Decimal("0"))
-    amount = Column(Numeric(15, 2), default=Decimal("0"))
+    quantity = Column(Numeric(10, 2), default=1)
+    # Unit price to four places: bulk goods are priced like $0.045 a box.
+    # The line amount is still rounded to the cent (accounting._q).
+    rate = Column(Numeric(17, 4), default=0)
+    amount = Column(Numeric(15, 2), default=0)
     class_name = Column(String(100), nullable=True)
     # Per-line job / class; NULL falls back to the transaction header
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)

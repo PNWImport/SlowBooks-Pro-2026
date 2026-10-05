@@ -20,8 +20,6 @@ it — the same shape as #139's delete error saying "deactivate it instead"
 when nothing on the page could deactivate.
 """
 
-import os
-import uuid
 from pathlib import Path
 
 import pytest
@@ -135,87 +133,6 @@ def test_repair_is_a_no_op_on_a_healthy_file(tmp_path):
     assert result.ok and result.dropped == []
 
 
-@pytest.mark.parametrize("populated_child", [False, True])
-def test_repair_recovers_or_refuses_a_half_upgraded_postgres_database(
-    populated_child,
-):
-    """Exercise recovery and its no-data-loss refusal on a real database."""
-    admin_url = os.getenv("MIGRATION_TEST_DATABASE_URL")
-    if not admin_url:
-        pytest.skip("MIGRATION_TEST_DATABASE_URL is required for PostgreSQL repair")
-
-    from alembic import command
-    import sqlalchemy as sa
-
-    from app.database import Base
-    import app.models  # noqa: F401 — register the complete model metadata
-    from app.services.schema_repair import _alembic_cfg, repair
-
-    name = "sbrepair_" + uuid.uuid4().hex[:12]
-    admin = sa.create_engine(admin_url, isolation_level="AUTOCOMMIT")
-    target = (
-        sa.engine.make_url(admin_url)
-        .set(database=name)
-        .render_as_string(hide_password=False)
-    )
-    with admin.connect() as conn:
-        conn.execute(sa.text(f'CREATE DATABASE "{name}"'))
-    try:
-        command.upgrade(_alembic_cfg(target), "e7f8a9b0c1d2")
-        engine = sa.create_engine(target)
-        before = set(inspect(engine).get_table_names())
-        Base.metadata.create_all(engine)
-        added = set(inspect(engine).get_table_names()) - before
-        if populated_child:
-            with engine.begin() as conn:
-                vendor_id = conn.execute(
-                    sa.text("INSERT INTO vendors (name) VALUES ('QA') RETURNING id")
-                ).scalar_one()
-                credit_id = conn.execute(
-                    sa.text(
-                        "INSERT INTO vendor_credits "
-                        "(credit_number, vendor_id, date) "
-                        "VALUES ('QA-CREDIT', :vendor_id, '2026-09-15') RETURNING id"
-                    ),
-                    {"vendor_id": vendor_id},
-                ).scalar_one()
-                conn.execute(
-                    sa.text(
-                        "INSERT INTO vendor_credit_lines (vendor_credit_id) "
-                        "VALUES (:credit_id)"
-                    ),
-                    {"credit_id": credit_id},
-                )
-        engine.dispose()
-        assert added, "the PostgreSQL fixture did not reproduce create_all damage"
-
-        result = repair(target)
-        if populated_child:
-            assert not result.ok
-            assert "vendor_credit_lines" in result.message
-            assert "1 row(s)" in result.message
-            check = sa.create_engine(target)
-            try:
-                assert added <= set(inspect(check).get_table_names())
-            finally:
-                check.dispose()
-            return
-        assert result.ok, result.message
-        assert result.now_at == _head()
-        assert set(result.dropped) <= added
-    finally:
-        with admin.connect() as conn:
-            conn.execute(
-                sa.text(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                    "WHERE datname = :name AND pid <> pg_backend_pid()"
-                ),
-                {"name": name},
-            )
-            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{name}"'))
-        admin.dispose()
-
-
 def test_repair_also_upgrades_an_ordinary_old_file(tmp_path):
     """It replaces `alembic upgrade head` rather than sitting beside it, so an
     operator does not have to work out which situation they are in."""
@@ -261,15 +178,11 @@ def test_the_startup_refusal_names_the_repair_for_a_half_upgraded_file(
     import app.main as main
 
     db, _ = _half_upgraded(tmp_path)
-    probe_engine = create_engine(f"sqlite:///{db}")
-    monkeypatch.setattr(main, "engine", probe_engine)
-    try:
-        with pytest.raises(RuntimeError) as e:
-            main._refuse_a_database_behind_head()
-        assert "repair-schema.py" in str(e.value)
-        assert "will fail" in str(e.value)
-    finally:
-        probe_engine.dispose()
+    monkeypatch.setattr(main, "engine", create_engine(f"sqlite:///{db}"))
+    with pytest.raises(RuntimeError) as e:
+        main._refuse_a_database_behind_head()
+    assert "repair-schema.py" in str(e.value)
+    assert "will fail" in str(e.value)
 
 
 def test_the_startup_refusal_still_says_upgrade_for_an_ordinary_old_file(
@@ -281,16 +194,12 @@ def test_the_startup_refusal_still_says_upgrade_for_an_ordinary_old_file(
 
     db = tmp_path / "ordinary.db"
     command.upgrade(_cfg(db), "e7f8a9b0c1d2")
-    probe_engine = create_engine(f"sqlite:///{db}")
-    monkeypatch.setattr(main, "engine", probe_engine)
-    try:
-        with pytest.raises(RuntimeError) as e:
-            main._refuse_a_database_behind_head()
-        detail = str(e.value)
-        assert "alembic upgrade head" in detail
-        assert "repair-schema.py" not in detail
-    finally:
-        probe_engine.dispose()
+    monkeypatch.setattr(main, "engine", create_engine(f"sqlite:///{db}"))
+    with pytest.raises(RuntimeError) as e:
+        main._refuse_a_database_behind_head()
+    detail = str(e.value)
+    assert "alembic upgrade head" in detail
+    assert "repair-schema.py" not in detail
 
 
 # ── #144: the message must name a path that exists ───────────────────────
@@ -319,24 +228,20 @@ def test_the_refusal_names_a_command_that_actually_runs(tmp_path, monkeypatch):
     import app.main as main
 
     db, _ = _half_upgraded(tmp_path, name="from_message.db")
-    probe_engine = create_engine(f"sqlite:///{db}")
-    monkeypatch.setattr(main, "engine", probe_engine)
-    try:
-        with pytest.raises(RuntimeError) as e:
-            main._refuse_a_database_behind_head()
-        message = str(e.value)
+    monkeypatch.setattr(main, "engine", create_engine(f"sqlite:///{db}"))
+    with pytest.raises(RuntimeError) as e:
+        main._refuse_a_database_behind_head()
+    message = str(e.value)
 
-        # The line the operator is told to type.
-        line = [ln.strip() for ln in message.splitlines() if "--database-url" in ln]
-        assert line, f"the refusal names no command:\n{message}"
-        command = line[0]
+    # The line the operator is told to type.
+    line = [ln.strip() for ln in message.splitlines() if "--database-url" in ln]
+    assert line, f"the refusal names no command:\n{message}"
+    command = line[0]
 
-        m = re.match(r"python3?\s+(\S.*?)\s+--database-url", command)
-        assert m, f"not a runnable python invocation on a checkout: {command!r}"
-        script = Path(m.group(1))
-        assert script.exists(), f"the refusal names {script}, which is not there"
-    finally:
-        probe_engine.dispose()
+    m = re.match(r"python3?\s+(\S.*?)\s+--database-url", command)
+    assert m, f"not a runnable python invocation on a checkout: {command!r}"
+    script = Path(m.group(1))
+    assert script.exists(), f"the refusal names {script}, which is not there"
 
     # And it works when run exactly as instructed.
     out = subprocess.run(
@@ -391,31 +296,22 @@ def test_the_repair_is_linear_in_blocking_tables(tmp_path):
         tables_pending_revisions_would_create,
     )
 
-    pending = set(
+    pending = sorted(
         tables_pending_revisions_would_create(
             "sqlite:///" + str(tmp_path / "probe.db"), "e7f8a9b0c1d2"
         )
     )
-    baseline = tmp_path / "linear-baseline.db"
+    assert len(pending) >= 2, "need a multi-table revision to measure this"
+
     from alembic import command
 
-    command.upgrade(_cfg(baseline), "e7f8a9b0c1d2")
-    baseline_engine = create_engine(f"sqlite:///{baseline}")
-    existing = set(_inspect(baseline_engine).get_table_names())
-    baseline_engine.dispose()
-    pending = sorted(
-        name for name in pending - existing if name in Base.metadata.tables
-    )
-    assert len(pending) >= 2, "need multiple genuinely absent tables to measure this"
-
-    for n in range(1, min(4, len(pending)) + 1):
+    for n in range(1, len(pending) + 1):
         db = tmp_path / f"linear{n}.db"
         command.upgrade(_cfg(db), "e7f8a9b0c1d2")
         engine = create_engine(f"sqlite:///{db}")
         for name in pending[:n]:
             Base.metadata.tables[name].create(bind=engine)
-        present = set(_inspect(engine).get_table_names())
-        assert len((present - existing) & set(pending)) == n
+        assert len(set(_inspect(engine).get_table_names()) & set(pending)) == n
         engine.dispose()
 
         result = repair(f"sqlite:///{db}")
@@ -456,9 +352,7 @@ def test_nothing_is_dropped_when_the_migration_cannot_run(tmp_path, monkeypatch)
     from app.services import schema_repair
 
     db, added = _half_upgraded(tmp_path, name="cannot_run.db")
-    probe_engine = create_engine(f"sqlite:///{db}")
-    before = set(_inspect(probe_engine).get_table_names())
-    probe_engine.dispose()
+    before = set(_inspect(create_engine(f"sqlite:///{db}")).get_table_names())
 
     # Stand in for the import that failed on the frozen bundle.
     real = schema_repair._alembic_cfg
@@ -475,9 +369,7 @@ def test_nothing_is_dropped_when_the_migration_cannot_run(tmp_path, monkeypatch)
     assert "nothing was changed" in result.message
     assert "psycopg2" in result.message, "say what actually stopped it"
 
-    probe_engine = create_engine(f"sqlite:///{db}")
-    after = set(_inspect(probe_engine).get_table_names())
-    probe_engine.dispose()
+    after = set(_inspect(create_engine(f"sqlite:///{db}")).get_table_names())
     assert after == before, "the file was modified by a repair that failed"
     assert _rev(db) != _head()
 

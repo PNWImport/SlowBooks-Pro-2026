@@ -5,7 +5,6 @@
 # sequence, with effective-dated rates and posted-run snapshots.
 # ============================================================================
 
-from decimal import Decimal
 import enum
 
 from sqlalchemy import (
@@ -13,8 +12,8 @@ from sqlalchemy import (
     Integer,
     String,
     Numeric,
-    DateTime,
     Date,
+    DateTime,
     Enum,
     Boolean,
     ForeignKey,
@@ -50,7 +49,7 @@ class GarnishmentOrder(Base):
     garnishment_type = Column(Enum(GarnishmentType), default=GarnishmentType.CREDITOR)
     calc_method = Column(Enum(GarnishmentMethod), default=GarnishmentMethod.FIXED)
     amount = Column(
-        Numeric(15, 2), default=Decimal("0")
+        Numeric(15, 2), default=0
     )  # dollars (fixed) or percent (percent_disposable)
 
     priority = Column(Integer, default=0)
@@ -89,7 +88,7 @@ class GarnishmentRemittance(Base):
     )
     pay_run_id = Column(Integer, ForeignKey("pay_runs.id"), nullable=False, index=True)
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
-    amount = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
+    amount = Column(Numeric(15, 2), nullable=False, default=0)
     withheld_date = Column(Date, nullable=False)
 
     remitted_at = Column(DateTime(timezone=True), nullable=True)

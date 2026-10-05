@@ -80,7 +80,7 @@ class CostTypeResponse(BaseModel):
 class EquipmentCreate(StrictModel):
     name: str
     code: Optional[str] = None
-    hourly_rate: Money = Decimal("0")
+    hourly_rate: Decimal = Decimal("0")
     cost_code_id: Optional[int] = None
     recovery_account_id: Optional[int] = None
     notes: Optional[str] = None
@@ -121,7 +121,7 @@ class JobCostLineCreate(StrictModel):
     cost_type: Optional[str] = None
     description: Optional[str] = None
     quantity: Decimal = Decimal("1")
-    rate: Money = Decimal("0")
+    rate: Decimal = Decimal("0")
     amount: Optional[Money] = None  # defaults to quantity × rate
     debit_account_id: Optional[int] = None
     credit_account_id: Optional[int] = None

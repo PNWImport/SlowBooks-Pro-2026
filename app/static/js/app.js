@@ -64,6 +64,27 @@ const App = {
         '/hr/benefits':     { page: 'hr-benefits',     label: 'Benefits',          render: () => BenefitsPage.render() },
         '/hr/deductions':   { page: 'hr-deductions',   label: 'Garnishments',      render: () => DeductionsPage.render() },
         '/hr/tax-forms':    { page: 'hr-tax-forms',    label: 'Tax Forms',         render: () => TaxFormsPage.render() },
+        // Compliance: the document hash chain, its checkpoints, and off-box
+        // artifact verification (docs/hipaa-compliance.md § 164.312(c)(1)).
+        '/compliance':    { page: 'compliance',      label: 'Compliance',         render: () => CompliancePage.render() },
+        // Benefits: plans, enrollment, dependents, COBRA, ACA 1095/1094.
+        '/hr/benefit-coverage':   { page: 'hr-benefit-coverage', label: 'Benefit Coverage', render: () => BenefitCoveragePage.render() },
+        // Contractor pay runs: batch contractor payments, JE, NACHA export.
+        '/payroll/contractors': { page: 'payroll-contractors', label: 'Contractor Runs', render: () => ContractorRunsPage.render() },
+        // Garnishment remittance register: withheld money owed to agencies.
+        '/payroll/remittances': { page: 'payroll-remittances', label: 'Garnishment Remittances', render: () => GarnishmentRemittancesPage.render() },
+        // Pay schedules: frequency + anchor + preview upcoming dates.
+        '/payroll/schedules': { page: 'payroll-schedules', label: 'Pay Schedules', render: () => PaySchedulesPage.render() },
+        // Work locations: multi-site jurisdiction management.
+        '/payroll/locations': { page: 'payroll-locations', label: 'Work Locations', render: () => LocationsPage.render() },
+        // HR team views: org chart, PTO calendar, performance reviews.
+        '/hr/team': { page: 'hr-team', label: 'HR Team', render: () => HRViewsPage.render() },
+        // Tax deposit calendar: depositor classification + due dates.
+        '/payroll/deposit-calendar': { page: 'payroll-deposit-calendar', label: 'Deposit Calendar', render: () => DepositCalendarPage.render() },
+        // Workers' comp: class rates + premium-audit report.
+        '/payroll/workers-comp': { page: 'payroll-workers-comp', label: 'Workers Comp', render: () => WorkersCompPage.render() },
+        // Payroll report library: journal, deduction register, contractor payments.
+        '/payroll/reports': { page: 'payroll-reports', label: 'Payroll Reports', render: () => PayrollReportsPage.render() },
         '/reseller-permits':{ page: 'reseller-permits',label: 'Reseller Permits', render: () => ResellerPermitsPage.render() },
         // Phase 9: Analytics (real-time business intelligence)
         '/analytics':     { page: 'analytics',       label: 'Analytics & AI',     render: () => AnalyticsPage.render() },
@@ -1020,7 +1041,13 @@ const App = {
     // Sidebar entries the server serves to admins only (app.main RBAC).
     // Migrate Data too: its dry run and its import are refused to every
     // other role, so a bookkeeper had a page on which nothing worked.
-    ADMIN_ONLY_PAGES: ['employees', 'payroll', 'hr-onboarding', 'hr-benefits', 'hr-deductions', 'hr-tax-forms', 'users', 'migrate'],
+    ADMIN_ONLY_PAGES: [
+        'employees', 'payroll', 'hr-onboarding', 'hr-benefits', 'hr-deductions',
+        'hr-tax-forms', 'users', 'migrate', 'hr-benefit-coverage', 'payroll-contractors',
+        'payroll-remittances', 'payroll-schedules', 'payroll-locations', 'hr-team',
+        'payroll-deposit-calendar', 'payroll-workers-comp', 'payroll-reports',
+        'compliance',
+    ],
     // Pages the server refuses a read-only sign-in, reads included.
     NOT_FOR_READONLY_PAGES: ['audit'],
 
@@ -1089,7 +1116,7 @@ const App = {
             }
         });
 
-        // Start clock — ticks once a second
+        // Start clock — refresh once a minute
         App.updateClock();
         setInterval(App.updateClock, 60000);
 

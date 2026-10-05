@@ -122,7 +122,7 @@ def test_upgrade_flags_bank_accounts_links_feeds_and_remaps_statement_lines(tmp_
     }
     assert (
         con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        == "c7d1e4a92b30"
+        == "m3heads2026105"
     )
     con.close()
 

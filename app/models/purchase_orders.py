@@ -3,7 +3,6 @@
 # Feature 6: Structurally similar to Estimates but vendor-facing
 # ============================================================================
 
-from decimal import Decimal
 import enum
 
 from sqlalchemy import (
@@ -43,10 +42,10 @@ class PurchaseOrder(Base):
     expected_date = Column(Date, nullable=True)
     ship_to = Column(Text, nullable=True)
 
-    subtotal = Column(Numeric(15, 2), default=Decimal("0"))
-    tax_rate = Column(Numeric(5, 4), default=Decimal("0"))
-    tax_amount = Column(Numeric(15, 2), default=Decimal("0"))
-    total = Column(Numeric(15, 2), default=Decimal("0"))
+    subtotal = Column(Numeric(15, 2), default=0)
+    tax_rate = Column(Numeric(7, 6), default=0)  # a fraction: 8.875% is 0.08875
+    tax_amount = Column(Numeric(15, 2), default=0)
+    total = Column(Numeric(15, 2), default=0)
 
     notes = Column(Text, nullable=True)
     # Job-costing dimension (QB "Customer:Job"); NULL = no job
@@ -76,10 +75,10 @@ class PurchaseOrderLine(Base):
     )
     item_id = Column(Integer, ForeignKey("items.id"), nullable=True)
     description = Column(Text, nullable=True)
-    quantity = Column(Numeric(10, 2), default=Decimal("1"))
-    rate = Column(Numeric(15, 2), default=Decimal("0"))
-    amount = Column(Numeric(15, 2), default=Decimal("0"))
-    received_qty = Column(Numeric(10, 2), default=Decimal("0"))
+    quantity = Column(Numeric(10, 2), default=1)
+    rate = Column(Numeric(17, 4), default=0)  # unit price, to 4 places
+    amount = Column(Numeric(15, 2), default=0)
+    received_qty = Column(Numeric(10, 2), default=0)
     # Per-line job; NULL falls back to the document header
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
     cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)

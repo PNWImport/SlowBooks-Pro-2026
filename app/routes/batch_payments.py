@@ -129,6 +129,17 @@ def create_batch_payment(data: BatchPaymentCreate, db: Session = Depends(get_db)
                         f"customer {customer.name}."
                     ),
                 )
+            inv_currency = document_currency(invoice, db)
+            if inv_currency != home:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Invoice {invoice.invoice_number} is in {inv_currency}, "
+                        f"and a batch payment is in {home}, so the batch can't "
+                        "pay it. Take it out of the batch and record its payment "
+                        f"on its own, in {inv_currency}."
+                    ),
+                )
             if Decimal(str(alloc.amount)) > invoice.balance_due:
                 raise HTTPException(
                     status_code=400,

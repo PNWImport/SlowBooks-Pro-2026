@@ -56,7 +56,7 @@ def list_pay_runs(skip: int = 0, limit: int = 200, db: Session = Depends(get_db)
             selectinload(PayRun.stubs).joinedload(PayStub.employee),
             selectinload(PayRun.stubs).selectinload(PayStub.benefits),
         )
-        .order_by(PayRun.pay_date.desc())
+        .order_by(PayRun.pay_date.desc(), PayRun.id.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -290,6 +290,36 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             gross = _q(gross + tips_total)
 
         reimbursements = _q(Decimal(str(stub_input.reimbursements or 0)))
+
+        name = emp.full_name
+        if gross == 0 and reimbursements == 0:
+            if stub_input.use_time_entries and emp.pay_type.value != "salary":
+                if waiting[0]:
+                    refused.append(
+                        f"{name} has no approved time from {period}: "
+                        f"{_entries(waiting[0])} ({waiting[1]} hours) "
+                        "waiting for approval under Time Entries. Approve them, "
+                        f"or leave {name} out of this run."
+                    )
+                else:
+                    refused.append(
+                        f"{name} has no approved time from {period}. Log and "
+                        f"approve it under Time Entries, or leave {name} out "
+                        "of this run."
+                    )
+            else:
+                refused.append(
+                    f"{name} would be paid $0.00. Enter hours or an amount, "
+                    f"or leave {name} out of this run."
+                )
+            continue
+        if waiting[0]:
+            warnings.append(
+                f"{name}: {_entries(waiting[0])} ({waiting[1]} hours) from "
+                f"{period} {'is' if waiting[0] == 1 else 'are'} not approved "
+                "and not paid in this run. Approve them under Time Entries to "
+                "pay them in a later run."
+            )
 
         # Jurisdiction resolution, most specific first: per-stub override,
         # explicit employee columns, the employee's assigned work location,

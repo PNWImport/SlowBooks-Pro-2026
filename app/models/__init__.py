@@ -7,11 +7,11 @@ from app.models.estimates import Estimate, EstimateLine
 from app.models.payments import Payment, PaymentAllocation
 from app.models.banking import BankAccount, BankTransaction, Reconciliation
 from app.models.settings import Settings
-from app.models.classes import TxnClass  # noqa: F401
-from app.models.jobs import Job  # noqa: F401
-from app.models.preferences import UserPreference  # noqa: F401
-from app.models.cost_codes import CostCode  # noqa: F401
-from app.models.job_costing import (  # noqa: F401
+from app.models.classes import TxnClass  # noqa: F401 — registers the table
+from app.models.jobs import Job  # noqa: F401 — registers the table
+from app.models.preferences import UserPreference  # noqa: F401 — registers the table
+from app.models.cost_codes import CostCode  # noqa: F401 — registers the table
+from app.models.job_costing import (  # noqa: F401 — registers the tables
     CostType,
     Equipment,
     JobBudget,
@@ -20,7 +20,7 @@ from app.models.job_costing import (  # noqa: F401
 )
 from app.models.fixed_assets import FixedAsset, FixedAssetType  # noqa: F401
 from app.models.in_kind import InKindGift, InKindGiftLine  # noqa: F401
-from app.models.nonprofit import (  # noqa: F401
+from app.models.nonprofit import (  # noqa: F401 — registers the tables
     AllocationRule,
     AllocationRuleTarget,
     FunctionalAllocation,
@@ -32,8 +32,8 @@ from app.models.nonprofit import (  # noqa: F401
 from app.models.audit import AuditLog
 
 # Server Edition: user principals
-from app.models.users import User  # noqa: F401
-from app.models.api_tokens import ApiToken  # noqa: F401
+from app.models.users import User  # noqa: F401 — registers the table
+from app.models.api_tokens import ApiToken  # noqa: F401 — registers the table
 
 # Phase 2: Accounts Payable
 from app.models.purchase_orders import PurchaseOrder, PurchaseOrderLine
@@ -41,8 +41,8 @@ from app.models.bills import Bill, BillLine, BillPayment, BillPaymentAllocation
 from app.models.credit_memos import CreditMemo, CreditMemoLine, CreditApplication
 from app.models.vendor_credits import (
     VendorCredit,
-    VendorCreditApplication,
     VendorCreditLine,
+    VendorCreditApplication,
 )
 
 # Phase 3: Productivity
@@ -68,7 +68,7 @@ from app.models.time_entries import TimeEntry
 from app.models.pto import PTOPolicy, PTOAccrual, PTORequest
 from app.models.bank_accounts import EmployeeBankAccount
 
-# Tier 2: deductions and garnishments — main's benefits engine
+# Tier 2: deductions and garnishments
 from app.models.deductions import GarnishmentOrder
 from app.models.benefits import (
     BenefitCode,
@@ -113,8 +113,6 @@ from app.models.contractor_payments import (  # noqa: F401
     ContractorPayment,
     VendorBankAccount,
 )
-
-from app.models.ocr_templates import OcrTemplate  # noqa: F401
 
 __all__ = [
     "Account",
@@ -167,7 +165,7 @@ __all__ = [
     "PTOAccrual",
     "PTORequest",
     "EmployeeBankAccount",
-    # Tier 2: benefits engine + garnishments
+    # Tier 2: deductions and garnishments
     "BenefitCode",
     "BenefitRate",
     "EmployeeGroup",
@@ -198,3 +196,4 @@ __all__ = [
     # Reseller permits — expiry tracking + manual verification trail
     "ResellerPermit",
 ]
+from app.models.ocr_templates import OcrTemplate  # noqa: F401

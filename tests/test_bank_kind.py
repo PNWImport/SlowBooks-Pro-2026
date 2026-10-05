@@ -68,7 +68,7 @@ def test_opening_balance_equity_is_created_once(db_session, seed_accounts):
     assert a == b
     from app.models.accounts import Account
 
-    acct = db_session.get(Account, a)
+    acct = db_session.query(Account).get(a)
     assert (
         acct.account_number == "3900"
         and acct.account_type.value == "equity"

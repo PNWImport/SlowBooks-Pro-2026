@@ -523,7 +523,7 @@ def create_company(
         # both do. A create_all-only database would boot with zero accounts
         # and no alembic version stamp, so future upgrades would not apply
         # cleanly.
-        _init_company_db(base_url + database_name)
+        _init_company_db(base_url + database_name, company_name=name)
 
         # Register in master DB
         company = Company(

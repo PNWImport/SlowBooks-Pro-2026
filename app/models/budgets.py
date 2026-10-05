@@ -3,7 +3,6 @@
 # Phase 10: Quick Wins + Medium Effort Features
 # ============================================================================
 
-from decimal import Decimal
 from sqlalchemy import (
     Column,
     Integer,
@@ -24,7 +23,7 @@ class Budget(Base):
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
     year = Column(Integer, nullable=False)
     month = Column(Integer, nullable=False)
-    amount = Column(Numeric(15, 2), default=Decimal("0"))
+    amount = Column(Numeric(15, 2), default=0)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(

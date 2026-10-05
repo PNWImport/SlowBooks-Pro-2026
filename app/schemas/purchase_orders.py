@@ -4,7 +4,6 @@ from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator
 
 from app.schemas.common import (
-    Money,
     StrictModel,
     TaxRateFloat,
     TaxRateOut,
@@ -18,7 +17,7 @@ class POLineCreate(StrictModel):
     item_id: Optional[int] = None
     description: Optional[str] = None
     quantity: float = 1
-    rate: Money = Decimal("0")
+    rate: float = 0
     job_id: Optional[int] = None
     cost_code_id: Optional[int] = None
     line_order: int = 0

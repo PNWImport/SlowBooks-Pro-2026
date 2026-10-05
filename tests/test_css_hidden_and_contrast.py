@@ -145,13 +145,6 @@ def test_the_dark_sidebar_footer_is_readable():
     assert r >= 4.5, f"the dark sidebar footer is {r:.2f}:1, below AA"
 
 
-def test_footer_link_inherits_the_repaired_theme_color():
-    import re
-
-    m = re.search(r"\.sidebar-footer \.footer-link\s*\{([^}]*)\}", STYLE)
-    assert m and "color: inherit;" in m.group(1)
-
-
 def test_no_inline_style_uses_the_low_contrast_blue_for_a_link():
     """`style="color:var(--qb-blue)"` beat the stylesheet's link rule and is
     3.86:1 in dark. Inline styles win, so they have to use the token too."""

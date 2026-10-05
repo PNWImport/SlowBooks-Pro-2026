@@ -3,7 +3,6 @@
 # Tier 1.4: includes WA's paid-sick-leave mandate (1 hr per 40 hrs worked).
 # ============================================================================
 
-from decimal import Decimal
 import enum
 
 from sqlalchemy import (
@@ -54,7 +53,7 @@ class PTOPolicy(Base):
     #  PER_HOUR_WORKED -> hours accrued per hour worked (WA sick = 1/40 = 0.025)
     #  PER_PAY_PERIOD  -> hours accrued each pay period
     #  ANNUAL_GRANT    -> hours granted per year
-    accrual_rate = Column(Numeric(10, 4), default=Decimal("0"))
+    accrual_rate = Column(Numeric(10, 4), default=0)
 
     # Carryover cap. 0 / NULL means unlimited. WA paid sick caps carryover at 40.
     max_carryover = Column(Numeric(10, 2), nullable=True)
@@ -91,11 +90,11 @@ class PTOAccrual(Base):
     )
     policy_id = Column(Integer, ForeignKey("pto_policies.id"), nullable=False)
 
-    balance = Column(Numeric(10, 2), default=Decimal("0"))
-    accrued_ytd = Column(Numeric(10, 2), default=Decimal("0"))
-    used_ytd = Column(Numeric(10, 2), default=Decimal("0"))
+    balance = Column(Numeric(10, 2), default=0)
+    accrued_ytd = Column(Numeric(10, 2), default=0)
+    used_ytd = Column(Numeric(10, 2), default=0)
     # Dollar value of `balance` under the policy's valuation
-    dollar_balance = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
+    dollar_balance = Column(Numeric(15, 2), nullable=False, default=0)
 
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -114,7 +113,7 @@ class PTORequest(Base):
     )
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=False)
-    hours = Column(Numeric(10, 2), default=Decimal("0"))
+    hours = Column(Numeric(10, 2), default=0)
     pto_type = Column(Enum(PTOType), default=PTOType.VACATION)
 
     status = Column(Enum(PTORequestStatus), default=PTORequestStatus.PENDING)

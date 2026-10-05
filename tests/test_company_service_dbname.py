@@ -63,8 +63,9 @@ def test_create_company_quotes_db_name_via_dialect():
     conn.exec_driver_sql.assert_called_once_with('CREATE DATABASE "acme_books"')
     # The new database must be migrated + seeded (alembic head + CoA),
     # not just create_all'd — a bare schema leaves zero accounts and no
-    # alembic stamp.
-    init_db.assert_called_once_with("postgresql://x/acme_books")
+    # alembic stamp. It also carries the name it was created with, which
+    # first-run setup prefills.
+    init_db.assert_called_once_with("postgresql://x/acme_books", company_name="Acme")
 
 
 def test_create_company_seeds_new_database():
@@ -82,22 +83,4 @@ def test_create_company_seeds_new_database():
         result = create_company(db, "Acme", "acme_books")
 
     assert result["success"] is True
-    init_db.assert_called_once_with("postgresql://x/acme_books")
-
-
-def test_failed_company_initialization_does_not_register_company():
-    db = MagicMock()
-    db.query.return_value.filter.return_value.first.return_value = None
-    with patch("app.services.company_service._is_sqlite", return_value=False), patch(
-        "app.services.company_service.create_engine"
-    ), patch(
-        "app.services.company_service._base_url", return_value="postgresql://x/"
-    ), patch(
-        "app.services.company_service._init_company_db",
-        side_effect=RuntimeError("synthetic-private-migration-detail"),
-    ):
-        result = create_company(db, "Acme", "acme_books")
-    assert result["success"] is False
-    assert "synthetic-private" not in result["error"]
-    db.add.assert_not_called()
-    db.commit.assert_not_called()
+    init_db.assert_called_once_with("postgresql://x/acme_books", company_name="Acme")

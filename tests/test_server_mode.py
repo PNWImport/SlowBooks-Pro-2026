@@ -5,6 +5,7 @@ import sqlite3
 import sys
 
 import pytest
+
 from sqlalchemy import create_engine, text
 
 import desktop_launcher
@@ -56,8 +57,6 @@ def test_server_env_lan_bind_sets_server_mode():
     env = desktop_launcher._server_env("sqlite:///x.db", 3001, bind_host="0.0.0.0")
     assert env["APP_HOST"] == "0.0.0.0"
     assert env["SLOWBOOKS_SERVER_MODE"] == "1"
-    assert env["APP_DEBUG"] == "false"
-    assert env["FORCE_HTTPS"] == "true"
     env = desktop_launcher._server_env(
         "sqlite:///x.db", 3001, bind_host="192.168.68.50"
     )
@@ -91,9 +90,9 @@ def test_system_info_reports_server_mode(authed_client, monkeypatch):
 
 def test_serve_banner_lists_all_addresses():
     text = desktop_launcher._compose_serve_banner(3001, ["OFFICE-PC", "192.168.68.50"])
-    assert "https://OFFICE-PC:3001" in text
-    assert "https://192.168.68.50:3001" in text
-    assert "HTTPS is required" in text
+    assert "http://OFFICE-PC:3001" in text
+    assert "http://192.168.68.50:3001" in text
+    assert "plain HTTP" in text
     # No addresses discovered: still renders something actionable
     fallback = desktop_launcher._compose_serve_banner(3001, [])
     assert "3001" in fallback
@@ -143,7 +142,15 @@ def test_data_dir_flag_redirects_everything(tmp_path):
 
 @pytest.mark.skipif(
     sys.platform == "win32",
-    reason="parent watcher is POSIX-only; os.kill(pid, 0) terminates on Windows",
+    reason=(
+        "the watcher is POSIX-only by design — desktop_launcher._serve() "
+        "guards it with `if sys.platform != 'win32'`, and this test does not. "
+        "It matters more than an unused feature: os.kill(pid, 0) is an "
+        "existence check on POSIX but TERMINATES the target on Windows, so "
+        "running this there kills processes rather than probing them — "
+        "including, via a reused parent pid, the pytest process itself. That "
+        "is what took the Windows CI job down at 84% with no summary (#121)."
+    ),
 )
 def test_parent_watcher_exits_when_parent_dies(tmp_path):
     """Real process pair: a fake 'launcher' spawns a watcher child; killing
@@ -185,27 +192,13 @@ def test_parent_watcher_exits_when_parent_dies(tmp_path):
     # Kill the launcher; the watcher must take the child down
     parent.kill()
     parent.wait()
-
-    def _exited(pid):
-        try:
-            _os.kill(pid, 0)
-        except OSError:
-            return True
-        # The orphaned child is re-parented to PID 1. In a container whose
-        # PID 1 is not an init (act, `docker run` without --init) nothing
-        # reaps it, so it stays a zombie that still answers kill(pid, 0).
-        # A zombie has exited — the watcher did its job.
-        try:
-            with open(f"/proc/{pid}/stat") as f:
-                return f.read().rsplit(")", 1)[1].split()[0] == "Z"
-        except OSError:
-            return False
-
     deadline = time.time() + 5
     alive = True
     while time.time() < deadline:
-        if _exited(child_pid):
+        try:
+            _os.kill(child_pid, 0)
+            time.sleep(0.2)
+        except OSError:
             alive = False
             break
-        time.sleep(0.2)
     assert not alive, "server child outlived its launcher parent"

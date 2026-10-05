@@ -6,7 +6,6 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db

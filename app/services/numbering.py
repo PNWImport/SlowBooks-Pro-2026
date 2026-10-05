@@ -143,6 +143,10 @@ def next_credit_memo_number(db: Session) -> str:
 
 
 def next_vendor_credit_number(db: Session) -> str:
+    """VC-0001. Its own series, not shared with credit memos — a vendor
+    credit and a customer credit memo are different documents and an
+    operator reading "CM-0007" on a supplier's paperwork would be right to
+    doubt it."""
     return next_document_number(
         db, VendorCredit.credit_number, prefix="VC-", first=1, pad=4
     )

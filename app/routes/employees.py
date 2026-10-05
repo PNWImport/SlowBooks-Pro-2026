@@ -18,8 +18,6 @@ from fastapi import (
     File,
     Form,
 )
-from fastapi.responses import FileResponse
-
 from app.schemas.common import StrictModel
 from sqlalchemy.orm import Session
 

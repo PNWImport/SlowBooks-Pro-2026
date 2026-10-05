@@ -8,7 +8,6 @@
 # in ITEM.DAT fields 0x14-0x18; we split them into a proper ledger table.
 # ============================================================================
 
-from decimal import Decimal
 import enum
 
 from sqlalchemy import (
@@ -53,9 +52,9 @@ class Item(Base):
     name = Column(String(200), nullable=False)
     item_type = Column(Enum(ItemType), nullable=False)
     description = Column(Text, nullable=True)
-    rate = Column(Numeric(15, 2), default=Decimal("0"))
+    rate = Column(Numeric(17, 4), default=0)  # unit price, to 4 places
     cost = Column(
-        Numeric(15, 2), default=Decimal("0")
+        Numeric(17, 4), default=0
     )  # standard/last cost; weighted avg lives in `avg_cost`
     income_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     expense_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
@@ -66,10 +65,10 @@ class Item(Base):
     # Only items with track_inventory=True hit the inventory ledger; the rest
     # (services, labor, non-inventory materials) bypass it entirely.
     track_inventory = Column(Boolean, default=False, nullable=False)
-    quantity_on_hand = Column(Numeric(14, 4), default=Decimal("0"), nullable=False)
-    reorder_point = Column(Numeric(14, 4), default=Decimal("0"), nullable=False)
+    quantity_on_hand = Column(Numeric(14, 4), default=0, nullable=False)
+    reorder_point = Column(Numeric(14, 4), default=0, nullable=False)
     avg_cost = Column(
-        Numeric(14, 4), default=Decimal("0"), nullable=False
+        Numeric(14, 4), default=0, nullable=False
     )  # weighted average unit cost
     asset_account_id = Column(
         Integer, ForeignKey("accounts.id"), nullable=True

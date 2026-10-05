@@ -94,6 +94,8 @@ def _get_instance_dict(instance):
     result = {}
     for col in mapper.columns:
         key = col.key
+        if _is_file_content(col):
+            continue
         if _redact_column(instance, col):
             result[key] = "***"
             continue
@@ -168,6 +170,8 @@ def _after_flush(session, flush_context):
         new_vals = {}
         changed = []
         for col in insp.mapper.columns:
+            if _is_file_content(col):
+                continue
             attr = insp.attrs[col.key]
             hist = attr.history
             if hist.has_changes():

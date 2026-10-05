@@ -1396,6 +1396,7 @@ const SettingsPage = {
         const needsEndpoint = !!currentSpec.needs_endpoint_url;
         const hasKey = !!cfg.has_api_key;
         const currentModel = cfg.model || '';
+        const displayedModel = currentModel || currentSpec.default_model || '';
 
         const providerOptions = providers.map(p =>
             `<option value="${escapeHtml(p.key)}"${p.key === currentProvider ? ' selected' : ''}>` +
@@ -1418,12 +1419,14 @@ const SettingsPage = {
             <label class="form-field">
                 <span>Model</span>
                 <select id="ai-settings-model-select" data-admin>
-                    ${SettingsPage._modelOptionsHtml(currentSpec, currentModel)}
+                    ${SettingsPage._modelOptionsHtml(currentSpec, displayedModel)}
                 </select>
                 <input type="text" id="ai-settings-model-custom" data-admin
-                       value="${escapeHtml(currentModel || '')}"
+                       value="${escapeHtml(SettingsPage._isCustomModel(currentSpec, displayedModel) ? displayedModel : '')}"
+                       maxlength="255"
                        placeholder="Type a model ID"
-                       style="margin-top:6px; ${SettingsPage._isCustomModel(currentSpec, currentModel) ? '' : 'display:none;'}">
+                       style="margin-top:6px; ${SettingsPage._isCustomModel(currentSpec, displayedModel) ? '' : 'display:none;'}">
+                <small>Choose a tested default or select Custom… to enter a current model ID.</small>
             </label>
             <label class="form-field" id="ai-settings-cf-wrap" style="${needsAccount ? '' : 'display:none'}">
                 <span>Cloudflare Account ID</span>
@@ -1495,11 +1498,11 @@ const SettingsPage = {
         `;
     },
 
-    // True when the saved model isn't in the curated list — the dropdown
-    // should show "Custom…" pre-selected and reveal the text input.
+    // True when the model isn't in the curated list. Providers without a
+    // bundled default (the generic adapter) must also start in Custom mode.
     _isCustomModel(spec, model) {
-        if (!model) return false;
         const choices = (spec && spec.model_choices) || [];
+        if (!model) return choices.length === 0 && !(spec && spec.default_model);
         return choices.indexOf(model) === -1;
     },
 
@@ -1537,6 +1540,7 @@ const SettingsPage = {
                 modelSel.value === '__custom__' ? '' : 'none';
         };
         modelSel.addEventListener('change', syncCustomVisibility);
+        syncCustomVisibility();
 
         providerSel.addEventListener('change', () => {
             const spec = providers.find(p => p.key === providerSel.value) || {};

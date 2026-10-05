@@ -4,11 +4,12 @@ from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator
 
 from app.schemas.common import (
-    Money,
     StrictModel,
     TaxRateFloat,
+    TaxRateOut,
     validate_non_negative_line,
 )
+from app.schemas.invoices import RateOut
 
 
 class VendorCreditLineCreate(StrictModel):
@@ -16,7 +17,7 @@ class VendorCreditLineCreate(StrictModel):
     account_id: Optional[int] = None
     description: Optional[str] = None
     quantity: float = 1
-    rate: Money = Decimal("0")
+    rate: float = 0
     job_id: Optional[int] = None
     class_id: Optional[int] = None
     cost_code_id: Optional[int] = None
@@ -36,7 +37,7 @@ class VendorCreditLineResponse(BaseModel):
     account_id: Optional[int] = None
     description: Optional[str] = None
     quantity: Decimal = Decimal("0")
-    rate: Decimal = Decimal("0")
+    rate: RateOut = Decimal("0")
     amount: Decimal = Decimal("0")
     job_id: Optional[int] = None
     class_id: Optional[int] = None
@@ -47,7 +48,7 @@ class VendorCreditLineResponse(BaseModel):
 
 class VendorCreditApplicationCreate(StrictModel):
     bill_id: int
-    amount: Money
+    amount: float
 
 
 class VendorCreditCreate(StrictModel):
@@ -79,7 +80,7 @@ class VendorCreditResponse(BaseModel):
     ref_number: Optional[str] = None
     date: dt_date
     subtotal: Decimal = Decimal("0")
-    tax_rate: Decimal = Decimal("0")
+    tax_rate: TaxRateOut = Decimal("0")
     tax_amount: Decimal = Decimal("0")
     total: Decimal = Decimal("0")
     amount_applied: Decimal = Decimal("0")

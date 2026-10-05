@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, field_validator
-from app.schemas.common import Money, StrictModel
+from app.schemas.common import StrictModel
 
 from app.models.banking import ReconciliationStatus
 
@@ -12,14 +12,17 @@ class BankAccountCreate(StrictModel):
     """A bank feed / statement identity for a ledger account that has
     bank_kind set. An opening balance posts a journal entry against 3900
     Opening Balance Equity; it is what the statement says (cash in the
-    bank, or the amount owed on a card)."""
+    bank, or the amount owed on a card). When the ledger already carries
+    the account on the opening date, only a difference can post, and only
+    with `post_difference` set (the user confirmed it)."""
 
     name: str
     account_id: int
     bank_name: Optional[str] = None
     last_four: Optional[str] = None
-    opening_balance: Money = Decimal("0")
+    opening_balance: Decimal = Decimal("0")
     opening_date: Optional[dt_date] = None
+    post_difference: bool = False
 
 
 class BankAccountUpdate(StrictModel):
@@ -69,7 +72,7 @@ class BankTransactionCreate(StrictModel):
     account_id: Optional[int] = None
     bank_account_id: Optional[int] = None
     date: dt_date
-    amount: Money
+    amount: Decimal
     category_account_id: int
     payee: Optional[str] = None
     description: Optional[str] = None
@@ -126,6 +129,14 @@ class StatementAdd(StrictModel):
     job_id: Optional[int] = None
 
 
+class StatementCategory(StrictModel):
+    """The category picked for a statement line in the review list (null
+    clears it). Kept on the line, so Add all posts it and a reload shows
+    it."""
+
+    category_account_id: Optional[int] = None
+
+
 class ReconciliationCreate(StrictModel):
     """`account_id` is the ledger account; `bank_account_id` (a feed) is
     accepted for older callers."""
@@ -133,7 +144,7 @@ class ReconciliationCreate(StrictModel):
     account_id: Optional[int] = None
     bank_account_id: Optional[int] = None
     statement_date: dt_date
-    statement_balance: Money
+    statement_balance: Decimal
 
 
 class ReconciliationResponse(BaseModel):

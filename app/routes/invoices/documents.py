@@ -109,12 +109,10 @@ def email_invoice(
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     company = get_settings(db)
-    from app.services.donor_documents import document_label
-    from app.services.terminology import terms_for
+    from app.services.email_service import invoice_email_label
 
     subject = (
-        data.subject
-        or f"{document_label(inv, terms_for(company))} #{inv.invoice_number}"
+        data.subject or f"{invoice_email_label(inv, company)} #{inv.invoice_number}"
     )
     try:
         from app.services.email_service import send_email, render_invoice_email_parts

@@ -34,32 +34,14 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 revision: str = "f8a9b0c1d2e3"
 down_revision: Union[str, None] = "e7f8a9b0c1d2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-_ENUMS = {
-    "vendorcreditstatus": ("DRAFT", "ISSUED", "APPLIED", "VOID"),
-}
-
-
-def _enum_col(name: str, is_pg: bool):
-    if is_pg:
-        return postgresql.ENUM(*_ENUMS[name], name=name, create_type=False)
-    return sa.Enum(*_ENUMS[name], name=name)
-
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    is_pg = bind.dialect.name == "postgresql"
-    if is_pg:
-        postgresql.ENUM(
-            *_ENUMS["vendorcreditstatus"], name="vendorcreditstatus"
-        ).create(bind, checkfirst=True)
-
     op.create_table(
         "vendor_credits",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -67,7 +49,13 @@ def upgrade() -> None:
         sa.Column("vendor_id", sa.Integer(), nullable=False),
         sa.Column(
             "status",
-            _enum_col("vendorcreditstatus", is_pg),
+            sa.Enum(
+                "DRAFT",
+                "ISSUED",
+                "APPLIED",
+                "VOID",
+                name="vendorcreditstatus",
+            ),
             nullable=True,
         ),
         sa.Column("original_bill_id", sa.Integer(), nullable=True),
@@ -208,4 +196,4 @@ def downgrade() -> None:
     # on SQLite it is a CHECK constraint that went with the table.
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        postgresql.ENUM(name="vendorcreditstatus").drop(bind, checkfirst=True)
+        sa.Enum(name="vendorcreditstatus").drop(bind, checkfirst=True)

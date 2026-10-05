@@ -7,7 +7,6 @@
 # Do not remove.
 # ============================================================================
 
-from decimal import Decimal
 from sqlalchemy import (
     Boolean,
     Column,
@@ -74,8 +73,8 @@ class TransactionLine(Base):
         nullable=False,
         index=True,
     )
-    debit = Column(Numeric(15, 2), default=Decimal("0"), nullable=False)
-    credit = Column(Numeric(15, 2), default=Decimal("0"), nullable=False)
+    debit = Column(Numeric(15, 2), default=0, nullable=False)
+    credit = Column(Numeric(15, 2), default=0, nullable=False)
     description = Column(String(300), nullable=True)  # split memo, 0x18
     # Per-line job / class; NULL falls back to the transaction header
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
@@ -95,6 +94,12 @@ class TransactionLine(Base):
     # carries the reconciliation that closed it (then it can't be voided).
     cleared = Column(Boolean, nullable=False, default=False)
     reconciliation_id = Column(Integer, ForeignKey("reconciliations.id"), nullable=True)
+    # Undeposited Funds: on a payment's money-in line, the deposit (its
+    # journal entry) that took it to the bank; NULL = not deposited yet, or
+    # deposited before deposits kept their list (see routes/deposits.py).
+    deposit_transaction_id = Column(
+        Integer, ForeignKey("transactions.id"), nullable=True, index=True
+    )
 
     transaction = relationship(
         "Transaction", back_populates="lines", foreign_keys=[transaction_id]

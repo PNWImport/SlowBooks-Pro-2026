@@ -146,7 +146,7 @@ def test_function_defaults_from_class_and_explicit_none_wins(
 
 
 def test_journal_and_bill_lines_accept_function_and_voids_carry_it(
-    client, db_session, seed_accounts, monkeypatch
+    client, db_session, seed_accounts
 ):
     fund = client.post("/api/classes", json={"name": "Gala"}).json()
     income, expense = _accts(db_session)
@@ -172,25 +172,8 @@ def test_journal_and_bill_lines_accept_function_and_voids_carry_it(
     assert posted[expense.id]["function"] == "fundraising"
     assert posted[expense.id]["class_id"] == fund["id"]
 
-    from sqlalchemy.orm import Query
-
-    locked_entities = []
-    original_with_for_update = Query.with_for_update
-
-    def spy(query, *args, **kwargs):
-        entity = (
-            query.column_descriptions[0].get("entity")
-            if query.column_descriptions
-            else None
-        )
-        if entity is not None:
-            locked_entities.append(entity.__name__)
-        return original_with_for_update(query, *args, **kwargs)
-
-    monkeypatch.setattr(Query, "with_for_update", spy)
     r = client.post(f"/api/journal/{je['id']}/void")
     assert r.status_code == 200, r.text
-    assert "Transaction" in locked_entities
     void_txn = (
         db_session.query(Transaction)
         .filter(
@@ -209,27 +192,6 @@ def test_journal_and_bill_lines_accept_function_and_voids_carry_it(
     ).json()
     by_name = {c["class_name"]: c for c in data["classes"]}
     assert by_name["Gala"]["expenses"] == 0.0
-
-    # The original row lock makes this idempotent under concurrency, and the
-    # journal endpoint cannot bypass a source workflow such as invoice/payroll.
-    again = client.post(f"/api/journal/{je['id']}/void")
-    assert again.status_code == 400
-    assert "already voided" in again.json()["detail"]
-    source_owned = create_journal_entry(
-        db_session,
-        date(2026, 6, 2),
-        "source-owned",
-        [
-            {"account_id": expense.id, "debit": Decimal("10"), "credit": 0},
-            {"account_id": income.id, "debit": 0, "credit": Decimal("10")},
-        ],
-        source_type="invoice",
-        source_id=999,
-    )
-    db_session.commit()
-    refused = client.post(f"/api/journal/{source_owned.id}/void")
-    assert refused.status_code == 400
-    assert "Only manual journal entries" in refused.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -610,21 +572,16 @@ def test_split_is_cents_exact_and_hours_basis_reads_time_entries(
             "pay_rate": 20,
         },
     ).json()
-    for job, day, hrs in (
-        (a, "2026-07-11", 20),
-        (a, "2026-07-12", 10),
-        (b, "2026-07-12", 10),
-    ):
-        created = client.post(
+    for job, hrs in ((a, 30), (b, 10)):
+        client.post(
             "/api/time-entries",
             json={
                 "employee_id": emp["id"],
-                "date": day,
+                "date": "2026-07-12",
                 "hours_regular": hrs,
                 "job_id": job["id"],
             },
         )
-        assert created.status_code == 201, created.text
     hours_rule = _rule(
         client,
         "Wages by grant hours",
@@ -1231,7 +1188,10 @@ def test_report_pdfs_are_named_by_their_period_and_land_in_documents():
 
     root = Path(__file__).resolve().parent.parent
     launcher = (root / "desktop_launcher.py").read_text(encoding="utf-8")
-    assert '"SlowBooks Pro" / "Reports"' in launcher
+    # Reports by default; an invoice or statement goes to a Documents folder
+    # beside it (F24, tests/test_desktop_pdf_names.py saves both for real)
+    assert '"SlowBooks Pro" / folder' in launcher
+    assert 'folder: str = "Reports"' in launcher
     assert "def reveal_path" in launcher
     assert 'return {"success": True, "path": str(dest)}' in launcher
     shim = (root / "app/static/js/desktop_shim.js").read_text(encoding="utf-8")

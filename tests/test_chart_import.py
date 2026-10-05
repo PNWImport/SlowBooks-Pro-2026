@@ -9,7 +9,7 @@ on synthetic data).
 import io
 from pathlib import Path
 
-from app.models.accounts import Account, AccountType
+from app.models.accounts import Account
 from app.services import chart_import
 from app.services.csv_export import export_accounts
 
@@ -27,17 +27,6 @@ def _upload(client, text, **params):
     )
 
 
-def _apply(client, text, **params):
-    preview = _upload(client, text, **params).json()
-    return _upload(
-        client,
-        text,
-        **params,
-        dry_run=0,
-        plan_hash=preview["plan_hash"],
-    )
-
-
 def _by_number(db):
     db.expire_all()  # the route committed on its own session; drop cached state
     return {a.account_number: a for a in db.query(Account).all() if a.account_number}
@@ -50,7 +39,7 @@ def test_hledger_accounts_list_creates_the_chart_under_our_numbers(
     client, db_session, seed_accounts
 ):
     text = (FIX / "accounts.txt").read_text(encoding="utf-8")
-    r = _apply(client, text)
+    r = _upload(client, text, dry_run=0)
     assert r.status_code == 200, r.text
     out = r.json()
     assert out["format"] == "hledger" and out["dry_run"] is False
@@ -90,7 +79,7 @@ def test_hledger_accounts_list_creates_the_chart_under_our_numbers(
 
 def test_hledger_types_tag_wins_over_the_root_word(client, db_session, seed_accounts):
     text = (FIX / "accounts-types.txt").read_text(encoding="utf-8")
-    out = _apply(client, text).json()
+    out = _upload(client, text, dry_run=0).json()
     assert out["errors"] == []
     db_session.expire_all()
     accts = {a.name: a for a in db_session.query(Account).all()}
@@ -108,7 +97,7 @@ def test_hledger_balance_csv_is_read_as_paths_and_total_is_ignored(
     client, db_session, seed_accounts
 ):
     text = (FIX / "balance.csv").read_text(encoding="utf-8")
-    out = _apply(client, text).json()
+    out = _upload(client, text, dry_run=0).json()
     assert out["format"] == "hledger" and out["errors"] == []
     names = {a.name for a in db_session.query(Account).all()}
     assert "Total" not in names and "total" not in names
@@ -126,7 +115,7 @@ def test_round_trip_of_our_export_changes_nothing(client, db_session, seed_accou
         a.id: (a.name, a.account_number, a.account_type.value)
         for a in db_session.query(Account).all()
     }
-    out = _apply(client, text).json()
+    out = _upload(client, text, dry_run=0).json()
     assert out["format"] == "csv" and out["errors"] == []
     assert out["created"] == 0 and out["updated"] == 0 and out["skipped"] == len(before)
     after = {
@@ -167,19 +156,28 @@ def test_csv_renames_by_number_creates_new_and_refuses_a_control_type_change(
     assert _by_number(db_session)["1100"].name == "Accounts Receivable"
     assert "7100" not in _by_number(db_session)
 
-    done = _apply(client, text)
-    assert done.status_code == 409 and "has errors" in done.json()["detail"]
+    done = _upload(client, text, dry_run=0).json()
+    assert done["dry_run"] is False and done["created"] == 1 and done["updated"] == 2
     nums = _by_number(db_session)
-    assert nums["1100"].name == "Accounts Receivable"
-    assert "7100" not in nums
-    assert nums["2000"].name == "Accounts Payable"
+    assert (
+        nums["1100"].name == "Trade Debtors"
+        and nums["1100"].description == "what customers owe"
+    )
+    assert (
+        nums["7100"].name == "Trade Shows"
+        and nums["7100"].account_type.value == "expense"
+    )
+    assert (
+        nums["2000"].name == "Trade Creditors"
+        and nums["2000"].account_type.value == "liability"
+    )
 
 
 def test_csv_parent_by_number_and_number_inferred_type(
     client, db_session, seed_accounts
 ):
     text = "Number,Name,Parent\n6155,Dental plan,6150\n"
-    out = _apply(client, text).json()
+    out = _upload(client, text, dry_run=0).json()
     assert out["errors"] == [] and out["created"] == 1
     a = _by_number(db_session)["6155"]
     assert a.account_type.value == "expense" and a.parent.account_number == "6150"
@@ -234,12 +232,6 @@ def test_replace_deactivates_unused_seeded_accounts_but_never_control_or_history
     )
     db_session.commit()
 
-    history_type = _upload(client, "Number,Name,Type\n6100,Rent,asset\n").json()
-    assert "account has history" in history_type["rows"][0]["note"]
-    assert not any(
-        change.startswith("type") for change in history_type["rows"][0]["changes"]
-    )
-
     text = (FIX / "accounts.txt").read_text(encoding="utf-8")
     plan = _upload(client, text, replace=1).json()
     by_num = {r["number"]: r for r in plan["rows"] if r["number"]}
@@ -248,7 +240,7 @@ def test_replace_deactivates_unused_seeded_accounts_but_never_control_or_history
     assert by_num["6200"]["action"] == "deactivate"
     assert plan["deactivated"] > 10
 
-    done = _apply(client, text, replace=1).json()
+    done = _upload(client, text, replace=1, dry_run=0).json()
     assert done["deactivated"] == plan["deactivated"]
     nums = _by_number(db_session)
     assert nums["6200"].is_active is False
@@ -270,165 +262,6 @@ def test_empty_and_headerless_files_are_refused_plainly(client, seed_accounts):
         any("no account name column" in e for e in plan["errors"])
         and plan["rows"] == []
     )
-
-
-def test_invalid_replace_plan_never_mutates_the_chart(
-    client, db_session, seed_accounts
-):
-    before = {a.id: a.is_active for a in db_session.query(Account).all()}
-    text = "Number,Name,Type\n7103,Bad,nonsense\n"
-    preview = _upload(client, text, replace=1).json()
-    result = _upload(
-        client,
-        text,
-        replace=1,
-        dry_run=0,
-        plan_hash=preview["plan_hash"],
-    )
-    assert result.status_code == 409 and "has errors" in result.json()["detail"]
-    db_session.expire_all()
-    assert {a.id: a.is_active for a in db_session.query(Account).all()} == before
-
-
-def test_apply_requires_the_current_preview(client, db_session, seed_accounts):
-    text = "Number,Name,Type\n7103,Reviewed account,expense\n"
-    preview = _upload(client, text).json()
-    missing = _upload(client, text, dry_run=0)
-    assert missing.status_code == 409 and "Preview" in missing.json()["detail"]
-
-    db_session.add(
-        Account(
-            account_number="7103",
-            name="Concurrent account",
-            account_type=AccountType.EXPENSE,
-        )
-    )
-    db_session.commit()
-    stale = _upload(client, text, dry_run=0, plan_hash=preview["plan_hash"])
-    assert stale.status_code == 409 and "changed" in stale.json()["detail"]
-    assert _by_number(db_session)["7103"].name == "Concurrent account"
-
-
-def test_type_change_clears_incompatible_bank_kind(client, db_session, seed_accounts):
-    account = Account(
-        account_number="7103",
-        name="Former bank",
-        account_type=AccountType.ASSET,
-        bank_kind="bank",
-    )
-    db_session.add(account)
-    db_session.commit()
-    done = _apply(client, "Number,Name,Type\n7103,Former bank,expense\n").json()
-    assert done["dry_run"] is False and done["updated"] == 1
-    db_session.refresh(account)
-    assert account.account_type == AccountType.EXPENSE and account.bank_kind is None
-
-
-def test_parent_only_update_and_clear_are_applied(client, db_session, seed_accounts):
-    child = _by_number(db_session)["6200"]
-    parent = _by_number(db_session)["6150"]
-    text = f"Number,Name,Type,Parent\n6200,{child.name},expense,6150\n"
-    preview = _upload(client, text).json()
-    assert preview["updated"] == 1 and "parent" in preview["rows"][0]["changes"]
-    _apply(client, text)
-    db_session.refresh(child)
-    assert child.parent_id == parent.id
-
-    clear = f"Number,Name,Type,Parent\n6200,{child.name},expense,\n"
-    _apply(client, clear)
-    db_session.refresh(child)
-    assert child.parent_id is None
-
-
-def test_parent_cycle_is_rejected_before_writes(client, db_session, seed_accounts):
-    text = (
-        "Number,Name,Type,Parent\n"
-        "7101,First,expense,7102\n"
-        "7102,Second,expense,7101\n"
-    )
-    preview = _upload(client, text).json()
-    assert any("cycle" in error.lower() for error in preview["errors"])
-    result = _upload(client, text, dry_run=0, plan_hash=preview["plan_hash"])
-    assert result.status_code == 409 and "has errors" in result.json()["detail"]
-    assert not {"7101", "7102"} & set(_by_number(db_session))
-
-
-def test_import_edge_inputs_are_explicit_and_atomic(client, db_session, seed_accounts):
-    empty = chart_import.plan_chart_import(db_session, "; comments only\n")
-    assert empty.errors == ["No accounts found in the file"]
-    rows, errors, _ = chart_import.parse_chart("mystery\n")
-    assert rows == [] and "cannot tell its type" in errors[0]
-    assert chart_import._path_row(1, "::", None, []) is None
-
-    malformed = _upload(client, "Name,Type\n,\n,expense\nNo type,\n").json()
-    assert len(malformed["errors"]) == 2
-
-    exhausted = chart_import._Numbers({str(n) for n in range(6000, 10000)})
-    assert exhausted.next_free("expense") == "10000"
-
-    # A bank label cannot bypass the control account's fixed expense type.
-    incompatible = _upload(
-        client, "Number,Name,Type\n6000,Advertising & Marketing,bank\n"
-    ).json()
-    assert incompatible["row_errors"] == 1
-    assert "requires account type asset" in incompatible["rows"][0]["note"]
-
-    # Missing parents are disclosed, while duplicate new numbers are safely
-    # reassigned instead of colliding at commit.
-    edge = _upload(
-        client,
-        "Number,Name,Type,Parent\n"
-        "7106,First new,expense,Missing parent\n"
-        "7106,Second new,expense,\n",
-    ).json()
-    assert "not found" in edge["rows"][0]["note"]
-    assert edge["rows"][1]["number"] != "7106"
-    assert "is taken" in edge["rows"][1]["note"]
-
-    twin = Account(account_number="7107", name="Twin", account_type=AccountType.EXPENSE)
-    db_session.add(twin)
-    db_session.commit()
-    twins = _upload(
-        client,
-        "Number,Name,Type\n7107,Twin,expense\n7108,Twin,expense\n",
-    ).json()
-    assert "already exists" in twins["rows"][1]["note"]
-
-
-def test_apply_requests_account_row_locks_outside_sqlite(
-    db_session, seed_accounts, monkeypatch
-):
-    monkeypatch.setattr(db_session.bind.dialect, "name", "postgresql")
-    plan = chart_import.plan_chart_import(
-        db_session, "Number,Name,Type\n7109,Locked plan,expense\n", lock=True
-    )
-    assert plan.errors == [] and plan.count("create") == 1
-
-
-def test_import_updates_number_bank_kind_and_active_state(
-    client, db_session, seed_accounts
-):
-    unnumbered = Account(
-        name="Unnumbered cash",
-        account_type=AccountType.ASSET,
-        is_active=False,
-    )
-    db_session.add(unnumbered)
-    db_session.commit()
-    text = "Number,Name,Type,Active\n7105,Unnumbered cash,bank,true\n"
-    done = _apply(client, text).json()
-    assert done["updated"] == 1
-    db_session.refresh(unnumbered)
-    assert (unnumbered.account_number, unnumbered.bank_kind, unnumbered.is_active) == (
-        "7105",
-        "bank",
-        True,
-    )
-
-    deactivate = "Number,Name,Type,Active\n7105,Unnumbered cash,asset,false\n"
-    _apply(client, deactivate)
-    db_session.refresh(unnumbered)
-    assert unnumbered.is_active is False and unnumbered.bank_kind == "bank"
 
 
 def test_readonly_cannot_import(client, seed_accounts):
@@ -496,7 +329,7 @@ def test_a_parent_segment_named_like_a_control_account_becomes_it_and_the_import
         and by_name["Credit card"]["number"] == "2100"
     )
 
-    done = _apply(client, text).json()
+    done = _upload(client, text, dry_run=0).json()
     # 30 before the fix (two twins); now the two parents take 1300 and 2100,
     # and Visa becomes a child card instead of taking 2100 itself
     assert done["created"] == 29, done

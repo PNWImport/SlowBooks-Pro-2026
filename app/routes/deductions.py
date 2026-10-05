@@ -84,7 +84,20 @@ def end_garnishment(order_id: int, db: Session = Depends(get_db)):
         )
     order.is_active = False
     db.commit()
-    return {"status": "deleted", "id": order_id}
+    db.refresh(order)
+    return order
+
+
+@router.delete("/garnishments/{order_id}")
+def remove_garnishment(order_id: int, db: Session = Depends(get_db)):
+    """A garnishment order is ended, not deleted, so its record stays."""
+    raise HTTPException(
+        status_code=405,
+        detail=(
+            "A garnishment order is ended, not deleted, so its record stays: "
+            f"use POST /api/deductions/garnishments/{order_id}/end"
+        ),
+    )
 
 
 # --- Garnishment remittance register ----------------------------------------

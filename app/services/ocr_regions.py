@@ -51,6 +51,9 @@ def _load_image(data: bytes):
         img = Image.open(io.BytesIO(data))
         img.load()
     except Exception as exc:
+        # RegionError is answered verbatim (400); PIL's text names a BytesIO
+        # object, not the problem (issue #111) — keep it in the log.
+        logger.info("stored scan image unreadable: %r", exc)
         raise RegionError("Could not read the stored scan image") from exc
     img = ImageOps.exif_transpose(img)  # phone photos carry rotation in EXIF
     return img

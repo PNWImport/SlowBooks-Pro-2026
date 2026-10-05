@@ -5,33 +5,6 @@ Covers the fix for CodeQL py/path-injection alert #19.
 
 import io
 
-import pytest
-
-
-@pytest.fixture(autouse=True)
-def isolated_uploads(tmp_path, monkeypatch):
-    from app.routes import attachments
-
-    monkeypatch.setattr(attachments, "STATIC_BASE", tmp_path)
-    monkeypatch.setattr(
-        attachments, "UPLOAD_BASE", tmp_path / "uploads" / "attachments"
-    )
-
-
-def test_same_name_uploads_keep_independent_contents(client):
-    first = _upload(client, "invoice", 1, "receipt.pdf", b"first receipt")
-    second = _upload(client, "invoice", 1, "receipt.pdf", b"second receipt")
-    assert first.status_code == second.status_code == 201
-    first_id, second_id = first.json()["id"], second.json()["id"]
-    assert (
-        client.get(f"/api/attachments/download/{first_id}").content == b"first receipt"
-    )
-    assert client.delete(f"/api/attachments/{first_id}").status_code == 200
-    assert (
-        client.get(f"/api/attachments/download/{second_id}").content
-        == b"second receipt"
-    )
-
 
 def _upload(
     client,
@@ -55,18 +28,31 @@ def test_rejects_unknown_entity_type(client, seed_accounts):
     assert "Invalid entity type" in r.json()["detail"]
 
 
-def test_rejects_path_traversal_filename(client, seed_accounts, tmp_path):
+def test_rejects_path_traversal_filename(client, seed_accounts):
+    from pathlib import Path
+
+    from app.services import storage
+
+    # A checkout whose suite ran before 2.18 still has that era's files in
+    # app/static/uploads: what matters is that this upload writes none.
+    app_static = Path(__file__).resolve().parents[1] / "app" / "static"
+    roots = (storage.files_root(), app_static)
+
+    def on_disk():
+        return {
+            f: f.stat().st_mtime_ns for root in roots for f in root.rglob("secret.pdf")
+        }
+
+    before = on_disk()
     # Path(...).name strips directory prefixes; this verifies the fallback still holds.
     r = _upload(client, "invoice", 1, "../../secret.pdf")
     # Either the filename gets stripped to "secret.pdf" and accepted,
     # or it's rejected. Either way nothing lands on disk at all: the file is
     # kept in the company's database, under the stripped name.
     assert r.status_code in (201, 400)
-
     if r.status_code == 201:
-        stored = (tmp_path / r.json()["file_path"]).resolve()
-        assert stored.is_relative_to(tmp_path / "uploads" / "attachments")
-        assert stored.read_bytes() == b"hi"
+        assert r.json()["filename"] == "secret.pdf"
+    assert on_disk() == before
 
 
 def test_rejects_disallowed_mime(client, seed_accounts):

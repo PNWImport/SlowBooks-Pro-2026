@@ -15,8 +15,8 @@ class ItemCreate(StrictModel):
     name: NonBlankName
     item_type: ItemType
     description: Optional[str] = None
-    rate: Money = Decimal("0")
-    cost: Money = Decimal("0")
+    rate: Decimal = Decimal("0")
+    cost: Decimal = Decimal("0")
     income_account_id: Optional[int] = None
     expense_account_id: Optional[int] = None
     is_taxable: bool = True

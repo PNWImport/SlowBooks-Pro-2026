@@ -41,6 +41,7 @@ from sqlalchemy.orm import Session
 from app.models.accounts import Account, AccountType
 from app.models.transactions import TransactionLine
 from app.services import control_accounts
+from app.services.csv_export import strip_formula_guard
 from app.services.safe_errors import DataProblem
 
 # --- vocabulary -------------------------------------------------------------
@@ -338,7 +339,9 @@ def _parse_csv(text: str, errors: list[str]) -> tuple[list[Row], list[str], str]
 
         def cell(key: str) -> str:
             i = idx.get(key)
-            return cells[i].strip() if i is not None and i < len(cells) else ""
+            if i is None or i >= len(cells):
+                return ""
+            return strip_formula_guard(cells[i]).strip()
 
         name = cell("name")
         if not name:

@@ -226,7 +226,8 @@ def rewrap_all(db, dry_run: bool = False) -> dict:
     Iterates every row in every model that stores a Fernet ciphertext:
     EmployeeBankAccount, VendorBankAccount, and the benefits ePHI columns
     (BenefitPlan.{carrier_name, kind}, BenefitEnrollment.{coverage_start,
-    coverage_end}, BenefitDependent.{name, ssn_last_four, dob}).
+    coverage_end}, BenefitDependent.{name, ssn_last_four, dob}), plus the
+    encrypted settings when their key is derived from this secret.
     A field missing from this list survives rotation only until the previous
     key is dropped, so keep it in sync when a new encrypted column lands —
     tests/test_benefits_encryption.py asserts the coverage.

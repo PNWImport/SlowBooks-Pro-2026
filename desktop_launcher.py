@@ -19,8 +19,8 @@ To switch companies: close the window and relaunch — the picker appears
 again. Flags:
   --no-window   start the server and print the URL (no native window)
   --serve-lan   Server Edition mode: serve the LAN, no window (binds
-                0.0.0.0, or --bind IP for one interface). Plain HTTP —
-                trusted networks only for now.
+                0.0.0.0, or --bind IP for one interface). HTTPS only:
+                needs SLOWBOOKS_TLS_CERTFILE / SLOWBOOKS_TLS_KEYFILE.
   --setup-only  prepare .env and data directories, then exit
   --smoke-test  CI self-test: create a company, boot the server, render a
                 PDF, exit 0/1
@@ -427,7 +427,6 @@ def start_server(
             # this the logs are full of "<-[32m" escape-code garbage.
             "--no-use-colors",
         ]
-        cwd = ROOT
         if tls:
             cmd += [
                 "--ssl-certfile",
@@ -436,6 +435,7 @@ def start_server(
                 tls["ssl_keyfile"],
                 "--no-proxy-headers",
             ]
+        cwd = ROOT
     return subprocess.Popen(
         cmd,
         cwd=cwd,
@@ -512,11 +512,14 @@ def launch_company(
     bind_host: str = "127.0.0.1",
     persist: bool = True,
 ) -> subprocess.Popen:
-    """Migrate and serve a company; only windowed launches persist its selection.
+    """Point the app at a company file, migrate it, and start the server.
 
-    Headless servers receive their database URL through start_server's child
-    environment, without changing the desktop .env or last-opened company.
-    """
+    ``persist`` records the choice as the desktop app's state (.env
+    DATABASE_URL + last-opened) — right for the windowed picker, wrong for
+    a headless --serve-lan / --no-window run, which would otherwise repoint
+    the next windowed launch (issue #110). The server itself takes its
+    DATABASE_URL from the environment start_server() builds, so nothing
+    needs the file."""
     from app.services import company_service
 
     # A second launch while the app is already open would lose the fight
@@ -639,11 +642,18 @@ async function refresh() {
   list.querySelectorAll('.company').forEach(function (el) {
     el.onclick = function () { openCompany(el.getAttribute('data-file'), el.querySelector('.name').firstChild.textContent); };
   });
+  // First launch of the window: straight into the last company. The
+  // sign-in screen it lands on offers "Choose a different company", and
+  // Sign out comes back here with auto_open off.
   const last = info.companies.find(function (c) { return c.file === info.last_opened; });
-  if (info.auto_open && last) openCompany(last.file, last.name);
+  if (info.auto_open && last) {
+    openCompany(last.file, last.name);
+  }
 }
 async function openCompany(file, name) {
   setBusy(true);
+  // Name the company: the list greys out while this runs, and a greyed list
+  // with a generic line read as "all companies unavailable" (2.14.0 gate).
   setStatus('Opening ' + (name || 'company') + '… first open can take a minute.');
   const result = await window.pywebview.api.open_company(file);
   if (result && result.success) {
@@ -1082,7 +1092,11 @@ class PickerApi:
     def __init__(self, port: int, log_fh=None):
         self._port = port
         self._server: subprocess.Popen | None = None
-        self._window = None
+        self._window = None  # set by run_window once the window exists
+        # First load of the picker opens the last company straight to
+        # sign-in (owner, 2026-09-13: "when there are companies it loads to
+        # companies now"); a picker reached by choice — sign out, Switch
+        # company — must not, or you could never leave.
         self._auto_open = True
         self._log_fh = log_fh
 
@@ -1294,12 +1308,22 @@ class PickerApi:
             return {"success": False, "error": str(exc)}
 
     def show_picker(self) -> dict:
-        """Stop the open company and return this window to the picker."""
+        """Back to the company picker without closing the app.
+
+        Signing out used to reload the same company's login screen; the
+        only way to another company, or to see who the users are, was to
+        quit and relaunch — and the Companies page said exactly that. The
+        server for the open company is stopped and the picker page is
+        loaded back into this window. The load is scheduled rather than
+        done inside this call, for the same reason open_company hands its
+        URL back instead of navigating: pywebview resolves a JS promise on
+        the page that made the call, and that page is about to be gone.
+        """
         import threading
 
         stop_server(self._server)
         self._server = None
-        self._auto_open = False
+        self._auto_open = False  # the person asked for the picker; show it
         window = self._window
 
         def _load():
@@ -1308,7 +1332,7 @@ class PickerApi:
                 if window is not None:
                     window.load_html(PICKER_HTML)
             except Exception:
-                pass
+                pass  # the picker is a convenience; the app is still running
 
         threading.Thread(target=_load, daemon=True).start()
         return {"success": True}
@@ -1374,13 +1398,24 @@ WINDOWS_INSTALLER = "SlowBooksPro-Setup-x64.exe"
 
 
 def _no_webview2_message() -> str:
-    """Give checkout and frozen users only instructions they can execute."""
+    """What to tell someone whose machine has no WebView2 runtime.
+
+    Issue #149: the portable zip carries no bootstrapper (the installer
+    does), so this is the first thing a user of it sees on a fresh
+    Windows image. The old text ended "python desktop_launcher.py
+    --no-window" — an instruction the installed build cannot follow,
+    because it has no Python and no such file. Sixth appearance of that
+    class. The frozen build is told the two things it CAN do.
+    """
     if FROZEN:
         return (
             "SlowBooks Pro needs the Microsoft Edge WebView2 runtime to show "
-            "its window, and this computer does not have it.\n\n"
-            f"Install it from Microsoft: {WEBVIEW2_URL}\n"
-            f"Or use {WINDOWS_INSTALLER}, which installs the runtime.\n"
+            "its window, and this computer does not have it.\n"
+            "\n"
+            "Two ways to fix that:\n"
+            f"  1. Install the runtime from Microsoft: {WEBVIEW2_URL}\n"
+            f"  2. Or install SlowBooks Pro with its installer, {WINDOWS_INSTALLER}, "
+            "which sets the runtime up for you.\n"
         )
     return (
         "The Microsoft WebView2 runtime is not installed, so the app window "
@@ -1392,22 +1427,31 @@ def _no_webview2_message() -> str:
 
 
 def _ask_yes_no(message: str, title: str = "SlowBooks Pro 2026") -> bool:
+    """A native Yes/No box (Windows only; False anywhere it cannot ask)."""
     if sys.platform != "win32":
         return False
     try:
         import ctypes
 
-        return ctypes.windll.user32.MessageBoxW(0, message, title, 0x4 | 0x30) == 6
+        MB_YESNO, MB_ICONWARNING, IDYES = 0x4, 0x30, 6
+        return (
+            ctypes.windll.user32.MessageBoxW(
+                0, message, title, MB_YESNO | MB_ICONWARNING
+            )
+            == IDYES
+        )
     except Exception:
         return False
 
 
 def _hold_until_dismissed(message: str, title: str = "SlowBooks Pro 2026") -> None:
+    """Block on a native OK box (Windows); elsewhere, wait for Ctrl+C."""
     if sys.platform == "win32":
         try:
             import ctypes
 
-            ctypes.windll.user32.MessageBoxW(0, message, title, 0x40)
+            MB_ICONINFORMATION = 0x40
+            ctypes.windll.user32.MessageBoxW(0, message, title, MB_ICONINFORMATION)
             return
         except Exception:
             pass
@@ -1419,6 +1463,12 @@ def _hold_until_dismissed(message: str, title: str = "SlowBooks Pro 2026") -> No
 
 
 def _run_without_webview2(port: int, log_fh=None) -> int:
+    """The window cannot open. Say why in terms the reader can act on and,
+    on Windows, offer the one thing that works without the runtime: the
+    app in the system browser, held open by a box the user closes to
+    stop it. Verified by unit test with a fake registry; the end-to-end
+    on a machine with the runtime genuinely absent needs a scratch VM
+    (issue #149) and is recorded as uncovered, not as passed."""
     msg = _no_webview2_message()
     print(msg)
     if not _ask_yes_no(msg + "\nOpen SlowBooks Pro in your web browser instead?"):
@@ -1428,7 +1478,7 @@ def _run_without_webview2(port: int, log_fh=None) -> int:
 
 
 def run_in_browser(port: int, log_fh=None) -> int:
-    """Serve on loopback, open the system browser, and stop on dismissal."""
+    """Serve on loopback and open the system browser on it."""
     import webbrowser
 
     proc = _start_default_company(port, output=log_fh)
@@ -1439,7 +1489,8 @@ def run_in_browser(port: int, log_fh=None) -> int:
     webbrowser.open(url)
     try:
         _hold_until_dismissed(
-            f"SlowBooks Pro is open in your web browser at {url}\n\n"
+            f"SlowBooks Pro is open in your web browser at {url}\n"
+            "\n"
             "Keep this box open while you work. Click OK to stop SlowBooks Pro."
         )
     finally:
@@ -1646,7 +1697,8 @@ def _lan_addresses() -> list[str]:
 def _start_default_company(
     port: int, bind_host: str = "127.0.0.1", output=None
 ) -> subprocess.Popen | None:
-    """Start the last-used, first, or newly created default company."""
+    """Open the last-used company (or the first, or a new one) and start
+    the server for it. None, with the reason printed, if that fails."""
     from app.services import company_service
 
     filename = company_service.get_last_opened()
@@ -1665,7 +1717,7 @@ def _start_default_company(
     print(f"Opening company file: {filename}")
     try:
         return launch_company(
-            filename, port, output=output, bind_host=bind_host, persist=False
+            filename, port, bind_host=bind_host, persist=False, output=output
         )
     except (ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f"ERROR: {exc}")
@@ -1734,33 +1786,64 @@ def _watch_parent(parent_pid: int, poll_seconds: float = 2.0) -> None:
 
 
 def _win32_dlls():
-    """Return the Windows DLLs used by the timer-resolution integration."""
+    """The three Windows DLLs the timer code needs; a seam for tests."""
     import ctypes
 
     return ctypes.windll.winmm, ctypes.windll.kernel32, ctypes.windll.ntdll
 
 
 def _timer_resolution_ms(ntdll) -> float | None:
-    """Read the current Windows timer resolution in milliseconds."""
+    """The current system timer resolution, from NtQueryTimerResolution
+    (100-ns units), or None if it cannot be read."""
     import ctypes
 
-    lo, hi, current = ctypes.c_uint32(), ctypes.c_uint32(), ctypes.c_uint32()
+    # ULONG is 32 bits on Windows; c_uint32 says so on every platform
+    lo, hi, cur = ctypes.c_uint32(), ctypes.c_uint32(), ctypes.c_uint32()
     try:
-        status = ntdll.NtQueryTimerResolution(
-            ctypes.byref(lo), ctypes.byref(hi), ctypes.byref(current)
-        )
-        if status != 0:
+        if (
+            ntdll.NtQueryTimerResolution(
+                ctypes.byref(lo), ctypes.byref(hi), ctypes.byref(cur)
+            )
+            != 0
+        ):
             return None
     except Exception:
         return None
-    return current.value / 10_000
+    return cur.value / 10_000
 
 
 def raise_timer_resolution(period_ms: int = 1):
-    """Optionally request a finer Windows timer and return its matched undo."""
+    """Windows: serve with a 1 ms timer instead of the 15.625 ms default.
+
+    Issue #107 (skytech, 2.9.3 gate): about half of all requests on Windows
+    waited exactly one scheduler tick — a trivial /health cost the same as
+    a full invoice write, and the histogram had a second peak on 15.625 ms.
+    A request bounces between the event loop and a worker thread (every
+    sync route, every SQLite call that releases the GIL), and each hand-off
+    is a timed wait that Windows rounds up to the tick. timeBeginPeriod(1)
+    is the documented fix and is what browsers do while active.
+
+    Two things the docs say that matter here. Since Windows 10 2004 the
+    request is per-process, so it has to be made in THIS process — the
+    server child — not the launcher. And Windows 11 ignores the request
+    from a process with no visible window unless it opts out with
+    SetProcessInformation, which is exactly what a --_serve child is.
+
+    Returns a function that undoes it (timeEndPeriod must be matched).
+    The log line names the resolution before and after, so a gate can
+    confirm the request took effect rather than assume it.
+
+    OFF unless SLOWBOOKS_TIMER_RESOLUTION_MS is set. On the 2.13.0 gate
+    skytech put a Windows 11 box back at the true 15.625 ms default and
+    measured the UNFIXED build: median 1.8 ms, zero samples in the tick
+    band. The 2.9.3 symptom does not reproduce there, and a 1 ms timer
+    in a background process is a power cost — so it is not imposed on
+    every install for a benefit nobody has measured. Set the variable to
+    1 and the log line says whether the request took; that is the
+    instrument for anyone who does see the tick.
+    """
     if sys.platform != "win32":
         return lambda: None
-
     requested = os.environ.get("SLOWBOOKS_TIMER_RESOLUTION_MS", "").strip()
     if not requested:
         print(
@@ -1772,11 +1855,9 @@ def raise_timer_resolution(period_ms: int = 1):
         period_ms = max(1, int(requested))
     except ValueError:
         print(
-            f"timer resolution: SLOWBOOKS_TIMER_RESOLUTION_MS={requested!r} "
-            "is not a number"
+            f"timer resolution: SLOWBOOKS_TIMER_RESOLUTION_MS={requested!r} is not a number"
         )
         return lambda: None
-
     try:
         import ctypes
 
@@ -1786,7 +1867,11 @@ def raise_timer_resolution(period_ms: int = 1):
 
     before = _timer_resolution_ms(ntdll)
     try:
-
+        # PROCESS_POWER_THROTTLING_STATE { Version=1, ControlMask, StateMask }
+        # ControlMask selects IGNORE_TIMER_RESOLUTION (0x4); StateMask 0
+        # turns that throttling OFF — "always honor timer resolution
+        # requests", per the SetProcessInformation reference. Fails
+        # harmlessly (returns 0) on Windows 10, which has no such throttle.
         class _PowerThrottling(ctypes.Structure):
             _fields_ = [
                 ("Version", ctypes.c_uint32),
@@ -1797,7 +1882,7 @@ def raise_timer_resolution(period_ms: int = 1):
         state = _PowerThrottling(1, 0x4, 0)
         kernel32.SetProcessInformation(
             kernel32.GetCurrentProcess(),
-            4,
+            4,  # ProcessPowerThrottling
             ctypes.byref(state),
             ctypes.sizeof(state),
         )
@@ -1805,18 +1890,15 @@ def raise_timer_resolution(period_ms: int = 1):
         pass
 
     try:
-        if winmm.timeBeginPeriod(period_ms) != 0:
+        if winmm.timeBeginPeriod(period_ms) != 0:  # TIMERR_NOCANDO
             print(f"timer resolution: request for {period_ms} ms refused")
             return lambda: None
     except Exception:
         return lambda: None
 
     after = _timer_resolution_ms(ntdll)
-
-    def _format(value):
-        return "unknown" if value is None else f"{value:.3f} ms"
-
-    print(f"timer resolution: was {_format(before)}, now {_format(after)}")
+    fmt = lambda v: "unknown" if v is None else f"{v:.3f} ms"  # noqa: E731
+    print(f"timer resolution: was {fmt(before)}, now {fmt(after)}")
 
     def undo():
         try:
@@ -1943,13 +2025,17 @@ def run_smoke_test(port: int = 3999) -> int:
 
 
 def _repair_schema(argv) -> int:
-    """Run the bounded schema repair inside source or frozen launchers."""
+    """`SlowBooksPro --_repair-schema --database-url <url> [--dry-run]`.
+
+    Runs the repair in-process so it works from a frozen bundle, where a
+    separate interpreter is neither present nor able to import `app`.
+    """
     url = None
-    for index, argument in enumerate(argv):
-        if argument == "--database-url" and index + 1 < len(argv):
-            url = argv[index + 1]
-        elif argument.startswith("--database-url="):
-            url = argument.split("=", 1)[1]
+    for i, a in enumerate(argv):
+        if a == "--database-url" and i + 1 < len(argv):
+            url = argv[i + 1]
+        elif a.startswith("--database-url="):
+            url = a.split("=", 1)[1]
     if not url:
         print(
             "usage: SlowBooksPro --_repair-schema --database-url <url> [--dry-run]",
@@ -1957,8 +2043,21 @@ def _repair_schema(argv) -> int:
         )
         return 2
 
-    # app.database creates its engine at import time, so set this first.
+    # BEFORE importing anything that touches app.config, and that is the
+    # whole fix. `app/config.py` reads BASE_DIR/.env — inside the bundle when
+    # frozen, not the user's data dir — so DATABASE_URL is unset, falls back
+    # to the PostgreSQL default, and `app/database.py` creates its engine AT
+    # MODULE SCOPE. `migrations/env.py` imports that module, so the import
+    # died on psycopg2 before the migration ever looked at the URL we passed.
+    #
+    # The normal startup path already points DATABASE_URL at the chosen
+    # company file before serving; this entry point ran before that step and
+    # inherited none of it. @skytech traced it on the 2.12.1 gate, and it was
+    # the FIFTH appearance of one class: an instruction the reader cannot
+    # carry out. Their own first diagnosis was a cross-database hazard, which
+    # they tested and withdrew — the real cause is smaller and this is it.
     os.environ["DATABASE_URL"] = url
+
     from app.services.schema_repair import repair
 
     result = repair(url, dry_run="--dry-run" in argv)
@@ -1999,6 +2098,19 @@ def main() -> int:
     if "--_serve" in sys.argv:
         return _serve()
 
+    # Same reason, same shape: the repair has to run INSIDE the frozen
+    # runtime, because that is the only place `app.services` is importable.
+    #
+    # 2.12.1 shipped scripts/repair-schema.py in the bundle and the startup
+    # refusal named it — and both QA agents found that nothing on the machine
+    # can execute it. `_internal/app/` holds only static and templates; the
+    # Python modules live inside the executable. On Windows the printed
+    # `python3` is the Microsoft Store alias stub, zero bytes.
+    #
+    # That was the FOURTH appearance of one class: an error telling the
+    # reader to do something they cannot do. The test I added asserted the
+    # named path EXISTS, which is exactly the assertion that passes while the
+    # instruction still fails. It executes it now.
     if "--_repair-schema" in sys.argv:
         return _repair_schema(sys.argv)
 

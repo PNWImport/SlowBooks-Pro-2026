@@ -3,7 +3,6 @@
 # Tier 1.8: routing/account numbers stored encrypted; clear last-4 for display.
 # ============================================================================
 
-from decimal import Decimal
 import enum
 
 from sqlalchemy import (
@@ -62,7 +61,7 @@ class EmployeeBankAccount(Base):
     # REMAINDER account is always applied last.
     deposit_type = Column(Enum(DepositType), default=DepositType.FULL)
     deposit_value = Column(
-        Numeric(15, 2), default=Decimal("0")
+        Numeric(15, 2), default=0
     )  # percent (0-100) or dollar amount
     priority = Column(Integer, default=0)
 

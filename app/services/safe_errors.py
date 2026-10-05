@@ -5,7 +5,7 @@ exception's own text in a response: SQLAlchemy errors carry the whole
 statement and every bound parameter (a live payment token, in the case
 macbase1 caught on the 2.9.4 gate), driver errors carry hostnames, and
 tracebacks carry paths. The rule here: a data problem described in our own
-words passes through; a database constraint gets a fixed explanation;
+words passes through; a database constraint is reduced to the constraint;
 anything else is logged with its traceback and answered with one fixed
 sentence.
 
@@ -71,10 +71,12 @@ def safe_message(exc: BaseException, context: str = "operation") -> str:
     """The sentence a user may see for `exc`. Call from inside the except
     block so the traceback is attached to the log line."""
     if isinstance(exc, IntegrityError):
-        # Driver messages can contain rejected values even on their first
-        # line. Never copy driver text into a public response.
+        # sqlite3 / psycopg wrap the statement and parameters in str(exc);
+        # the driver's own first line is the constraint, which is the
+        # useful part ("NOT NULL constraint failed: invoices.invoice_number").
+        orig = str(getattr(exc, "orig", "") or "").strip().splitlines()
         _log_exception(logging.WARNING, context, exc)
-        return "Database constraint — the server log has the details"
+        return "Database constraint: " + (orig[0] if orig else "see the server log")
     if isinstance(exc, StatementError):
         _log_exception(logging.ERROR, context, exc)
         return "Database error — the server log has the details"

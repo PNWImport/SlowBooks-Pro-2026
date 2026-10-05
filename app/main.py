@@ -33,7 +33,6 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 
-from app.services import storage
 from app.services.control_accounts import MissingControlAccount
 from app.services.rate_limit import limiter
 
@@ -57,13 +56,8 @@ from app.routes import (
 from app.routes import audit, search
 
 # Phase 2: Accounts Payable
-from app.routes import (
-    purchase_orders,
-    bills,
-    bill_payments,
-    credit_memos,
-    vendor_credits,
-)
+from app.routes import purchase_orders, bills, bill_payments, credit_memos
+from app.routes import vendor_credits
 
 # Phase 3: Productivity
 from app.routes import recurring, batch_payments
@@ -266,21 +260,48 @@ def _run_startup_security_checks():
 
 
 def _refuse_a_database_behind_head() -> None:
-    """Prevent create_all() from half-upgrading a database behind Alembic."""
+    """Refuse to start against a database the migrations have not reached.
+
+    Issue #132, found by the macOS QA agent while gating 2.11.0.
+    `_create_missing_tables()` runs `create_all()` on EVERY start. Point that
+    at a database behind the migration head and it half-upgrades it: tables
+    the new revision ADDS are created, tables it ALTERS are untouched, and
+    `alembic_version` does not move. Alembic can then never run on that
+    database again — the upgrade tries to create tables that already exist.
+
+    The damage is silent at the moment it happens and loud much later, in a
+    different session, as a start failure with no obvious cause.
+
+    Neither shipped path reaches it: `desktop_launcher.py` runs
+    `alembic upgrade head` before serving, and `docker-entrypoint.sh` runs it
+    at line 21. A self-managed deployment that sets DATABASE_URL, runs
+    uvicorn directly and treats migrations as a separate step is on exactly
+    that path — and so is `--_serve`, which is how the agent met it.
+
+    A database with no `alembic_version` at all is a NEW one and is allowed
+    through: that is how a fresh company file and a fresh Docker volume both
+    start.
+    """
     from sqlalchemy import inspect as _inspect, text as _text
 
     try:
-        inspector = _inspect(engine)
-        if not inspector.has_table("alembic_version"):
-            return
+        insp = _inspect(engine)
+        if not insp.has_table("alembic_version"):
+            return  # fresh database — create_all is how it gets built
         with engine.connect() as conn:
             row = conn.execute(_text("SELECT version_num FROM alembic_version")).first()
         current = row[0] if row else None
     except Exception:
+        # A guard that cannot read the thing it guards must not pass it
+        # silently. The agent's own version of this check had `except:
+        # return`, which let a file through BY FAILING TO READ IT while it
+        # was mid-copy. Say so and let the start proceed: refusing here
+        # would turn any transient DB blip into a failure to boot.
         logging.getLogger(__name__).exception(
             "could not read alembic_version; skipping the migration-head check"
         )
         return
+
     if current is None:
         return
 
@@ -299,28 +320,42 @@ def _refuse_a_database_behind_head() -> None:
         return
 
     if head and current != head:
-        from app.services.schema_repair import looks_half_upgraded, repair_command
+        # Two different situations, and only one of them is fixed by the
+        # obvious command. An ORDINARY old file upgrades cleanly. A file a
+        # server has already half-upgraded does NOT: the tables the pending
+        # revisions create are already there, so the upgrade dies on
+        # "already exists". Printing `alembic upgrade head` at someone in
+        # that state is advice that fails — the same shape as #139's delete
+        # error saying "deactivate it instead" when nothing could deactivate.
+        from app.services.schema_repair import looks_half_upgraded
 
         if looks_half_upgraded(engine):
+            # Name the path that exists on THIS install. Frozen bundles put
+            # it under _internal/scripts; a checkout has it at scripts/.
+            # Printing the repo path at a Server Edition operator who only
+            # has the bundle is the defect #144 was about.
+            from app.services.schema_repair import repair_command
+
             remedy = (
-                "A server has already been started against this database while it "
-                "was behind, so `alembic upgrade head` will fail on a table that "
-                "already exists. Repair it with:\n"
+                "A server has already been started against this database "
+                "while it was behind, so `alembic upgrade head` will fail on "
+                "a table that already exists. Repair it with:\n"
                 f"    {repair_command()} --database-url <url>\n"
-                "which drops only the empty tables left behind and then upgrades. "
-                "Take a copy first."
+                "which drops only the empty tables left behind and then "
+                "upgrades. Take a copy first."
             )
         else:
             remedy = (
-                "Run `alembic upgrade head` against it first. (The desktop app and "
-                "the Docker entrypoint both do this for you; a self-managed "
-                "deployment must run it as its own step.)"
+                "Run `alembic upgrade head` against it first. (The desktop "
+                "app and the Docker entrypoint both do this for you; a "
+                "self-managed deployment must run it as its own step.)"
             )
         raise RuntimeError(
             f"FATAL: this database is at migration '{current}' and this build "
             f"expects '{head}'. Starting anyway would create the new tables "
-            f"without altering the existing ones and without moving the revision, "
-            f"after which migrations could never run on it again. {remedy}"
+            f"without altering the existing ones and without moving the "
+            f"revision, after which migrations could never run on it again. "
+            f"{remedy}"
         )
 
 
@@ -488,8 +523,12 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 def _company_terms():
-    """Read the current company's vocabulary; fall back safely on errors."""
+    """The vocabulary the company sees, read fresh: one settings row. Never
+    raises — an error response must not fail because of its wording."""
     from app.services.terminology import Terms, terms_from_db
+
+    # Looked up on the module, not bound at import: the test harness and
+    # the desktop launcher both repoint app.database.SessionLocal.
     import app.database as database
 
     try:
@@ -509,7 +548,17 @@ async def _method_not_allowed_handler(request: Request, exc: StarletteHTTPExcept
     are never deleted — they are voided, which keeps the audit trail and
     reverses the ledger — and the void route exists one segment further
     down. Say so in the body (2.9.0 gate: an agent rebuilt a whole fixture
-    to work around a 405 that could have pointed at POST .../void)."""
+    to work around a 405 that could have pointed at POST .../void).
+
+    And the words. Every page label goes through the terminology
+    dictionary, and the sentences the server sends back never did — a
+    nonprofit's Pledge screen said "Invoice not found" under it. Forty-two
+    such sentences across the routes, three files wrapping any of them.
+    Rather than forty-two edits, the swap happens here, once, at the
+    boundary every HTTPException crosses: whole-word, case-preserving,
+    and the protected words ("Sales Tax") stay by the dictionary's own
+    rule. The vocabulary audit's walk of a running server is what found
+    it (scripts/audit/vocab_walk.py)."""
     if isinstance(exc.detail, str) and exc.detail and exc.status_code != 405:
         terms = _company_terms()
         if terms.is_nonprofit:
@@ -544,18 +593,58 @@ async def _method_not_allowed_handler(request: Request, exc: StarletteHTTPExcept
 app.add_exception_handler(StarletteHTTPException, _method_not_allowed_handler)
 
 
-async def _missing_control_account_handler(
-    request: Request, exc: MissingControlAccount
-):
+# ---- Missing control account (issue #119) ----
+# A posting path that cannot resolve the account it must debit or credit
+# now raises instead of silently skipping its journal entry. Answer 409 —
+# the request was valid, the company's chart is not — and name the account
+# so the operator can restore it. Nothing was written: the raise happens
+# before any journal line is built.
+async def _missing_control_account_handler(request: Request, exc: Exception):
     logging.getLogger(__name__).warning(
-        "Posting refused: control account %s (%s) is missing", exc.number, exc.name
+        "posting refused: control account %s (%s) missing from the chart",
+        getattr(exc, "number", "?"),
+        getattr(exc, "name", "?"),
     )
+    # "what customers owe — every invoice and payment" is written in the
+    # business words; the company may not use them (see the handler above).
     return JSONResponse(
-        status_code=409, content={"detail": _company_terms().text(exc.user_text)}
+        status_code=409, content={"detail": _company_terms().text(str(exc))}
     )
 
 
 app.add_exception_handler(MissingControlAccount, _missing_control_account_handler)
+
+
+# ---- Validation errors (422), in sentences ----
+# FastAPI's own body, unchanged, with a plain "message" added to each entry
+# ("Name is required.") for the page to show instead of validator text
+# ("name: String should have at least 1 character" — explore 2.17.3, L5).
+def _json_safe(value):
+    """A 422 echoes what was sent, and JSON has no NaN or Infinity: a body
+    carrying one (Python's JSON reader accepts them) turned the refusal
+    into a 500. Name them as text instead."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+async def _request_validation_handler(request: Request, exc: RequestValidationError):
+    from app.services.validation_messages import with_messages
+
+    terms = _company_terms()
+    wording = terms.text if terms.is_nonprofit else None
+    errors = _json_safe(jsonable_encoder(exc.errors()))
+    return JSONResponse(
+        status_code=422,
+        content={"detail": with_messages(errors, wording)},
+    )
+
+
+app.add_exception_handler(RequestValidationError, _request_validation_handler)
 
 # gzip responses larger than 1 KB. Analytics JSON payloads compress ~70%,
 # which is a big win over LAN for /api/analytics/dashboard and friends.

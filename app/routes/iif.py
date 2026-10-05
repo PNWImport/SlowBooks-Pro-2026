@@ -189,7 +189,7 @@ async def import_iif(
         text = content.decode("cp1252", errors="replace")
 
     try:
-        result = import_all(db, text)
+        result = import_all(db, text, retitle_names=retitle_names)
     except Exception:
         db.rollback()
         logger.exception("IIF import failed")

@@ -54,6 +54,13 @@ RUN python -m compileall -q -j 0 /usr/local/lib/python3.13/site-packages /app ||
 
 RUN chmod +x docker-entrypoint.sh
 
+# The folders docker compose mounts volumes on (backups, and the uploads
+# folder releases before 2.18 wrote) exist here, owned by the app's user:
+# Docker gives an empty named volume the owner of the image's folder, and a
+# folder the image lacks becomes a volume owned by root, which the app can't
+# write. Every backup failed with "Permission denied", and so did every
+# upload before 2.18. Those failures left an existing install's volumes
+# empty, so they take the right owner when the new image starts.
 RUN adduser -D -u 1000 slowbooks \
     && mkdir -p /app/backups /app/app/static/uploads \
     && chown -R slowbooks:slowbooks /app

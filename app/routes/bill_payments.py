@@ -264,7 +264,7 @@ def void_bill_payment(bill_payment_id: int, db: Session = Depends(get_db)):
     if payment.transaction is not None:
         from app.services.bank_posting import assert_not_reconciled
 
-        assert_not_reconciled(payment.transaction)
+        assert_not_reconciled(db, payment.transaction)
 
     if payment.transaction_id:
         from app.models.transactions import TransactionLine

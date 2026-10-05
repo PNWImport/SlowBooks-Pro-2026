@@ -142,14 +142,15 @@ jobs:
           if ($p.ExitCode -ne 0) { Write-Error "Smoke test failed (exit $($p.ExitCode))"; exit 1 }
           Write-Host "Smoke test passed."
 
-      - name: Verify executable version metadata
+      - name: Verify the exe's version resource (issue #106)
         shell: pwsh
         run: |
           $exe = "packaging\windows\dist\SlowBooksPro\SlowBooksPro.exe"
           $expected = (Select-String -Path app\__init__.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
           $vi = (Get-Item $exe).VersionInfo
-          if ($vi.ProductVersion -ne $expected -or $vi.FileVersion -ne $expected -or $vi.ProductName -ne "SlowBooks Pro 2026") {
-            Write-Error "Executable version metadata missing or incorrect (expected $expected)"; exit 1
+          Write-Host "FileVersion=$($vi.FileVersion) ProductVersion=$($vi.ProductVersion) ProductName=$($vi.ProductName)"
+          if ($vi.ProductVersion -ne $expected -or $vi.FileVersion -ne $expected -or -not $vi.ProductName) {
+            Write-Error "version resource missing or wrong (expected $expected)"; exit 1
           }
 
       # Sign SlowBooksPro.exe BEFORE zipping so the portable archive

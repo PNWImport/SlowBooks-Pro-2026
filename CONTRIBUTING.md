@@ -17,6 +17,19 @@ etiquette. Collaborators have full branch and Actions access: push
 branches, trigger workflows, download artifacts. CI (black/ruff,
 pytest, CodeQL, pip-audit) must be green before review.
 
+## How releases work
+
+A merged PR ships with the next release, not on merge. Every release goes
+through a three-platform gate in the QA repo,
+[SlowBooks-Pro-Testing](https://github.com/VonHoltenCodes/SlowBooks-Pro-Testing):
+a `release/<version>` PR there records the exact commit under test, each
+platform (Windows 11, macOS on Apple Silicon, Linux + Docker/PostgreSQL)
+installs the build from that commit and posts findings, and the tag is cut
+from the recorded commit only. A fix the gate finds goes on top of the
+release branch as an ordinary commit and the gate re-runs on the new
+commit. The gate records are public; `reports/<version>/GATE.md` is the
+checklist and each platform's findings file is the evidence.
+
 ## Upstream PR preparation — September 14, 2026
 
 Upstream's current contribution and release procedure is recorded at
@@ -127,11 +140,11 @@ Code on the web carry a session URL at the bottom; leave that in.
 - **JavaScript**: vanilla JS (no build step). Match the surrounding
   style; no semicolons-vs-not crusade.
 - **Tests**: every behavior change comes with a test. Tests live under
-  `tests/` and are run with `pytest tests/ -q`. Runtime depends on the
-  environment; the September 8 coverage checkpoint took about 20 minutes.
-  Full migration validation needs a dedicated PostgreSQL test database;
-  native integration cases need their documented system binaries. Common fixtures
-  (defined in [tests/conftest.py](tests/conftest.py)):
+  `tests/` and are run with `pytest tests/ -q`. The full suite (about
+  2,240 tests) runs in a few minutes with no network dependencies; run
+  the files you touched while iterating and the whole suite before
+  pushing. Common fixtures (defined in
+  [tests/conftest.py](tests/conftest.py)):
   - `client` — authenticated `TestClient`. Use for most tests.
   - `unauthed_client` — `TestClient` with no session. Use only for
     auth-flow tests (setup, login, logout).

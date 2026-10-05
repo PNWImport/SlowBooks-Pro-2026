@@ -2,7 +2,6 @@
 # Bank accounts, bank-feed transactions, and reconciliations.
 # ============================================================================
 
-from decimal import Decimal
 import enum
 
 from sqlalchemy import (
@@ -105,7 +104,7 @@ class Reconciliation(Base):
     statement_balance = Column(Numeric(15, 2), nullable=False)
     # The prior completed statement's balance; cleared_total is stamped on
     # completion so the history reads without recomputing.
-    beginning_balance = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
+    beginning_balance = Column(Numeric(15, 2), nullable=False, default=0)
     cleared_total = Column(Numeric(15, 2), nullable=True)
     status = Column(
         Enum(ReconciliationStatus), default=ReconciliationStatus.IN_PROGRESS

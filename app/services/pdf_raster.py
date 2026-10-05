@@ -31,11 +31,7 @@ PDF_DPI = 300
 logger = logging.getLogger(__name__)
 
 
-class PdfRasterError(ValueError):
-    """An authored, user-safe renderer error; library ValueErrors are not safe."""
-
-
-class PdfRasterUnavailable(PdfRasterError):
+class PdfRasterUnavailable(ValueError):
     """No renderer could rasterize the PDF on this machine."""
 
 
@@ -83,16 +79,14 @@ def _poppler_render(data: bytes, dpi: int) -> tuple[bytes, int]:
                 timeout=30,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise PdfRasterError(
-                "The PDF renderer could not run; please retry"
-            ) from exc
+            raise ValueError(f"pdftoppm could not run: {exc}") from exc
         if proc.returncode != 0:
-            raise PdfRasterError(
+            raise ValueError(
                 "pdftoppm could not read the PDF — is it a valid, unencrypted file?"
             )
         out = Path(tmp) / "page.png"
         if not out.exists():
-            raise PdfRasterError("pdftoppm produced no image")
+            raise ValueError("pdftoppm produced no image")
         return out.read_bytes(), page_count
 
 
@@ -151,7 +145,7 @@ def _windows_render(data: bytes, dpi: int) -> tuple[bytes, int]:
         doc = await PdfDocument.load_from_stream_async(src)
         page_count = int(doc.page_count)
         if page_count < 1:
-            raise PdfRasterError("The PDF has no pages")
+            raise ValueError("The PDF has no pages")
         page = doc.get_page(0)
         opts = PdfPageRenderOptions()
         opts.destination_width = max(1, int(page.size.width * dpi / 72.0))
@@ -222,12 +216,10 @@ def _macos_render(data: bytes, dpi: int) -> tuple[bytes, int]:
     )
     doc = Quartz.CGPDFDocumentCreateWithProvider(provider)
     if doc is None:
-        raise PdfRasterError(
-            "Could not read the PDF — is it a valid, unencrypted file?"
-        )
+        raise ValueError("Could not read the PDF — is it a valid, unencrypted file?")
     page_count = int(Quartz.CGPDFDocumentGetNumberOfPages(doc))
     if page_count < 1:
-        raise PdfRasterError("The PDF has no pages")
+        raise ValueError("The PDF has no pages")
     page = Quartz.CGPDFDocumentGetPage(doc, 1)
     box = Quartz.CGPDFPageGetBoxRect(page, Quartz.kCGPDFMediaBox)
     scale = dpi / 72.0
@@ -238,7 +230,7 @@ def _macos_render(data: bytes, dpi: int) -> tuple[bytes, int]:
         None, width, height, 8, 0, cs, Quartz.kCGImageAlphaNoneSkipLast
     )
     if ctx is None:
-        raise PdfRasterError("Could not create a drawing context for the PDF")
+        raise ValueError("Could not create a drawing context for the PDF")
     Quartz.CGContextSetRGBFillColor(ctx, 1, 1, 1, 1)
     Quartz.CGContextFillRect(ctx, Quartz.CGRectMake(0, 0, width, height))
     Quartz.CGContextScaleCTM(ctx, scale, scale)
@@ -248,10 +240,10 @@ def _macos_render(data: bytes, dpi: int) -> tuple[bytes, int]:
     out = Foundation.NSMutableData.data()
     dest = Quartz.CGImageDestinationCreateWithData(out, "public.png", 1, None)
     if dest is None:
-        raise PdfRasterError("Could not encode the rendered page")
+        raise ValueError("Could not encode the rendered page")
     Quartz.CGImageDestinationAddImage(dest, image, None)
     if not Quartz.CGImageDestinationFinalize(dest):
-        raise PdfRasterError("Could not encode the rendered page")
+        raise ValueError("Could not encode the rendered page")
     return bytes(out), page_count
 
 
@@ -323,10 +315,10 @@ def rasterize(
             continue
     if not tried:
         raise PdfRasterUnavailable(unavailable_message())
-    # Only PdfRasterError carries authored wording. Ordinary ValueErrors
-    # can also be library text (a WinRT HRESULT, a Quartz message) and
+    # Our own renderers speak in ValueError with our own words; anything
+    # else is a library's text (a WinRT HRESULT, a Quartz message) and
     # stays in the log — never in the response (skytech, 2.10.0 gate).
-    if isinstance(last_error, PdfRasterError):
+    if isinstance(last_error, ValueError):
         raise ValueError(str(last_error))
     logger.warning("PDF rasterization failed: %r", last_error)
     raise ValueError("Could not read the PDF — is it a valid, unencrypted file?")

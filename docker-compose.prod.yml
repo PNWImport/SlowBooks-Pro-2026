@@ -9,7 +9,8 @@
 # What this differs from docker-compose.yml on:
 #   - Postgres uses SSL (sslmode=require). You must mount a cert/key pair.
 #   - The app's APP_DEBUG is forced false and the strict startup checks fire.
-#   - Payroll, session, and settings encryption secrets are required.
+#   - Payroll and session encryption secrets are required (the settings key
+#     is optional: derived from the payroll secret when empty).
 #   - Postgres port is NOT published to the host.
 #   - The app sits behind your own TLS-terminating reverse proxy. This file
 #     does not include nginx/Traefik — wire it in front yourself.
@@ -114,7 +115,6 @@ services:
       # Required secrets. ?:err makes compose refuse to start with them empty.
       PAYROLL_ENCRYPTION_SECRET: "${PAYROLL_ENCRYPTION_SECRET:?missing PAYROLL_ENCRYPTION_SECRET — run: openssl rand -base64 32}"
       SESSION_SECRET_KEY: "${SESSION_SECRET_KEY:?missing SESSION_SECRET_KEY — run: openssl rand -hex 32}"
-      SETTINGS_ENCRYPTION_KEY: "${SETTINGS_ENCRYPTION_KEY:?missing SETTINGS_ENCRYPTION_KEY — generate a Fernet key and keep it stable}"
       AUDIT_CHECKPOINT_SIGNING_SECRET: "${AUDIT_CHECKPOINT_SIGNING_SECRET:?missing AUDIT_CHECKPOINT_SIGNING_SECRET — run: openssl rand -base64 48}"
       AUDIT_CHECKPOINT_KEY_ID: "${AUDIT_CHECKPOINT_KEY_ID:?missing AUDIT_CHECKPOINT_KEY_ID — use an operations key label}"
       AUDIT_CHECKPOINT_SIGNING_SECRET_PREV: "${AUDIT_CHECKPOINT_SIGNING_SECRET_PREV:-}"

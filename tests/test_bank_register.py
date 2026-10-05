@@ -60,7 +60,7 @@ def test_register_is_the_ledger_account_with_payees_and_links(
     assert rows[0]["payee"] == "Sweet Forest Cafe"
     assert (
         rows[0]["source_type"] == "expense"
-        and rows[0]["source_link"] == f"/#/journal/{e['id']}"
+        and rows[0]["source_link"] == f"/#/expenses/{e['id']}"
     )
     assert (
         rows[0]["cleared"] is False

@@ -4,6 +4,7 @@ venv/
 *.pyc
 *.pyo
 .env
+.local-server/
 .env.*
 !.env.example
 *.egg-info/

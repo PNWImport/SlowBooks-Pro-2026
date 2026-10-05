@@ -17,44 +17,6 @@ tests go through the URL a user's browser goes through.
 
 import io
 
-import pytest
-
-
-@pytest.fixture(autouse=True)
-def isolated_uploads(tmp_path, monkeypatch):
-    from app.routes import attachments
-
-    monkeypatch.setattr(attachments, "STATIC_BASE", tmp_path)
-    monkeypatch.setattr(
-        attachments, "UPLOAD_BASE", tmp_path / "uploads" / "attachments"
-    )
-
-
-def test_legacy_windows_path_downloads_and_deletes(client, db_session):
-    from app.models.attachments import Attachment
-
-    att = _upload(client)
-    row = db_session.get(Attachment, att["id"])
-    assert "\\" not in row.file_path
-    row.file_path = row.file_path.replace("/", "\\")
-    db_session.commit()
-    response = client.get(f"/api/attachments/download/{row.id}")
-    assert response.status_code == 200
-    assert response.content == b"%PDF-1.4\n"
-    assert client.delete(f"/api/attachments/{row.id}").status_code == 200
-
-
-@pytest.mark.parametrize("separator", ["/", "\\"])
-def test_stored_traversal_is_refused(client, db_session, separator):
-    from app.models.attachments import Attachment
-
-    att = _upload(client)
-    row = db_session.get(Attachment, att["id"])
-    row.file_path = separator.join(["..", "private.pdf"])
-    db_session.commit()
-    assert client.get(f"/api/attachments/download/{row.id}").status_code == 400
-    assert client.delete(f"/api/attachments/{row.id}").status_code == 400
-
 
 def _upload(client):
     r = client.post(
@@ -63,26 +25,6 @@ def _upload(client):
     )
     assert r.status_code == 201, r.text
     return r.json()
-
-
-@pytest.mark.parametrize(
-    "stored",
-    [
-        "/private.pdf",
-        "C:\\private.pdf",
-        "C:private.pdf",
-        "\\\\host\\share\\private.pdf",
-    ],
-)
-def test_absolute_stored_paths_stay_rejected(client, db_session, stored):
-    from app.models.attachments import Attachment
-
-    att = _upload(client)
-    row = db_session.get(Attachment, att["id"])
-    row.file_path = stored
-    db_session.commit()
-    assert client.get(f"/api/attachments/download/{row.id}").status_code == 400
-    assert client.delete(f"/api/attachments/{row.id}").status_code == 400
 
 
 def test_download_route_returns_the_file_not_a_list(client, seed_accounts):

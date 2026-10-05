@@ -17,7 +17,6 @@
 # receivable side.
 # ============================================================================
 
-from decimal import Decimal
 import enum
 
 from sqlalchemy import (
@@ -58,12 +57,12 @@ class VendorCredit(Base):
     ref_number = Column(String(100), nullable=True)
 
     date = Column(Date, nullable=False)
-    subtotal = Column(Numeric(15, 2), default=Decimal("0"))
-    tax_rate = Column(Numeric(5, 4), default=Decimal("0"))
-    tax_amount = Column(Numeric(15, 2), default=Decimal("0"))
-    total = Column(Numeric(15, 2), default=Decimal("0"))
-    amount_applied = Column(Numeric(15, 2), default=Decimal("0"))
-    balance_remaining = Column(Numeric(15, 2), default=Decimal("0"))
+    subtotal = Column(Numeric(15, 2), default=0)
+    tax_rate = Column(Numeric(7, 6), default=0)  # a fraction: 8.875% is 0.08875
+    tax_amount = Column(Numeric(15, 2), default=0)
+    total = Column(Numeric(15, 2), default=0)
+    amount_applied = Column(Numeric(15, 2), default=0)
+    balance_remaining = Column(Numeric(15, 2), default=0)
 
     notes = Column(Text, nullable=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
@@ -111,9 +110,9 @@ class VendorCreditLine(Base):
     # a bill does.
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     description = Column(Text, nullable=True)
-    quantity = Column(Numeric(10, 2), default=Decimal("1"))
-    rate = Column(Numeric(15, 2), default=Decimal("0"))
-    amount = Column(Numeric(15, 2), default=Decimal("0"))
+    quantity = Column(Numeric(10, 2), default=1)
+    rate = Column(Numeric(17, 4), default=0)  # unit price, to 4 places
+    amount = Column(Numeric(15, 2), default=0)
     # Per-line job / class; NULL falls back to the header
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)

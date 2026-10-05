@@ -4,7 +4,7 @@ from typing import Annotated, Optional
 
 from pydantic import AfterValidator, BaseModel, Field
 
-from app.schemas.common import BlankableEmail, Money, NonBlankName, StrictModel
+from app.schemas.common import BlankableEmail, NonBlankName, StrictModel
 
 
 def _check_credit_limit(value):
@@ -47,8 +47,9 @@ class CustomerCreate(StrictModel):
     ship_state: Optional[str] = Field(None, max_length=50)
     ship_zip: Optional[str] = Field(None, max_length=20)
     ship_country: str = Field("US", max_length=100)
-    terms: str = Field("Net 30", max_length=50)
-    credit_limit: Optional[Money] = None
+    # None = the company's default terms (Settings); see create_customer.
+    terms: Optional[str] = Field(None, max_length=50)
+    credit_limit: CreditLimit = None
     tax_id: Optional[str] = Field(None, max_length=50)
     is_taxable: bool = True
     notes: Optional[str] = None
@@ -79,7 +80,7 @@ class CustomerUpdate(StrictModel):
     ship_zip: Optional[str] = Field(None, max_length=20)
     ship_country: Optional[str] = Field(None, max_length=100)
     terms: Optional[str] = Field(None, max_length=50)
-    credit_limit: Optional[Money] = None
+    credit_limit: CreditLimit = None
     tax_id: Optional[str] = Field(None, max_length=50)
     is_taxable: Optional[bool] = None
     notes: Optional[str] = None
@@ -146,9 +147,9 @@ class VendorCreate(StrictModel):
     account_number: Optional[str] = Field(None, max_length=50)
     default_expense_account_id: Optional[int] = None
     is_1099_vendor: bool = False
+    vendor_1099_type: Optional[str] = Field(None, max_length=10)
     is_1099_eligible: bool = False
     w9_on_file: bool = False
-    vendor_1099_type: Optional[str] = Field(None, max_length=10)
     notes: Optional[str] = None
 
 
@@ -170,9 +171,9 @@ class VendorUpdate(StrictModel):
     account_number: Optional[str] = Field(None, max_length=50)
     default_expense_account_id: Optional[int] = None
     is_1099_vendor: Optional[bool] = None
+    vendor_1099_type: Optional[str] = Field(None, max_length=10)
     is_1099_eligible: Optional[bool] = None
     w9_on_file: Optional[bool] = None
-    vendor_1099_type: Optional[str] = Field(None, max_length=10)
     notes: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -196,9 +197,9 @@ class VendorResponse(BaseModel):
     account_number: Optional[str]
     default_expense_account_id: Optional[int] = None
     is_1099_vendor: bool = False
+    vendor_1099_type: Optional[str] = None
     is_1099_eligible: bool = False
     w9_on_file: bool = False
-    vendor_1099_type: Optional[str] = None
     notes: Optional[str]
     is_active: bool
     balance: Decimal

@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.models.transactions import Transaction, TransactionLine
 from app.models.accounts import Account, AccountType
-from app.services.safe_errors import DataProblem
 from app.services import control_accounts
+from app.services.safe_errors import DataProblem
 
 CENT = Decimal("0.01")
 
@@ -226,8 +226,11 @@ def create_journal_entry(
     total_credit = sum(Decimal(str(line.get("credit", 0))) for line in lines)
 
     if total_debit != total_credit:
+        # The sentence a person reads when they save an unbalanced entry
+        # (the journal form's own live wording, not "debits=5000, ...").
         raise DataProblem(
-            f"Journal entry not balanced: debits={total_debit}, credits={total_credit}"
+            "Debits and credits must be equal: this entry is out of balance "
+            f"by ${abs(total_debit - total_credit):,.2f}"
         )
 
     locked_accounts = lock_accounts(db, (line["account_id"] for line in lines))
@@ -313,37 +316,38 @@ def create_journal_entry(
 
 
 def get_ar_account_id(db: Session) -> int:
-    """Resolve control account 1100; raise rather than skip a posting."""
+    """Accounts Receivable (1100). Raises MissingControlAccount."""
     return control_accounts.resolve(db, "1100")
 
 
 def get_default_income_account_id(db: Session) -> int:
-    """Resolve control account 4000; raise rather than skip a posting."""
+    """Default Service Income (4000). Raises MissingControlAccount."""
     return control_accounts.resolve(db, "4000")
 
 
 def get_sales_tax_account_id(db: Session) -> int:
-    """Resolve control account 2200; raise rather than skip a posting."""
+    """Sales Tax Payable (2200). Raises MissingControlAccount."""
     return control_accounts.resolve(db, "2200")
 
 
 def get_undeposited_funds_id(db: Session) -> int:
-    """Resolve control account 1200; raise rather than skip a posting."""
+    """Undeposited Funds (1200). Raises MissingControlAccount."""
     return control_accounts.resolve(db, "1200")
 
 
 def get_ap_account_id(db: Session) -> int:
-    """Resolve control account 2000; raise rather than skip a posting."""
+    """Accounts Payable (2000). Raises MissingControlAccount."""
     return control_accounts.resolve(db, "2000")
 
 
 def get_cc_account_id(db: Session) -> int:
-    """Resolve control account 2100; raise rather than skip a posting."""
+    """Credit Card (2100). Raises MissingControlAccount."""
     return control_accounts.resolve(db, "2100")
 
 
 def get_opening_balance_equity_id(db: Session) -> int:
-    """Opening-balance offset, created only when the operator posts it."""
+    """3900 Opening Balance Equity, created on demand: the offset for a bank
+    or card account's opening balance (issue #114)."""
     return ensure_account(db, "3900", "Opening Balance Equity", AccountType.EQUITY).id
 
 

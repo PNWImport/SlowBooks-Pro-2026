@@ -987,7 +987,7 @@ def _import_bill(db: Session, trns: dict, spls: list) -> Bill:
     vendor_name = trns.get("NAME", "").strip()
     if not vendor_name:
         raise DataProblem("BILL: missing vendor NAME on TRNS line")
-    vendor = db.query(Vendor).filter(Vendor.name == vendor_name).first()
+    vendor = _named(db, Vendor, vendor_name)
     if not vendor:
         raise DataProblem(
             f"BILL: vendor '{vendor_name}' not found. Add the vendor in "
@@ -1418,7 +1418,16 @@ def _import_payment(db: Session, trns: dict, spls: list) -> Payment:
     # against Customer.name (which never contains the job suffix).
     customer, _job = resolve_customer_and_job(db, cust_name, create=False)
     if not customer:
-        return None
+        # Said, not dropped (2.18.1 gate): the payment used to vanish with
+        # nothing in the result. None means "already imported" to the caller.
+        if not cust_name:
+            raise DataProblem(
+                f"PAYMENT {ref or '(no number)'}: missing customer NAME on TRNS line"
+            )
+        raise DataProblem(
+            f"PAYMENT {ref or '(no number)'}: customer '{cust_name}' not found. "
+            f"Import the customer list first, or correct the NAME in the IIF file."
+        )
     pmt_date = _parse_iif_date(trns.get("DATE", ""))
     pmt_amount = abs(_parse_decimal(trns.get("AMOUNT", "")))
     existing_q = db.query(Payment).filter(

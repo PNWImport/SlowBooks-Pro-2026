@@ -101,6 +101,8 @@ def validate_worker_url(url: str) -> str:
     try:
         parsed = urlparse(url)
     except Exception as exc:  # noqa: BLE001 — urlparse is famously lenient
+        # ValueError is a user-facing string (safe_message); the parser's
+        # text is not ours to show (issue #111).
         raise ValueError("worker_url is not a parseable URL") from exc
 
     # --- Scheme: HTTPS only, no exceptions (MITM protection) --------------
@@ -340,23 +342,6 @@ PROVIDERS: Dict[str, ProviderSpec] = {
             "@cf/meta/llama-4-scout-17b-16e-instruct",
         ),
     ),
-    "anthropic": ProviderSpec(
-        key="anthropic",
-        label="Anthropic Claude",
-        default_model="claude-sonnet-5",
-        wire_format="anthropic",
-        docs_url="https://console.anthropic.com/",
-        free_tier_hint="API key required — check Anthropic Console for current access",
-        model_choices=(
-            "claude-sonnet-5",
-            "claude-opus-5-5",
-            "claude-fable-5-1",
-            "claude-opus-5",
-            "claude-fable-5",
-            "claude-sonnet-4-6",
-            "claude-haiku-4-5-20251001",
-        ),
-    ),
     "openai": ProviderSpec(
         key="openai",
         label="OpenAI",
@@ -568,7 +553,6 @@ def _openai_style_request(
     system: str,
     user: str,
     *,
-    token_parameter: str = "max_tokens",
     openai_native: bool = False,
 ) -> Dict[str, Any]:
     """Build an OpenAI-compatible chat-completions request.
@@ -582,7 +566,7 @@ def _openai_style_request(
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "max_completion_tokens" if openai_native else token_parameter: (
+        "max_completion_tokens" if openai_native else "max_tokens": (
             REASONING_MAX_TOKENS if reasoning else MAX_TOKENS
         ),
     }
@@ -689,7 +673,6 @@ def build_request(
             model,
             system,
             user,
-            token_parameter="max_completion_tokens",
         )
 
     if provider_key == "openai":

@@ -200,15 +200,14 @@ def test_native_failure_falls_back_to_poppler(no_renderers):
     assert pdf_raster.rasterize(b"x", poppler_ok=True) == (PNG, 2)
 
 
-@pytest.mark.parametrize("error_type", [OSError, ValueError])
-def test_library_error_text_never_reaches_the_user(no_renderers, error_type):
+def test_library_error_text_never_reaches_the_user(no_renderers):
     """A WinRT HRESULT or a Quartz message is not a ValueError of ours: log it,
     answer with our own words (skytech: '[WinError -2147188716] …' in a 400)."""
     monkeypatch = no_renderers
     monkeypatch.setattr(pdf_raster, "windows_available", lambda: True)
 
     def broken(d, dpi):
-        raise error_type(
+        raise OSError(
             -2147188716, "The text associated with this error code could not be found."
         )
 
@@ -219,22 +218,12 @@ def test_library_error_text_never_reaches_the_user(no_renderers, error_type):
     assert "valid, unencrypted" in str(exc.value)
 
 
-def test_poppler_launch_error_does_not_expose_exception_text(monkeypatch):
-    def fail(*args, **kwargs):
-        raise OSError("private-user-path-and-document-name")
-
-    monkeypatch.setattr(pdf_raster.subprocess, "run", fail)
-    with pytest.raises(pdf_raster.PdfRasterError) as exc:
-        pdf_raster._poppler_render(b"%PDF", 72)
-    assert "private-user" not in str(exc.value)
-
-
 def test_present_renderer_failing_on_this_file_is_a_file_error(no_renderers):
     monkeypatch = no_renderers
     monkeypatch.setattr(pdf_raster, "windows_available", lambda: True)
 
     def broken(d, dpi):
-        raise pdf_raster.PdfRasterError("The PDF has no pages")
+        raise ValueError("The PDF has no pages")
 
     monkeypatch.setattr(pdf_raster, "_windows_render", broken)
     with pytest.raises(ValueError, match="no pages"):

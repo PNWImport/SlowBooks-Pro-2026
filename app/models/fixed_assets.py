@@ -9,7 +9,6 @@
 # per the spec — runs accumulate onto the asset and post journals.
 # ============================================================================
 
-from decimal import Decimal
 import enum
 
 from sqlalchemy import (
@@ -84,14 +83,12 @@ class FixedAsset(Base):
         Enum(FixedAssetStatus), nullable=False, default=FixedAssetStatus.REGISTERED
     )
     purchase_date = Column(Date, nullable=False)
-    purchase_price = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
-    salvage_value = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
+    purchase_price = Column(Numeric(15, 2), nullable=False, default=0)
+    salvage_value = Column(Numeric(15, 2), nullable=False, default=0)
     description = Column(Text, nullable=True)
 
     # Maintained by depreciation runs / disposal — never edited directly.
-    accumulated_depreciation = Column(
-        Numeric(15, 2), nullable=False, default=Decimal("0")
-    )
+    accumulated_depreciation = Column(Numeric(15, 2), nullable=False, default=0)
     last_depreciation_date = Column(Date, nullable=True)
 
     disposal_date = Column(Date, nullable=True)

@@ -320,41 +320,6 @@ def invoice_email_context(invoice, company_settings: dict, pay_url: str = None) 
     }
 
 
-def invoice_email_context(invoice, company_settings: dict, pay_url: str = None) -> dict:
-    """What a saved `invoice_email` template can reference.
-
-    Kept in one place so the preview and the send cannot drift — the reason
-    they could before is that there was no shared renderer at all.
-    """
-    from app.services.settings_service import redact_secrets
-    from app.services.terminology import terms_for
-
-    terms = terms_for(company_settings)
-    return {
-        "invoice": invoice,
-        "inv": invoice,  # the file template's name for it
-        # GHSA-c3v4-f43f-4wqm. The `invoice_email` template is operator-
-        # editable and, since #140, actually rendered — so `{{ company }}`
-        # would dump every decrypted credential into an email addressed to
-        # whoever the sender chooses. Redacted at the point the context is
-        # built, so no caller can forget.
-        "company": redact_secrets(company_settings),
-        "customer_name": (
-            invoice.customer.name if invoice.customer else terms("Customer")
-        ),
-        # Omitted rather than None when no provider is enabled. `{{ pay_url }}`
-        # used to render the literal text "None" into a customer's email, and
-        # `resolved_to_nothing` could not flag it because None is a real
-        # value. Undefined renders as empty, is reported, and `{% if pay_url %}`
-        # — which the shipped default uses — is still correctly falsy.
-        # @skytech, 2.12.1 gate: the one gap the feature is shaped to catch
-        # and structurally could not.
-        **({"pay_url": pay_url} if pay_url else {}),
-        "doc_label": invoice_email_label(invoice, company_settings),
-        "terms": terms,
-    }
-
-
 def _note_paragraph(note: str) -> str:
     """The operator's own message, as an escaped paragraph.
 

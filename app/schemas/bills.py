@@ -23,7 +23,7 @@ class BillLineCreate(StrictModel):
     is_billable: bool = False
     description: Optional[str] = None
     quantity: float = 1
-    rate: Money = Decimal("0")
+    rate: float = 0
     line_order: int = 0
 
     @model_validator(mode="after")

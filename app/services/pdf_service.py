@@ -6,7 +6,6 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from app.services import storage
 from app.services.accounting import quantize_cents
 
 TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
@@ -204,9 +203,8 @@ def _render(template_name: str, company_settings: dict, **context) -> str:
     template = _jinja_env.get_template(template_name)
     # Every document carries the company logo when one is set (discussion
     # #108: only the analytics PDF and the new-hire report ever received it).
-    context.setdefault(
-        "company_logo_data_uri", _company_logo_data_uri(company_settings)
-    )
+    if "company_logo_data_uri" not in context:
+        context["company_logo_data_uri"] = _company_logo_data_uri(company_settings)
     return template.render(
         company=company_settings, terms=terms_for(company_settings), **context
     )
