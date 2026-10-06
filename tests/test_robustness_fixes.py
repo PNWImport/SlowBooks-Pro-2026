@@ -43,8 +43,13 @@ def test_emailing_an_invoice_with_nobody_to_send_it_to_is_a_400(
 
 
 def test_the_invoice_email_goes_to_the_customers_address_by_default(
-    authed_client, db_session, seed_accounts
+    authed_client, db_session, seed_accounts, monkeypatch
 ):
+    # What is under test is who the mail goes to, not the PDF: stub the render
+    # so it also runs where WeasyPrint's native stack is not installed.
+    from app.routes.invoices import documents
+
+    monkeypatch.setattr(documents, "generate_invoice_pdf", lambda inv, co: b"%PDF-")
     customer = authed_client.post(
         "/api/customers", json={"name": "Has Email", "email": "buyer@example.com"}
     ).json()

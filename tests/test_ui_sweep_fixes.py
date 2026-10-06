@@ -54,7 +54,7 @@ def _code(client, code, rate_from):
 
 # 1 -------------------------------------------------------------------------
 def test_benefit_form_sends_effective_from_for_first_rate():
-    src = (JS / "benefits.js").read_text()
+    src = (JS / "benefits.js").read_text(encoding="utf-8")
     assert "effective_from: raw.effective_from || todayISO()" in src
 
 
@@ -123,7 +123,7 @@ def test_terminated_employee_final_wages_rule(client, seed_accounts):
 
 
 def test_run_picker_lists_terminated_and_disables_after_termination():
-    src = (JS / "payroll.js").read_text()
+    src = (JS / "payroll.js").read_text(encoding="utf-8")
     assert "e.is_active || e.termination_date" in src
     assert "pr-terminated" in src and "_syncTerminated" in src
     assert re.search(r"start > term", src)
@@ -150,14 +150,14 @@ def test_terminate_reports_benefit_assignments_and_dialog_labels_them(
     assert r.status_code == 200, r.text
     assert r.json()["benefit_assignments_ended"] == 1
     assert r.json()["benefit_enrollments_ended"] == 0  # coverage plans only
-    js = (JS / "employees.js").read_text()
+    js = (JS / "employees.js").read_text(encoding="utf-8")
     assert "result.benefit_assignments_ended" in js
     assert "Coverage enrollments ended" in js
 
 
 # 4/5 -----------------------------------------------------------------------
 def test_reconcile_conflict_never_silently_discards_typed_input():
-    src = (JS / "banking.js").read_text()
+    src = (JS / "banking.js").read_text(encoding="utf-8")
     block = src[src.index("async createReconciliation") :]
     block = block[
         : (
@@ -171,7 +171,7 @@ def test_reconcile_conflict_never_silently_discards_typed_input():
 
 
 def test_statement_lines_expose_restore_and_unmatch_buttons():
-    src = (JS / "banking.js").read_text()
+    src = (JS / "banking.js").read_text(encoding="utf-8")
     assert "BankingPage.restoreLine(" in src.split("_handledAction(t, accountId) {")[1]
     assert "BankingPage.unmatchLine(" in src
     assert "line_reconciled" in src and "Unmatch unavailable:" in src
@@ -220,7 +220,7 @@ def test_statement_line_reports_reconciliation_lock(client, db_session):
 def test_garnishment_form_sends_agency_fields_and_register_clears_missing(
     client, seed_accounts
 ):
-    src = (JS / "deductions.js").read_text()
+    src = (JS / "deductions.js").read_text(encoding="utf-8")
     for name in ("agency_name", "agency_address", "remit_reference"):
         assert f'name="{name}"' in src
         assert f"{name}: f.{name}.value" in src

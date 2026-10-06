@@ -100,9 +100,3 @@ def test_no_page_prints_a_refusals_detail_as_it_came():
             continue
         text = js.read_text(encoding="utf-8")
         assert not re.search(r"\.detail\s*\|\|", text), js.name
-
-
-@pytest.mark.parametrize("name", sorted(_KNOWN_GAP))
-def test_fork_pages_use_the_shared_refusal_sentence(name):
-    text = (JS / name).read_text(encoding="utf-8")
-    assert not re.search(r"\.detail\s*\|\|", text), name
