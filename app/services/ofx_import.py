@@ -12,6 +12,10 @@ from app.models.banking import BankTransaction
 from app.services.bank_rules_engine import apply_bank_rules
 
 
+class OfxFormatError(ValueError):
+    """The upload is not an OFX/QFX bank file."""
+
+
 def parse_ofx(content: str) -> list[dict]:
     """Parse OFX/QFX file content into a list of transaction dicts.
     Uses ofxparse if available, falls back to simple regex parsing."""
@@ -26,7 +30,12 @@ def parse_ofx(content: str) -> list[dict]:
         else:
             content_bytes = content
 
-        ofx = OfxParser.parse(BytesIO(content_bytes))
+        try:
+            ofx = OfxParser.parse(BytesIO(content_bytes))
+        except Exception as exc:  # ofxparse raises its own, and plain, errors
+            raise OfxFormatError(
+                "This does not look like an OFX or QFX bank file."
+            ) from exc
 
         for account in ofx.accounts:
             for txn in account.statement.transactions:

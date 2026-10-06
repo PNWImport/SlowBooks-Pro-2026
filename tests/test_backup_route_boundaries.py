@@ -16,6 +16,19 @@ def backup_dir(tmp_path, monkeypatch):
     return directory
 
 
+def test_restore_rejects_trailing_line_break_before_backup_or_file_access(
+    client, monkeypatch
+):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Invalid filename reached backup or restore")
+
+    monkeypatch.setattr(backups, "create_backup", unexpected)
+    monkeypatch.setattr(backups, "restore_backup", unexpected)
+    response = client.post("/api/backups/restore", json={"filename": "snapshot.db\n"})
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid filename"}
+
+
 @pytest.mark.parametrize(
     "result,status",
     [

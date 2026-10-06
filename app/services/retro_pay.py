@@ -20,6 +20,7 @@
 # is a legal question, not a payroll calculation.
 # ============================================================================
 
+import json
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -28,9 +29,14 @@ from app.models.payroll import (
     PayRun,
     PayRunStatus,
     PayStub,
-    PayType,
+    PayFrequency,
     periods_per_year,
 )
+
+
+class RetroPayConflict(ValueError):
+    """Source earnings or earlier retro claims need explicit reconciliation."""
+
 
 CENT = Decimal("0.01")
 
@@ -73,17 +79,71 @@ def prorated_salary_gross(
     return _q(blended)
 
 
-def _stub_gross_at_rate(stub: PayStub, employee: Employee, rate: Decimal) -> Decimal:
-    """What a processed stub's gross would have been at a different rate."""
-    if employee.pay_type == PayType.SALARY:
-        return _q(rate / periods_per_year(employee.pay_frequency))
+def _stub_gross_at_rate(stub: PayStub, employee: Employee, rate: Decimal):
+    """Reprice recorded rate-derived earnings, preserving fixed original tips.
+
+    None means an explicitly override-priced or zero-wage check. We do not
+    infer historical salary frequency, proration or a minimum-wage law. A
+    recorded top-up preserves the gross floor already guaranteed on that
+    check rather than silently subtracting it from a raise's arrears.
+    """
+    try:
+        detail = json.loads(stub.detail_json or "null")
+    except (TypeError, ValueError):
+        detail = None
+    earnings = detail.get("_payroll_earnings") if isinstance(detail, dict) else None
+    if not stub.gross_pay:
+        return None
+    if earnings is not None:
+        if not isinstance(earnings, dict) or earnings.get("version") != 1:
+            raise RetroPayConflict(
+                "Historical earnings snapshot is unverified; review this retro payment."
+            )
+        source = earnings.get("source")
+        if source == "override":
+            return None
+        if source not in ("salary", "hourly"):
+            raise RetroPayConflict(
+                "Historical earnings source is unverified; review this retro payment."
+            )
+    else:
+        raise RetroPayConflict(
+            "Historical rate-derived earnings are unverified; review legacy payroll before applying retro pay."
+        )
+    if employee.pay_type is None or source != employee.pay_type.value:
+        raise RetroPayConflict(
+            "Historical and current pay types use different rate units. "
+            "Reconcile the hourly/salary conversion before applying retro pay."
+        )
+    tips = Decimal(str(stub.reported_tips or 0)) + Decimal(str(stub.paycheck_tips or 0))
+    if source == "salary":
+        if (
+            not isinstance(earnings.get("prorated_salary"), bool)
+            or earnings["prorated_salary"]
+        ):
+            raise RetroPayConflict(
+                "Prorated salary requires explicit retro reconciliation; no historical rates were inferred."
+            )
+        try:
+            frequency = PayFrequency(earnings["pay_frequency"])
+        except (KeyError, ValueError, TypeError) as exc:
+            raise RetroPayConflict(
+                "Historical salary frequency is unverified; review this retro payment."
+            ) from exc
+        return _q(rate / periods_per_year(frequency) + tips)
     reg = Decimal(str(stub.regular_hours or 0))
     ot = Decimal(str(stub.overtime_hours or 0))
     dt = Decimal(str(stub.doubletime_hours or 0))
-    if reg == 0 and ot == 0 and dt == 0:
-        # Legacy stubs recorded only total hours — treat as all-regular.
-        reg = Decimal(str(stub.hours or 0))
-    return _q(reg * rate + ot * rate * Decimal("1.5") + dt * rate * Decimal("2"))
+    if reg + ot + dt <= 0:
+        raise RetroPayConflict(
+            "Historical hourly earnings have no verified hours; review this retro payment."
+        )
+    repriced = _q(
+        reg * rate + ot * rate * Decimal("1.5") + dt * rate * Decimal("2") + tips
+    )
+    if stub.tip_credit_topup:
+        repriced = max(repriced, Decimal(str(stub.gross_pay)))
+    return repriced
 
 
 def compute_retro_pay(
@@ -91,7 +151,7 @@ def compute_retro_pay(
 ) -> dict:
     """The shortfall owed for periods already paid since `effective_date`.
 
-    Compares each non-void stub with pay_date >= effective_date against
+    Compares each processed stub with pay_date >= effective_date against
     what it would have paid at `new_rate`. Off-cycle/bonus stubs with a
     gross override re-price to the same figure (their gross wasn't
     rate-derived), so they contribute zero — correct, since a bonus isn't
@@ -107,8 +167,8 @@ def compute_retro_pay(
         .join(PayRun, PayStub.pay_run_id == PayRun.id)
         .filter(
             PayStub.employee_id == employee_id,
-            PayRun.status != PayRunStatus.VOID,
-            PayRun.pay_date >= effective_date,
+            PayRun.status == PayRunStatus.PROCESSED,
+            PayRun.period_end >= effective_date,
         )
         .order_by(PayRun.pay_date)
         .all()
@@ -123,6 +183,13 @@ def compute_retro_pay(
             continue
         paid = Decimal(str(stub.gross_pay or 0))
         would_have = _stub_gross_at_rate(stub, emp, new_rate)
+        if would_have is None:
+            continue
+        if run.period_start < effective_date:
+            raise RetroPayConflict(
+                "The raise begins inside a paid work period with no verified "
+                "hour/rate split. Reconcile that partial period before applying retro pay."
+            )
         diff = _q(would_have - paid)
         periods.append(
             {
@@ -135,6 +202,12 @@ def compute_retro_pay(
         )
         total += diff
 
+    owed_run_ids = {
+        period["pay_run_id"] for period in periods if period["difference"] > 0
+    }
+    if owed_run_ids:
+        _refuse_overlapping_retro(db, employee_id, owed_run_ids)
+
     return {
         "employee_id": employee_id,
         "current_rate": float(Decimal(str(emp.pay_rate or 0))),
@@ -143,3 +216,39 @@ def compute_retro_pay(
         "periods": periods,
         "retro_pay_due": float(_q(total)),
     }
+
+
+def _refuse_overlapping_retro(db, employee_id, owed_run_ids, *, exclude_run_id=None):
+    """Reserve source claims on new drafts; never allocate old retro dollars."""
+    adjustments = (
+        db.query(PayStub)
+        .join(PayRun, PayStub.pay_run_id == PayRun.id)
+        .filter(PayStub.employee_id == employee_id, PayRun.status != PayRunStatus.VOID)
+        .all()
+    )
+    for adjustment in adjustments:
+        if adjustment.pay_run_id == exclude_run_id:
+            continue
+        try:
+            detail = json.loads(adjustment.detail_json or "null")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(detail, dict) or "retro_pay" not in detail:
+            continue
+        claimed = detail.get("retro_source_run_ids")
+        if (
+            not isinstance(claimed, list)
+            or not claimed
+            or any(
+                not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0
+                for run_id in claimed
+            )
+            or len(claimed) != len(set(claimed))
+        ):
+            raise RetroPayConflict(
+                "An earlier retro adjustment has no verified source claims. Reconcile it before paying more retro wages; no historical amounts were inferred."
+            )
+        if owed_run_ids.intersection(claimed):
+            raise RetroPayConflict(
+                "A pending or processed retro adjustment already claims these paid periods. Cancel the pending draft or reconcile the paid adjustment before applying another raise."
+            )

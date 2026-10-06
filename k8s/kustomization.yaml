@@ -20,4 +20,4 @@ resources:
 
 images:
   - name: slowbooks
-    newTag: "2.18.0"
+    newTag: "2.19.0"

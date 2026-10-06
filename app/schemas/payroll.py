@@ -125,6 +125,7 @@ class EmployeeResponse(BaseModel):
     manager_id: Optional[int] = None
     is_active: bool = True
     hire_date: Optional[date] = None
+    termination_date: Optional[date] = None
     model_config = {"from_attributes": True}
 
 

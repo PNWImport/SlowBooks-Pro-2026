@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.database import get_db
 from app.routes._helpers import clamp_pagination
 from app.routes.invoices.helpers import refuse_zero_total, resolve_line_taxable
+from app.models.invoices import Invoice
 from app.models.recurring import RecurringInvoice, RecurringInvoiceLine
 from app.models.contacts import Customer
 from app.schemas.recurring import RecurringCreate, RecurringUpdate, RecurringResponse
@@ -178,6 +179,15 @@ def delete_recurring(rec_id: int, db: Session = Depends(get_db)):
     rec = db.query(RecurringInvoice).filter(RecurringInvoice.id == rec_id).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Recurring invoice not found")
+    if db.query(Invoice.id).filter(Invoice.recurring_invoice_id == rec.id).first():
+        # Its invoices point back at it, so deleting the template is a
+        # foreign-key violation (a 500). Making it inactive stops it
+        # generating more without losing where those invoices came from.
+        raise HTTPException(
+            status_code=409,
+            detail="This recurring invoice has already created invoices, so it "
+            "can't be deleted. Make it inactive to stop it creating more.",
+        )
     db.delete(rec)
     db.commit()
     return {"message": "Recurring invoice deleted"}

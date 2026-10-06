@@ -34,6 +34,7 @@ const PayrollPage = {
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="PayrollPage.view(${r.id})">View</button>
                         ${r.status === 'draft' ? `<button class="btn btn-sm btn-primary" onclick="PayrollPage.process(${r.id})">Process</button>` : ''}
+                        ${r.status === 'draft' ? `<button class="btn btn-sm btn-secondary" onclick="PayrollPage.cancel(${r.id})">Cancel draft</button>` : ''}
                         ${r.status === 'processed' ? `<button class="btn btn-sm btn-secondary" onclick="AchFile.open('/api/payroll/${r.id}/nacha', 'payroll_${r.id}.ach')">ACH File</button>` : ''}
                     </td>
                 </tr>`;
@@ -44,7 +45,9 @@ const PayrollPage = {
     },
 
     async showRunForm() {
-        const emps = await API.get('/employees?active_only=true');
+        // Terminated employees stay in the picker: final wages for work up to
+        // the termination date are paid by a normal run.
+        const emps = (await API.get('/employees')).filter(e => e.is_active || e.termination_date);
         if (emps.length === 0) {
             toast('Add employees first', 'error');
             return;
@@ -52,8 +55,8 @@ const PayrollPage = {
 
         let empRows = emps.map(e => `
             <tr data-emp-row="${e.id}">
-                <td><input type="checkbox" class="pr-check" data-emp="${e.id}" checked aria-label="Pay ${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)}"></td>
-                <td>${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)}</td>
+                <td><input type="checkbox" class="pr-check" data-emp="${e.id}" data-term="${e.termination_date ? escapeHtml(e.termination_date) : ''}" ${e.termination_date ? '' : 'checked'} aria-label="Pay ${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)}"></td>
+                <td>${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)}${e.termination_date ? ` <span class="badge badge-draft pr-terminated" data-term="${escapeHtml(e.termination_date)}" title="Terminated ${escapeHtml(e.termination_date)}">terminated</span>` : ''}</td>
                 <td>${e.pay_type}</td>
                 <td class="amount">${formatCurrency(e.pay_rate)}${e.pay_type==='hourly'?'/hr':'/yr'}</td>
                 <td><input type="number" step="0.5" class="pr-hours" data-emp="${e.id}" value="${e.pay_type==='hourly'?'80':'0'}" style="width:60px;"></td>
@@ -64,7 +67,7 @@ const PayrollPage = {
             <form onsubmit="PayrollPage.createRun(event)">
                 <div class="form-grid">
                     <div class="form-group"><label>Period Start *</label>
-                        <input name="period_start" type="date" required value="${todayISO()}" onchange="PayrollPage._refreshTimeEntryPreview()"></div>
+                        <input name="period_start" type="date" required value="${todayISO()}" onchange="PayrollPage._syncTerminated(); PayrollPage._refreshTimeEntryPreview()"></div>
                     <div class="form-group"><label>Period End *</label>
                         <input name="period_end" type="date" required onchange="PayrollPage._refreshTimeEntryPreview()"></div>
                     <div class="form-group"><label>Pay Date *</label>
@@ -85,6 +88,21 @@ const PayrollPage = {
                     <button type="submit" class="btn btn-primary">Calculate Payroll</button>
                 </div>
             </form>`);
+        PayrollPage._syncTerminated();
+    },
+
+    // A terminated employee can be paid only for a period that starts on or
+    // before the termination date (the server refuses later periods).
+    _syncTerminated() {
+        const start = ($('[name="period_start"]') || {}).value;
+        $$('.pr-check[data-term]').forEach(cb => {
+            const term = cb.dataset.term;
+            if (!term) return;
+            const after = !!start && start > term;
+            cb.disabled = after;
+            if (after) cb.checked = false;
+            cb.title = after ? `Terminated ${term}: period starts after termination` : '';
+        });
     },
 
     async _refreshTimeEntryPreview() {
@@ -220,6 +238,31 @@ const PayrollPage = {
             </div>`, { wide: true });
     },
 
+    async cancel(id, acknowledged = false) {
+        if (!acknowledged && !confirm('Cancel this draft? Its time entries and benefit reservations will be released.')) return;
+        try {
+            const done = await API.post(`/payroll/${id}/cancel`,
+                acknowledged ? { acknowledge_unverified_loans: true } : undefined);
+            const review = (done && done.loan_review) || [];
+            toast(review.length
+                ? 'Payroll draft cancelled. Check the loan balances for ' + review.map(l => l.name).join(', ') + ' by hand.'
+                : 'Payroll draft cancelled');
+            App.navigate('#/payroll');
+        } catch (err) {
+            // A draft from before loan reservations were recorded: SlowBooks
+            // cannot tell which loan balance it reduced, so it asks first.
+            const d = err && err.status === 409 && err.detail;
+            if (d && d.code === 'legacy_loan_review') {
+                const list = (d.loans || []).map(l => `  • ${l.name} (${l.code}): ${formatCurrency(l.amount)}`).join('\n');
+                if (confirm(d.message + '\n\n' + list + '\n\nCancel the draft anyway and check those balances yourself?')) {
+                    return PayrollPage.cancel(id, true);
+                }
+                return;
+            }
+            toast(err.message, 'error');
+        }
+    },
+
     async process(id) {
         if (!confirm('Process this pay run? This will create journal entries.')) return;
         // Net pay leaves the bank account (1000) when the run is processed;
@@ -239,7 +282,9 @@ const PayrollPage = {
     // Retro pay — preview the shortfall from a raise, then apply it
     // (raises the rate and stages a draft off-cycle supplemental run).
     async showRetroPayForm() {
-        const emps = await API.get('/employees?active_only=true');
+        // Terminated employees stay in the picker: final wages for work up to
+        // the termination date are paid by a normal run.
+        const emps = (await API.get('/employees')).filter(e => e.is_active || e.termination_date);
         const opts = emps.map(e =>
             `<option value="${e.id}">${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)} — ${formatCurrency(e.pay_rate)}${e.pay_type === 'hourly' ? '/hr' : '/yr'}</option>`
         ).join('');

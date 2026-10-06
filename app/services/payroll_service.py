@@ -5,9 +5,8 @@
 # Method for Automated Payroll Systems) using the 2020+ redesigned Form W-4 —
 # there are no "allowances" anymore. Supplemental wages use Worksheet 4 (flat).
 #
-# DISCLAIMER: Bracket figures are 2026-approximate, modelled on the published
-# Pub 15-T schedule structure. Verify against the current IRS Pub 15-T before
-# relying on these for actual tax filing.
+# Annual federal schedules match the published 2026 Pub 15-T, section 1.
+# State and employer-specific payroll settings require their own verification.
 # ============================================================================
 
 from decimal import Decimal
@@ -18,7 +17,7 @@ from app.services.state_tax import get_engine
 
 # --- FICA -------------------------------------------------------------------
 SS_RATE = Decimal("0.062")  # Social Security 6.2% (employee & employer each)
-SS_WAGE_BASE = Decimal("184500")  # 2026 SS wage base (approximate)
+SS_WAGE_BASE = Decimal("184500")  # 2026 SSA contribution and benefit base
 MEDICARE_RATE = Decimal("0.0145")  # Medicare 1.45% (employee & employer each)
 MEDICARE_ADDITIONAL_RATE = Decimal("0.009")  # extra 0.9% (employee only)
 MEDICARE_ADDITIONAL_THRESHOLD = Decimal("200000")  # withhold the extra above this
@@ -35,74 +34,73 @@ STD_DEDUCTION_ADDBACK = {
     "head_of_household": Decimal("8600"),
 }
 
-# Percentage Method annual schedules as (lower_bound, marginal_rate) pairs,
-# ascending. Cumulative tax is derived in _tax_from_brackets so the schedules
-# stay internally consistent regardless of transcription.
+# IRS 2026 annual percentage-method rows: (lower bound, base tax, rate).
+# Preserve the published base tax: rounded checkbox boundaries cannot be
+# integrated from marginal rates without introducing cent differences.
+# Source: https://www.irs.gov/publications/p15t (Worksheet 1A and section 1).
 _STANDARD = {
     "single": [
-        (Decimal("0"), Decimal("0")),
-        (Decimal("6000"), Decimal("0.10")),
-        (Decimal("17600"), Decimal("0.12")),
-        (Decimal("53150"), Decimal("0.22")),
-        (Decimal("106525"), Decimal("0.24")),
-        (Decimal("197950"), Decimal("0.32")),
-        (Decimal("249725"), Decimal("0.35")),
-        (Decimal("615350"), Decimal("0.37")),
+        (Decimal("0"), Decimal("0.00"), Decimal("0.0")),
+        (Decimal("7500"), Decimal("0.00"), Decimal("0.1")),
+        (Decimal("19900"), Decimal("1240.00"), Decimal("0.12")),
+        (Decimal("57900"), Decimal("5800.00"), Decimal("0.22")),
+        (Decimal("113200"), Decimal("17966.00"), Decimal("0.24")),
+        (Decimal("209275"), Decimal("41024.00"), Decimal("0.32")),
+        (Decimal("263725"), Decimal("58448.00"), Decimal("0.35")),
+        (Decimal("648100"), Decimal("192979.25"), Decimal("0.37")),
     ],
     "married": [
-        (Decimal("0"), Decimal("0")),
-        (Decimal("17100"), Decimal("0.10")),
-        (Decimal("40300"), Decimal("0.12")),
-        (Decimal("111400"), Decimal("0.22")),
-        (Decimal("218150"), Decimal("0.24")),
-        (Decimal("400000"), Decimal("0.32")),
-        (Decimal("503550"), Decimal("0.35")),
-        (Decimal("747200"), Decimal("0.37")),
+        (Decimal("0"), Decimal("0.00"), Decimal("0.0")),
+        (Decimal("19300"), Decimal("0.00"), Decimal("0.1")),
+        (Decimal("44100"), Decimal("2480.00"), Decimal("0.12")),
+        (Decimal("120100"), Decimal("11600.00"), Decimal("0.22")),
+        (Decimal("230700"), Decimal("35932.00"), Decimal("0.24")),
+        (Decimal("422850"), Decimal("82048.00"), Decimal("0.32")),
+        (Decimal("531750"), Decimal("116896.00"), Decimal("0.35")),
+        (Decimal("788000"), Decimal("206583.50"), Decimal("0.37")),
     ],
     "head_of_household": [
-        (Decimal("0"), Decimal("0")),
-        (Decimal("13300"), Decimal("0.10")),
-        (Decimal("29850"), Decimal("0.12")),
-        (Decimal("76400"), Decimal("0.22")),
-        (Decimal("113800"), Decimal("0.24")),
-        (Decimal("205250"), Decimal("0.32")),
-        (Decimal("257000"), Decimal("0.35")),
-        (Decimal("622650"), Decimal("0.37")),
+        (Decimal("0"), Decimal("0.00"), Decimal("0.0")),
+        (Decimal("15550"), Decimal("0.00"), Decimal("0.1")),
+        (Decimal("33250"), Decimal("1770.00"), Decimal("0.12")),
+        (Decimal("83000"), Decimal("7740.00"), Decimal("0.22")),
+        (Decimal("121250"), Decimal("16155.00"), Decimal("0.24")),
+        (Decimal("217300"), Decimal("39207.00"), Decimal("0.32")),
+        (Decimal("271750"), Decimal("56631.00"), Decimal("0.35")),
+        (Decimal("656150"), Decimal("191171.00"), Decimal("0.37")),
     ],
 }
 
-# "Form W-4, Step 2, Checkbox" schedules — used when the employee checked the
-# multiple-jobs box. Roughly the standard schedule with the brackets halved.
 _CHECKBOX = {
     "single": [
-        (Decimal("0"), Decimal("0")),
-        (Decimal("7300"), Decimal("0.10")),
-        (Decimal("13100"), Decimal("0.12")),
-        (Decimal("30875"), Decimal("0.22")),
-        (Decimal("57563"), Decimal("0.24")),
-        (Decimal("103275"), Decimal("0.32")),
-        (Decimal("129163"), Decimal("0.35")),
-        (Decimal("311975"), Decimal("0.37")),
+        (Decimal("0"), Decimal("0.00"), Decimal("0.0")),
+        (Decimal("8050"), Decimal("0.00"), Decimal("0.1")),
+        (Decimal("14250"), Decimal("620.00"), Decimal("0.12")),
+        (Decimal("33250"), Decimal("2900.00"), Decimal("0.22")),
+        (Decimal("60900"), Decimal("8983.00"), Decimal("0.24")),
+        (Decimal("108938"), Decimal("20512.00"), Decimal("0.32")),
+        (Decimal("136163"), Decimal("29224.00"), Decimal("0.35")),
+        (Decimal("328350"), Decimal("96489.63"), Decimal("0.37")),
     ],
     "married": [
-        (Decimal("0"), Decimal("0")),
-        (Decimal("14600"), Decimal("0.10")),
-        (Decimal("26200"), Decimal("0.12")),
-        (Decimal("61750"), Decimal("0.22")),
-        (Decimal("115125"), Decimal("0.24")),
-        (Decimal("206550"), Decimal("0.32")),
-        (Decimal("258325"), Decimal("0.35")),
-        (Decimal("380200"), Decimal("0.37")),
+        (Decimal("0"), Decimal("0.00"), Decimal("0.0")),
+        (Decimal("16100"), Decimal("0.00"), Decimal("0.1")),
+        (Decimal("28500"), Decimal("1240.00"), Decimal("0.12")),
+        (Decimal("66500"), Decimal("5800.00"), Decimal("0.22")),
+        (Decimal("121800"), Decimal("17966.00"), Decimal("0.24")),
+        (Decimal("217875"), Decimal("41024.00"), Decimal("0.32")),
+        (Decimal("272325"), Decimal("58448.00"), Decimal("0.35")),
+        (Decimal("400450"), Decimal("103291.75"), Decimal("0.37")),
     ],
     "head_of_household": [
-        (Decimal("0"), Decimal("0")),
-        (Decimal("10800"), Decimal("0.10")),
-        (Decimal("19075"), Decimal("0.12")),
-        (Decimal("42350"), Decimal("0.22")),
-        (Decimal("61050"), Decimal("0.24")),
-        (Decimal("106775"), Decimal("0.32")),
-        (Decimal("132650"), Decimal("0.35")),
-        (Decimal("224100"), Decimal("0.37")),
+        (Decimal("0"), Decimal("0.00"), Decimal("0.0")),
+        (Decimal("12075"), Decimal("0.00"), Decimal("0.1")),
+        (Decimal("20925"), Decimal("885.00"), Decimal("0.12")),
+        (Decimal("45800"), Decimal("3870.00"), Decimal("0.22")),
+        (Decimal("64925"), Decimal("8077.50"), Decimal("0.24")),
+        (Decimal("112950"), Decimal("19603.50"), Decimal("0.32")),
+        (Decimal("140175"), Decimal("28315.50"), Decimal("0.35")),
+        (Decimal("332375"), Decimal("95585.50"), Decimal("0.37")),
     ],
 }
 
@@ -114,19 +112,13 @@ SUPPLEMENTAL_HIGH_THRESHOLD = Decimal("1000000")
 
 
 def _tax_from_brackets(wage: Decimal, brackets) -> Decimal:
-    """Progressive tax on `wage` given ascending (lower_bound, rate) brackets."""
+    """Apply the IRS row's base tax and marginal rate to adjusted annual wages."""
     if wage <= 0:
         return Decimal("0")
-    tax = Decimal("0")
-    for i, (lower, rate) in enumerate(brackets):
-        if wage <= lower:
-            break
-        upper = brackets[i + 1][0] if i + 1 < len(brackets) else None
-        top = wage if upper is None else min(wage, upper)
-        tax += (top - lower) * rate
-        if upper is None or wage <= upper:
-            break
-    return tax
+    for lower, base_tax, rate in reversed(brackets):
+        if wage >= lower:
+            return base_tax + (wage - lower) * rate
+    return Decimal("0")
 
 
 def federal_income_tax(
@@ -334,6 +326,9 @@ def calculate_withholdings(
     deductions_annual=Decimal("0"),
     extra_withholding=Decimal("0"),
     ytd_gross=Decimal("0"),
+    ytd_fica=None,
+    tips=Decimal("0"),
+    ytd_tips=Decimal("0"),
     work_state: str = "WA",
     withholding_state: str = None,
     work_locality: str = None,
@@ -343,6 +338,7 @@ def calculate_withholdings(
     pretax_deductions=Decimal("0"),
     pretax_fica=Decimal("0"),
     pretax_state=None,
+    taxable_employer=Decimal("0"),
     supplemental: bool = False,
     supplemental_method: str = "flat",
     regular_wages=Decimal("0"),
@@ -365,15 +361,31 @@ def calculate_withholdings(
 
     Returns employee-side withholding, employer-side taxes, the per-state
     results, and an itemized ``detail`` map for pay-stub / form rendering.
+    ``tips`` and ``ytd_tips`` remain in federal/FICA wages but are excluded
+    from Washington Paid Leave and WA Cares premium wages.
+    ``ytd_fica`` is uncapped prior taxable FICA/FUTA wages reconstructed
+    from paid benefit snapshots. None preserves the gross basis for callers
+    without historical snapshots; total pre-tax deductions are not a proxy.
+    ``taxable_employer`` is the separately valued noncash employer contribution
+    explicitly classified as taxable in all modeled wage bases. It increases
+    compensation for taxes, never cash gross or take-home pay.
     """
     gross = _q(gross_pay)
+    fringe = Decimal(str(taxable_employer))
+    if not fringe.is_finite() or fringe < 0:
+        raise ValueError(
+            "Taxable employer contributions must be finite and nonnegative"
+        )
+    fringe = _q(fringe)
+    tax_gross = gross + fringe
     ytd = Decimal(str(ytd_gross))
+    fica_ytd = ytd if ytd_fica is None else Decimal(str(ytd_fica))
     pretax = Decimal(str(pretax_deductions))
     pretax_fica_amt = Decimal(str(pretax_fica))
     pretax_state_amt = pretax if pretax_state is None else Decimal(str(pretax_state))
     pay_periods = periods_per_year(pay_frequency)
 
-    if gross <= 0:
+    if tax_gross <= 0:
         zero = Decimal("0")
         return {
             "gross": zero,
@@ -398,9 +410,9 @@ def calculate_withholdings(
 
     # Income-tax wages drop the full pre-tax total; FICA wages drop only the
     # cafeteria-plan / HSA subset.
-    fed_taxable = max(Decimal("0"), gross - pretax)
-    state_taxable = max(Decimal("0"), gross - pretax_state_amt)
-    fica_wages = max(Decimal("0"), gross - pretax_fica_amt)
+    fed_taxable = max(Decimal("0"), tax_gross - pretax)
+    state_taxable = max(Decimal("0"), tax_gross - pretax_state_amt)
+    fica_wages = max(Decimal("0"), tax_gross - pretax_fica_amt)
 
     # --- Federal income tax ---
     if supplemental:
@@ -432,17 +444,21 @@ def calculate_withholdings(
         )
 
     # --- FICA (on FICA wages — Section 125 / HSA reduce these) ---
-    ss_emp, ss_empr = social_security(fica_wages, ytd)
-    med_emp, med_empr = medicare(fica_wages, ytd)
+    ss_emp, ss_empr = social_security(fica_wages, fica_ytd)
+    med_emp, med_empr = medicare(fica_wages, fica_ytd)
 
     # --- Employer unemployment taxes ---
-    futa_tax = futa(fica_wages, ytd)
+    futa_tax = futa(fica_wages, fica_ytd)
 
     # --- State engine ---
     # The work-state engine drives SUTA situs and state disability/leave
     # premiums; income tax may instead follow the residence state under a
     # reciprocity agreement (see state_tax.reciprocity).
     state_kw = dict(
+        fica_wages=fica_wages,
+        ytd_fica_wages=fica_ytd,
+        tips=Decimal(str(tips)),
+        ytd_tips=Decimal(str(ytd_tips)),
         state_allowances=state_allowances,
         state_extra_withholding=state_extra_withholding,
         state_rate_override=state_rate_override,
@@ -450,7 +466,7 @@ def calculate_withholdings(
     )
     engine = get_engine(work_state)
     state = engine.calculate(
-        gross=gross,
+        gross=tax_gross,
         taxable=state_taxable,
         ytd_gross=ytd,
         pay_periods=pay_periods,
@@ -466,7 +482,7 @@ def calculate_withholdings(
         and (work_state or "").strip().upper() != withholding_state.strip().upper()
     ):
         wh = get_engine(withholding_state).calculate(
-            gross=gross,
+            gross=tax_gross,
             taxable=state_taxable,
             ytd_gross=ytd,
             pay_periods=pay_periods,
@@ -488,7 +504,7 @@ def calculate_withholdings(
     # SUTA follows the WORK state — reciprocity moves income tax to the
     # residence state but never unemployment tax.
     rate = resolve_suta_rate(suta_rate, work_state)
-    suta_tax = suta(fica_wages, ytd, rate, engine.suta_wage_base)
+    suta_tax = suta(fica_wages, fica_ytd, rate, engine.suta_wage_base)
 
     # --- Local / municipal taxes (the layer below the state) ---
     from app.services.local_tax import calculate_local_taxes
@@ -525,8 +541,13 @@ def calculate_withholdings(
         "employer_medicare": med_empr,
         "futa": futa_tax,
         "suta": suta_tax,
+        "employer_suta_wages": _q(
+            _capped_wages(fica_wages, fica_ytd, engine.suta_wage_base)
+        ),
     }
     detail.update(state.detail)
+    if fringe:
+        detail["taxable_employer_benefits"] = fringe
     detail["state_income_tax"] = state_income
     detail.update(local.detail)
     if local.employee or local.employer:

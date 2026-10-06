@@ -46,7 +46,7 @@ def test_owner_merge_upgrade_from_each_parent(tmp_path, parent):
     upgrade("head")
     with closing(sqlite3.connect(path)) as db, db:
         assert db.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("m3heads2026105",)
+            ("b7fringe2026105",)
         ]
         # Whichever parent ran first, no money column is left at precision 12.
         narrow = [

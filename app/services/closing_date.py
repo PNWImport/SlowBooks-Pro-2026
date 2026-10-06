@@ -136,6 +136,16 @@ def check_closing_date(db: Session, txn_date: date, password: str = None):
     If a closing_date_password is set and the caller provides it (as the
     argument, or as the signed-in person's PASSWORD_HEADER on this request),
     allow the change and record that the lock was overridden."""
+    # Whatever the schema allowed, a posting dated outside the believable
+    # window is a typo (a year of 9999 or 0202) that would post into the books.
+    from app.schemas.common import DATE_MAX, DATE_MIN
+
+    if isinstance(txn_date, date) and not DATE_MIN <= txn_date <= DATE_MAX:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Date must be between {DATE_MIN.year} and {DATE_MAX.year}.",
+        )
+
     closing = get_closing_date(db)
     if closing is None:
         return  # No closing date configured

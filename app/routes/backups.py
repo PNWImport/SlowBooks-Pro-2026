@@ -48,9 +48,10 @@ def list_backups(db: Session = Depends(get_db)):
 def make_backup(data: BackupCreate = BackupCreate(), db: Session = Depends(get_db)):
     result = create_backup(db, notes=data.notes)
     if not result.get("success"):
-        raise HTTPException(
-            status_code=500, detail=result.get("error", "Backup failed")
-        )
+        error = result.get("error", "Backup failed")
+        # A missing database tool is the machine's setup, not a server fault.
+        unavailable = "not found" in str(error).lower()
+        raise HTTPException(status_code=503 if unavailable else 500, detail=error)
     return result
 
 

@@ -6,6 +6,7 @@
 import re
 import secrets
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 from fastapi import (
@@ -51,6 +52,11 @@ from app.services.nacha_export import validate_routing_number
 from app.services.onboarding import seed_onboarding_tasks
 from app.services.state_tax import is_supported as state_is_supported
 from app.services.upload_limits import read_limited
+from app.services.payroll_drafts import (
+    HISTORY_KEY,
+    draft_history,
+    lock_payroll_employees,
+)
 
 # Portal tokens get a 1-year hard expiry on top of the 90-day idle window
 # enforced in app/routes/portal.py. Hard expiry forces periodic re-issuance
@@ -582,6 +588,83 @@ class TerminateRequest(StrictModel):
     benefit_coverage_end: date | None = None
 
 
+def _stage_pto_payout(db: Session, emp, amount: Decimal, pay_date: date) -> int:
+    """Stage accrued-PTO payout as a DRAFT off-cycle supplemental pay run.
+
+    One place for it: Terminate stages it on the termination date, and a
+    payout that could not be paid on that date (a later check was paid
+    first) is staged again on a date it can be.
+    """
+    emp_id = emp.id
+    import json as _json
+
+    from app.models.payroll import PayRun, PayRunStatus, PayRunType, PayStub
+    from app.services.payroll_service import calculate_withholdings
+    from app.services.state_tax.reciprocity import withholding_state
+
+    year = pay_date.year
+    ytd = employee_ytd(db, emp_id, year, before=pay_date)
+    result = calculate_withholdings(
+        amount,
+        pay_frequency=emp.pay_frequency.value if emp.pay_frequency else "biweekly",
+        filing_status=emp.filing_status.value if emp.filing_status else "single",
+        ytd_gross=ytd["taxable_gross"],
+        ytd_fica=ytd["fica_wages"],
+        ytd_tips=ytd["tips"],
+        work_state=(emp.work_state or "WA").upper(),
+        withholding_state=withholding_state(
+            (emp.work_state or "WA").upper(), emp.residence_state
+        ),
+        work_locality=emp.work_locality,
+        residence_locality=emp.residence_locality,
+        wc_class_code=emp.wc_class_code,
+        supplemental=True,
+    )
+    run = PayRun(
+        period_start=pay_date,
+        period_end=pay_date,
+        pay_date=pay_date,
+        run_type=PayRunType.OFF_CYCLE,
+        status=PayRunStatus.DRAFT,
+    )
+    db.add(run)
+    db.flush()
+    db.add(
+        PayStub(
+            pay_run_id=run.id,
+            employee_id=emp_id,
+            gross_pay=result["gross"],
+            federal_tax=result["federal"],
+            state_tax=result["state_income"],
+            state_other_employee=result["state_other_employee"],
+            local_tax=result["local_tax"],
+            local_tax_employer=result["local_tax_employer"],
+            ss_tax=result["ss"],
+            medicare_tax=result["medicare"],
+            work_state=(emp.work_state or "WA").upper(),
+            work_locality=emp.work_locality,
+            net_pay=result["net"],
+            employer_ss_tax=result["employer_ss"],
+            employer_medicare_tax=result["employer_medicare"],
+            futa_tax=result["futa"],
+            suta_tax=result["suta"],
+            state_other_employer=result["state_other_employer"],
+            detail_json=_json.dumps(
+                {k: str(v) for k, v in result["detail"].items()}
+                | {
+                    "pto_payout": str(amount),
+                    HISTORY_KEY: draft_history(db, emp_id, pay_date),
+                }
+            ),
+        )
+    )
+    run.total_gross = result["gross"]
+    run.total_taxes = result["total_employee_tax"]
+    run.total_employer_taxes = result["total_employer_tax"]
+    run.total_net = result["net"]
+    return run.id
+
+
 @router.post("/{emp_id}/terminate")
 def terminate_employee(
     emp_id: int, data: TerminateRequest, db: Session = Depends(get_db)
@@ -612,7 +695,7 @@ def terminate_employee(
         raise HTTPException(
             status_code=400, detail="reason must be voluntary or involuntary"
         )
-    emp = db.query(Employee).filter(Employee.id == emp_id).first()
+    emp = lock_payroll_employees(db, [emp_id]).get(emp_id)
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
     if emp.termination_date:
@@ -684,69 +767,9 @@ def terminate_employee(
 
     staged_run_id = None
     if do_payout:
-        import json as _json
-
-        from app.models.payroll import PayRun, PayRunStatus, PayRunType, PayStub
-        from app.services.payroll_service import calculate_withholdings
-        from app.services.state_tax.reciprocity import withholding_state
-
-        amount = Decimal(str(payout["total_payout"]))
-        year = data.termination_date.year
-        ytd = employee_ytd(db, emp_id, year, before=None)
-        result = calculate_withholdings(
-            amount,
-            pay_frequency=emp.pay_frequency.value if emp.pay_frequency else "biweekly",
-            filing_status=emp.filing_status.value if emp.filing_status else "single",
-            ytd_gross=ytd["gross"],
-            work_state=(emp.work_state or "WA").upper(),
-            withholding_state=withholding_state(
-                (emp.work_state or "WA").upper(), emp.residence_state
-            ),
-            work_locality=emp.work_locality,
-            residence_locality=emp.residence_locality,
-            wc_class_code=emp.wc_class_code,
-            supplemental=True,
+        staged_run_id = _stage_pto_payout(
+            db, emp, Decimal(str(payout["total_payout"])), data.termination_date
         )
-        run = PayRun(
-            period_start=data.termination_date,
-            period_end=data.termination_date,
-            pay_date=data.termination_date,
-            run_type=PayRunType.OFF_CYCLE,
-            status=PayRunStatus.DRAFT,
-        )
-        db.add(run)
-        db.flush()
-        db.add(
-            PayStub(
-                pay_run_id=run.id,
-                employee_id=emp_id,
-                gross_pay=result["gross"],
-                federal_tax=result["federal"],
-                state_tax=result["state_income"],
-                state_other_employee=result["state_other_employee"],
-                local_tax=result["local_tax"],
-                local_tax_employer=result["local_tax_employer"],
-                ss_tax=result["ss"],
-                medicare_tax=result["medicare"],
-                work_state=(emp.work_state or "WA").upper(),
-                work_locality=emp.work_locality,
-                net_pay=result["net"],
-                employer_ss_tax=result["employer_ss"],
-                employer_medicare_tax=result["employer_medicare"],
-                futa_tax=result["futa"],
-                suta_tax=result["suta"],
-                state_other_employer=result["state_other_employer"],
-                detail_json=_json.dumps(
-                    {k: str(v) for k, v in result["detail"].items()}
-                    | {"pto_payout": str(amount)}
-                ),
-            )
-        )
-        run.total_gross = result["gross"]
-        run.total_taxes = result["total_employee_tax"]
-        run.total_employer_taxes = result["total_employer_tax"]
-        run.total_net = result["net"]
-        staged_run_id = run.id
 
     db.commit()
     return {
@@ -758,8 +781,124 @@ def terminate_employee(
         "pto_payout_staged": do_payout,
         "pto_payout_run_id": staged_run_id,
         "deductions_deactivated": deactivated,
+        # `deactivated` counts benefit-code assignments (EmployeeBenefit);
+        # coverage enrollments are counted separately below.
+        "benefit_assignments_ended": deactivated,
         "benefit_coverage_end": coverage_end.isoformat(),
         "benefit_enrollments_ended": ended_enrollments,
         "future_benefit_enrollment_ids": future_enrollments,
         "portal_token_revoked": True,
+    }
+
+
+class PtoPayoutRequest(StrictModel):
+    # Default: the first date the payout can be paid on (see the route).
+    pay_date: date | None = None
+    include_sick_payout: bool = False
+
+
+@router.post("/{emp_id}/pto-payout", status_code=201)
+def stage_pto_payout(
+    emp_id: int, data: PtoPayoutRequest, db: Session = Depends(get_db)
+):
+    """Stage a terminated employee's accrued-PTO payout again.
+
+    Terminate stages the payout dated on the termination date. If the final
+    regular paycheck is then paid first (the usual order), that draft can no
+    longer be processed — a draft may not predate a check already paid in
+    the same year, because that would change the paid check's tax history —
+    and Terminate cannot be run twice. This is the way out: cancel the
+    blocked draft, then stage the payout again on a date it can be paid on
+    (by default, the later of the termination date and the last check paid).
+
+    Refused while a payout is already staged, and once one has been paid:
+    processing a payout does not use up the PTO balance, so staging again
+    would pay the same time twice.
+    """
+    import json as _json
+
+    from sqlalchemy import func
+
+    from app.models.payroll import PayRun, PayRunStatus, PayStub
+    from app.services.closing_date import check_closing_date
+    from app.services.termination import compute_pto_payout
+
+    emp = lock_payroll_employees(db, [emp_id]).get(emp_id)
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    if not emp.termination_date:
+        raise HTTPException(
+            status_code=400,
+            detail="Terminate the employee first: a PTO payout belongs to a termination.",
+        )
+
+    earlier = (
+        db.query(PayRun.id, PayRun.status, PayStub.detail_json)
+        .join(PayStub, PayStub.pay_run_id == PayRun.id)
+        .filter(
+            PayStub.employee_id == emp_id,
+            PayRun.status.in_([PayRunStatus.DRAFT, PayRunStatus.PROCESSED]),
+        )
+        .all()
+    )
+    for run_id, status, detail_json in earlier:
+        try:
+            detail = _json.loads(detail_json or "null")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(detail, dict) and "pto_payout" in detail:
+            if status == PayRunStatus.PROCESSED:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"This employee's PTO payout was already paid (pay run "
+                        f"{run_id}). Paying it again would pay the same time twice."
+                    ),
+                )
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"A PTO payout is already staged (pay run {run_id}). Cancel "
+                    "that draft first, then stage it again."
+                ),
+            )
+
+    payout = compute_pto_payout(db, emp, include_sick=data.include_sick_payout)
+    amount = Decimal(str(payout["total_payout"]))
+    if amount <= 0:
+        raise HTTPException(
+            status_code=400, detail="There is no accrued PTO to pay out."
+        )
+
+    last_paid = (
+        db.query(func.max(PayRun.pay_date))
+        .join(PayStub, PayStub.pay_run_id == PayRun.id)
+        .filter(PayStub.employee_id == emp_id, PayRun.status == PayRunStatus.PROCESSED)
+        .scalar()
+    )
+    pay_date = data.pay_date or max(
+        emp.termination_date, last_paid or emp.termination_date
+    )
+    if pay_date < emp.termination_date:
+        raise HTTPException(
+            status_code=422,
+            detail="A PTO payout cannot be dated before the termination date.",
+        )
+    check_closing_date(db, pay_date)
+    if last_paid and last_paid > pay_date and last_paid.year == pay_date.year:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"A check dated {last_paid:%b} {last_paid.day}, {last_paid.year} was "
+                "already paid to this employee. Date the payout on or after it."
+            ),
+        )
+
+    run_id = _stage_pto_payout(db, emp, amount, pay_date)
+    db.commit()
+    return {
+        "employee_id": emp_id,
+        "pay_run_id": run_id,
+        "pay_date": pay_date.isoformat(),
+        "pto_payout": payout,
     }

@@ -210,6 +210,185 @@ def _open_dialog(page, call, ready):
     page.evaluate("() => new Promise((done) => setTimeout(done, 0))")
 
 
+@pytest.mark.parametrize("existing", [None, "unclassified", "fully_taxable"])
+def test_benefit_form_preserves_and_saves_explicit_employer_tax_treatment(
+    browser, existing
+):
+    code = {
+        "id": 11,
+        "code": "FRINGE",
+        "name": "Ordinary employer fringe",
+        "kind": "benefit",
+        "category": "pretax",
+        "calc_method": "fixed_amount",
+        "employer_taxable": existing is not None,
+        "employer_tax_treatment": (
+            "fully_taxable" if existing == "fully_taxable" else None
+        ),
+        "sequence": 100,
+        "burden_routing": "fringe_pool",
+        "rates": [],
+    }
+    submitted = []
+    page = _open(browser, 1280, 800, "#/hr/benefits")
+
+    def serve_benefit(route):
+        if route.request.method in ("POST", "PUT"):
+            submitted.append(route.request.post_data_json)
+            return route.fulfill(json={**code, **submitted[-1]})
+        return route.fulfill(
+            json=[code] if urlsplit(route.request.url).path.endswith("/codes") else code
+        )
+
+    try:
+        page.route("**/api/benefits/codes/**", serve_benefit)
+        page.route("**/api/benefits/codes", serve_benefit)
+        _open_dialog(
+            page,
+            f"BenefitsPage.showCodeForm({11 if existing else 'null'})",
+            '#modal select[name="employer_tax_treatment"]',
+        )
+        treatment = page.get_by_label("Employer tax treatment", exact=True)
+        assert treatment.count() == 1
+        expected = (
+            "fully_taxable"
+            if existing == "fully_taxable"
+            else ("unclassified" if existing else "not_taxable")
+        )
+        assert treatment.input_value() == expected
+        help_text = page.locator("#employer-tax-treatment-help").inner_text()
+        assert "entire employer contribution" in help_text
+        assert "cost and taxable value" in help_text
+        assert "Group-term life" in help_text
+        page.locator('#modal input[name="code"]').fill("FRINGE")
+        page.locator('#modal input[name="name"]').fill("Ordinary employer fringe")
+        page.locator('#modal select[name="kind"]').select_option("benefit")
+        treatment.select_option("fully_taxable")
+        page.get_by_role(
+            "button", name="Save" if existing else "Add Code", exact=True
+        ).click()
+        page.wait_for_function(
+            "() => document.getElementById('modal-overlay').classList.contains('hidden')"
+        )
+        assert len(submitted) == 1
+        assert submitted[0]["employer_taxable"] is True
+        assert submitted[0]["employer_tax_treatment"] == "fully_taxable"
+    finally:
+        page.close()
+
+
+def test_cancel_payroll_draft_persists_void_and_removes_write_actions(
+    browser, client, seed_accounts, db_session
+):
+    """Cancel from the shipped page against real API fixtures, then reload."""
+    from tests.test_benefits_engine import _emp, _run
+    from tests.test_theme_contrast import _open as live_open, _visit, settle
+    from app.models.payroll import PayRun
+
+    employee = _emp(client, rate=25, work_state="TX")
+    run = _run(client, employee["id"], hours=80)
+    assert run["status"] == "draft"
+    page, handled = live_open(browser, client, served={})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    try:
+        page.wait_for_selector("#splash-dismiss")
+        page.click("#splash-dismiss")
+        page.wait_for_function(
+            "() => document.getElementById('status-text')?.textContent === 'Dashboard — Ready'"
+        )
+        _visit(page, handled, "#/payroll")
+        cancel = page.locator(f'button[onclick="PayrollPage.cancel({run["id"]})"]')
+        assert cancel.get_attribute("type") in (None, "button")
+        assert cancel.inner_text() == "Cancel draft"
+        assert cancel.is_visible() and cancel.is_enabled()
+        row = cancel.locator("xpath=../..")
+        assert row.get_by_role("button", name="Process", exact=True).is_visible()
+        row.get_by_role("button", name="View", exact=True).click()
+        page.wait_for_selector("#modal-overlay:not(.hidden)")
+        assert employee["last_name"] in page.locator("#modal-body").inner_text()
+        page.get_by_role("button", name="Close", exact=True).click()
+        confirmations = []
+
+        def accept_cancel(dialog):
+            confirmations.append(dialog.message)
+            dialog.accept()
+
+        page.once("dialog", accept_cancel)
+        cancel.click()
+        assert len(confirmations) == 1
+        assert "time entries and benefit reservations" in confirmations[0]
+        page.wait_for_function(
+            'id => !document.querySelector(`button[onclick="PayrollPage.cancel(${id})"]`)',
+            arg=run["id"],
+        )
+        settle(page, handled)
+        persisted = client.get(f"/api/payroll/{run['id']}")
+        assert persisted.status_code == 200, persisted.text
+        assert persisted.json()["status"] == "void"
+        db_session.expire_all()
+        assert db_session.get(PayRun, run["id"]).transaction_id is None
+        page.reload()
+        settle(page, handled)
+        view = page.locator(f'button[onclick="PayrollPage.view({run["id"]})"]')
+        view.wait_for()
+        row = view.locator("xpath=../..")
+        assert row.locator(".badge").inner_text().lower() == "void"
+        assert row.get_by_role("button", name="Cancel draft", exact=True).count() == 0
+        assert row.get_by_role("button", name="Process", exact=True).count() == 0
+        assert not errors, errors
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+@pytest.mark.parametrize(
+    "route,controls",
+    [
+        ("#/csv", ["#csv-import-form button[type=submit]"]),
+        (
+            "#/qbo",
+            [
+                "#qbo-authorization-code",
+                "#qbo-realm-id",
+                "#qbo-manual-connect button[type=submit]",
+                "#qbo-import-checkboxes label",
+                "#qbo-export-checkboxes label",
+            ],
+        ),
+        ("#/payroll/reports", ["#pr-controls button"]),
+    ],
+)
+def test_dense_import_and_report_controls_have_24_pixel_targets(
+    browser, theme, route, controls
+):
+    page = _open(browser, 1280, 800, route)
+    try:
+        page.evaluate(
+            "t => document.documentElement.setAttribute('data-theme', t)", theme
+        )
+        for selector in controls:
+            page.locator(selector).first.wait_for()
+            sizes = page.locator(selector).evaluate_all(
+                "els => els.map(e => {const r=e.getBoundingClientRect();"
+                " return {width:r.width,height:r.height};})"
+            )
+            assert all(r["width"] >= 24 and r["height"] >= 24 for r in sizes), (
+                theme,
+                selector,
+                sizes,
+            )
+        if route == "#/qbo":
+            # The label's padded area is also a usable checkbox target.
+            label = page.locator("#qbo-import-checkboxes label").first
+            checkbox = label.locator("input")
+            assert checkbox.is_checked()
+            label.click(position={"x": 2, "y": 2})
+            assert not checkbox.is_checked()
+    finally:
+        page.close()
+
+
 HEADER_FIELDS_OUTSIDE_THE_DIALOG = """() => {
     const modal = document.getElementById('modal');
     const body = document.getElementById('modal-body');
@@ -521,5 +700,31 @@ def test_a_report_csv_import_with_errors_says_so(browser):
             "Imported 0 records, 1 error: see the list below",
             "QuickBooks Interop — Import finished with errors",
         ]
+    finally:
+        page.close()
+
+
+def test_hr_team_loads_its_initial_and_remembered_tab(browser):
+    """Opening HR Team shows a tab's data, and returning keeps the selected tab."""
+    page = _open(browser, 1280, 800, "#/")
+    try:
+        page.wait_for_function("() => App.role === 'admin'")
+        page.evaluate("async () => { await App.navigate('#/'); }")
+        page.route(
+            "**/api/hr/org-chart",
+            lambda route: route.fulfill(json={"tree": [], "cycle_employee_ids": []}),
+        )
+        page.route("**/api/hr/reviews", lambda route: route.fulfill(json=[]))
+        page.click("#sidebar a.nav-link[data-page=hr-team]")
+        page.wait_for_selector("#hr-tab-org.btn-primary", timeout=5000)
+        page.wait_for_function(
+            "() => document.getElementById('hr-tab-content').textContent.trim().length > 0"
+        )
+        page.get_by_role("button", name="Reviews", exact=True).click()
+        page.get_by_role("button", name="New Review", exact=True).wait_for()
+        page.evaluate("async () => { await App.navigate('#/reports'); }")
+        page.click("#sidebar a.nav-link[data-page=hr-team]")
+        page.wait_for_selector("#hr-tab-reviews.btn-primary", timeout=5000)
+        page.get_by_role("button", name="New Review", exact=True).wait_for()
     finally:
         page.close()

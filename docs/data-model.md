@@ -72,13 +72,13 @@ files under `migrations/versions/`; for model code, see `app/models/`.
 | `pto_policies` | Accrual policies — rate, method, carryover cap, max balance |
 | `pto_accruals` | Per-employee balance, accrued YTD, and used YTD against a policy |
 | `pto_requests` | Time-off requests with approve/reject lifecycle |
-| `benefit_codes` | Deduction/contribution catalog (401k, HSA, health) with pre/post-tax treatment and GL routing |
+| `benefit_codes` | Deduction/contribution catalog (401k, HSA, health) with per-tax employee reductions, explicit employer tax treatment and GL routing |
 | `benefit_rates` | Dated rate rows per benefit code — the rate in force on a period end date |
 | `employee_groups` | Named groups used to attach a common set of benefit codes |
 | `employee_group_benefits` | Which benefit codes a group confers |
 | `employee_benefits` | Per-employee enrollments in a benefit code, with rate/cap overrides |
 | `benefit_ytd` | Year-to-date accumulators per employee and benefit code |
-| `pay_stub_benefits` | Per-stub benefit amounts, employee and employer side |
+| `pay_stub_benefits` | Per-stub employee/employer amounts and immutable resolved rules, including explicitly classified noncash taxable value |
 | `garnishment_orders` | Court-ordered garnishments — type, calc method, priority, agency |
 | `garnishment_remittances` | Money withheld and owed to an agency, with mark-remitted trail |
 | `pay_schedules` | Named pay cadences — frequency, anchor date, lead days, weekend shift |
@@ -94,6 +94,19 @@ files under `migrations/versions/`; for model code, see `app/models/`.
 | `users` | Server Edition user principals — login, role, password hash |
 | `api_tokens` | Bearer tokens for machine access, with role and last-used stamp |
 | `performance_reviews` | Review lifecycle — draft, submitted, acknowledged |
+
+`benefit_codes.employer_tax_treatment` is nullable `String(24)`, introduced by
+migration `b7fringe2026105`. The API accepts `null` or `"fully_taxable"`; the
+latter requires `employer_taxable=true` and a `benefit` or `both` code. Partial
+updates validate the merged values; explicit `null` clears the treatment.
+Existing taxable flags remain unclassified. New payroll refuses positive
+unclassified taxable contributions rather than inferring special fringe rules.
+The supported treatment requires the entire employer cost to equal ordinary
+taxable value across all modeled bases. `pay_stub_benefits.rule_json` records
+the treatment and `taxable_employer_amount` so current code edits cannot
+reinterpret paid wages; old flag-only snapshots are not reclassified. Cash
+gross is unchanged and the benefit expense/liability is posted once. See the
+[benefits engine contract](design/benefits-engine.md) for refusals and limits.
 
 ## Job Costing
 

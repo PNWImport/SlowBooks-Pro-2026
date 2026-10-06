@@ -296,3 +296,33 @@ def test_a_nonprofits_fields_have_names_too(
         page.close()
     assert opened == len(NONPROFIT_DIALOGS)
     assert pages == dialogs == NOTHING
+
+
+def test_contractor_payees_have_separate_named_fields_on_every_row(
+    browser, company, books
+):
+    """Amount must be announced as Amount, including a dynamically added payee."""
+    page, handled = _open(browser, company)
+    try:
+        page.wait_for_function("() => App.role === 'admin'")
+        settle(page, handled)
+        _visit(page, handled, "#/payroll/contractors")
+        page.evaluate("() => document.getElementById('splash').classList.add('hidden')")
+        page.get_by_role("button", name="New Run", exact=True).click()
+        page.wait_for_function(OPEN)
+        settle(page, handled)
+        assert page.get_by_role("spinbutton", name="Amount", exact=True).count() == 1
+        page.get_by_role("button", name="+ Add Payee", exact=True).click()
+        settle(page, handled)
+        for line in (1, 2):
+            row = page.get_by_role("group", name=f"Payee {line}", exact=True)
+            assert row.get_by_role("combobox", name="Vendor", exact=True).count() == 1
+            assert row.get_by_role("spinbutton", name="Amount", exact=True).count() == 1
+            assert (
+                row.get_by_role("textbox", name="Description", exact=True).count() == 1
+            )
+        assert page.evaluate(UNNAMED, "#modal") == []
+        assert page.evaluate(SHARED, "#modal") == []
+        assert page.evaluate(HINT_ONLY, "#modal") == []
+    finally:
+        page.close()

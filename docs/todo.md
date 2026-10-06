@@ -1,6 +1,15 @@
 # TODO / Working Notes
 
-> **Note (2026-10-05):** This file is a historical record of the pre-intake branch state and is kept as written. The branch has since absorbed upstream 2.19.0, with Alembic migration head `m3heads2026105` and a fresh full-suite run of 6,187 passed / 46 skipped.
+Current work and release gates: [continued October 5 beta checklist](beta-continuation-2026-10-05.md).
+The current completed regression has 6,547 passed / 12 conditional skips,
+zero failures and 96.92% statement coverage, with head `b7fringe2026105`.
+The dated preparation notes below describe earlier snapshots.
+
+> **Earlier October 5 snapshots:** The initial upstream 2.19.0 intake had
+> 6,187 passed / 46 skipped; the first completed beta audit had 6,414 passed /
+> 12 conditional skips and 96.97% coverage, both at `m3heads2026105`.
+> Those results retain their original provenance. Current release gates are
+> maintained in the continued checklist.
 
 Internal scratchpad. Not user-facing — the README and CHANGELOG don't
 link here on purpose.
@@ -14,6 +23,33 @@ strikethrough. When something lands, summarize it in `CHANGELOG.md`
 under `[Unreleased]` and move its entry down to the archive.
 
 ---
+
+## Open decisions — October 6
+
+The pass that found these is recorded in
+[production verification, October 6](production-verification-2026-10-06.md),
+which also lists the other open decisions (session revocation on logout,
+garnishment remittance posting, benefits on a final check).
+
+- **ACH access for bookkeepers (undecided).** The per-user
+  `can_access_bank_details` flag (Settings → Users → "Bank details") is
+  saved and enforced by `app/services/ach_settings.py`, but it has no effect
+  for a bookkeeper: `/api/payroll` is in `_ADMIN_ONLY_PREFIXES`
+  (`app/main.py`), so every ACH route answers 403 before the flag is read.
+  In practice the flag only distinguishes admins from read-only users. The
+  tests pin the 403 (`tests/test_ach_settings.py`) and test `can_access`
+  directly. Decide one of:
+  1. *Keep admin-only* (current behavior): remove the "Bank details"
+     checkbox for bookkeepers, or say beside it that it applies to
+     administrators only. Smallest change, and the safest default for files
+     carrying every payee's full account number.
+  2. *Honor the flag for the ACH routes only:* carve `/api/payroll/ach-settings`
+     and the NACHA export (`/api/payroll/{id}/nacha`, `/api/contractor-runs/{id}/nacha`)
+     out of the admin-only prefix for a bookkeeper who has the flag, keeping
+     the password prompt, masking and audit events already there; the rest of
+     `/api/payroll` stays admin-only. Needs the role gate and the flag gate to
+     agree on one order, and tests for a flagged and an unflagged bookkeeper.
+  Until decided, treat the checkbox as inert for bookkeepers.
 
 ## Follow-ups decided September 26 (separate PRs, not this release PR)
 
@@ -302,8 +338,18 @@ Pulled up here so the open surface is visible in one place.
 
 **Blocking real payroll use — data verification:**
 - **Paid-leave caps:** Connecticut and Minnesota caps are corrected and boundary-tested.
-  CO/MA/DE items still use the legacy `SS_BASE=176100`; independently verify
-  each program before payroll. See `docs/state-tax-tables.md`.
+  CO/MA/DE now use the verified 2026 Social Security base of 184,500. Employer
+  size tiers and exemptions remain unmodelled. Standard Oregon Paid Leave is
+  implemented; size, equivalent-plan and localization rules remain open.
+  See `docs/state-tax-tables.md`.
+- **Payroll processing and historical records.** Immutable benefit snapshots
+  supply FICA/FUTA YTD. New drafts serialize payroll writes and refuse stale
+  paid history; cancellation refunds verified reservations for restaging.
+  Explicit ordinary taxable employer contributions now supply tax wages and
+  immutable reports. Migration `b7fringe2026105` adds the nullable classification
+  without reclassifying old codes. Missing legacy snapshots, historical bad
+  withholding, unverified retro earnings/partial periods and special fringe
+  rules remain release limits. See the continued October 5 beta checklist.
 - **Independently verify state withholding for supported deployments** — the
   current `StateSpec` data lives in `app/services/state_tax/tables.py`, not JSON
   with a `verified` flag. It records a prior 2026-09-03 verification claim and
@@ -311,8 +357,9 @@ Pulled up here so the open surface is visible in one place.
   See `docs/state-withholding.md`.
 - **Verify local-tax data** — locality JSON files still carry verification
   flags. Check each jurisdiction used; see `docs/local-taxes.md`.
-- **Verify e-file layouts** — EFW2 / Pub 1220 output has never been run
-  through AccuWage or checked against current-year specs.
+- **Verify e-file acceptance** — the October 5 corrections checked EFW2 RW/RT
+  wage fields against official positions. Complete current-year EFW2 / Pub 1220
+  validation and AccuWage acceptance remain open.
 
 **Missing schema dimensions (each blocks a named feature):**
 - **State allowances — implemented:** model, request/response schemas, payroll

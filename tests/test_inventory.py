@@ -380,3 +380,92 @@ def test_valuation_sums_across_tracked_items(client, db_session, seed_accounts):
     assert body["item_count"] >= 1
     # 5 * 10.00 = 50.00 (may be more if other tests in the same txn leaked)
     assert body["total_value"] >= 50.0
+
+
+def test_an_item_created_with_stock_is_valued_and_costs_its_sales(
+    client, db_session, seed_accounts
+):
+    """Quantity entered when creating an item used to land on the row alone:
+    no cost, no movement, no Dr Inventory — so a sale posted $0 of COGS and
+    on-hand disagreed with the movement ledger."""
+    from app.models.accounts import Account
+
+    r = client.post(
+        "/api/items",
+        json={
+            "name": "Opening widget",
+            "item_type": "product",
+            "rate": "25",
+            "cost": "10",
+            "track_inventory": True,
+            "quantity_on_hand": "50",
+            "asset_account_id": seed_accounts["1300"].id,
+        },
+    )
+    assert r.status_code == 201, r.text
+    item = db_session.get(Item, r.json()["id"])
+    assert Decimal(str(item.quantity_on_hand)) == 50
+    assert Decimal(str(item.avg_cost)) == 10
+
+    moves = db_session.query(InventoryMovement).filter_by(item_id=item.id).all()
+    assert [(m.movement_type, Decimal(str(m.quantity))) for m in moves] == [
+        (MovementType.ADJUSTMENT, Decimal("50"))
+    ]
+    assert sum(Decimal(str(m.quantity)) for m in moves) == Decimal(
+        str(item.quantity_on_hand)
+    )
+
+    # Valued at cost: Dr Inventory 500 / Cr Opening Balance Equity 500.
+    lines = (
+        db_session.query(TransactionLine)
+        .filter_by(transaction_id=moves[0].transaction_id)
+        .all()
+    )
+    by_account = {
+        db_session.get(Account, ln.account_id).account_number: (ln.debit, ln.credit)
+        for ln in lines
+    }
+    assert by_account["1300"][0] == Decimal("500")
+    assert by_account["3900"][1] == Decimal("500")
+
+    # And a sale now carries its cost.
+    customer = client.post("/api/customers", json={"name": "Widget Buyer"}).json()
+    sale = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": customer["id"],
+            "date": "2026-06-01",
+            "lines": [
+                {"item_id": item.id, "quantity": 10, "rate": "25", "amount": "250"}
+            ],
+        },
+    )
+    assert sale.status_code == 201, sale.text
+    db_session.expire_all()
+    assert Decimal(str(db_session.get(Item, item.id).quantity_on_hand)) == 40
+    cogs = (
+        db_session.query(TransactionLine)
+        .join(Account, Account.id == TransactionLine.account_id)
+        .filter(Account.account_type == "cogs")
+        .all()
+    )
+    assert sum(Decimal(str(ln.debit or 0)) for ln in cogs) == Decimal("100")
+
+
+def test_opening_stock_with_a_cost_needs_somewhere_to_value_it(
+    client, db_session, seed_accounts
+):
+    seed_accounts["1300"].account_number = "1399"  # no 1300 Inventory account
+    db_session.commit()
+    r = client.post(
+        "/api/items",
+        json={
+            "name": "Unhomed widget",
+            "item_type": "product",
+            "cost": "10",
+            "track_inventory": True,
+            "quantity_on_hand": "5",
+        },
+    )
+    assert r.status_code == 400
+    assert "inventory asset account" in r.json()["detail"]

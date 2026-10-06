@@ -450,8 +450,8 @@ All endpoints under `/api/`. Swagger docs at `/docs`. 300+ routes across 50 rout
 ### Core (Original)
 | Endpoint | Methods | Description |
 |----------|---------|-------------|
-| `/api/dashboard` | GET | Company snapshot stats |
-| `/api/dashboard/charts` | GET | AR aging buckets + monthly revenue trend |
+| `/api/dashboard/data` | GET | Data for selected dashboard widgets (`?ids=a,b,c`); default layout when omitted |
+| `/api/dashboard/widgets` | GET | Widget catalog and default layout |
 | `/api/settings` | GET, PUT | Company settings |
 | `/api/settings/test-email` | POST | Send SMTP test email |
 | `/api/search` | GET | Unified search across all entities |
@@ -517,7 +517,8 @@ All endpoints under `/api/`. Swagger docs at `/docs`. 300+ routes across 50 rout
 | `/api/employees/{id}/portal-token` | GET, POST | Self-service portal token (no company password needed) |
 | `/api/employees/{id}/bank-accounts` | GET, POST, DELETE | ACH direct deposit routing/account numbers (encrypted) |
 | `/api/payroll` | GET, POST | Pay run CRUD |
-| `/api/payroll/{id}/process` | POST | Process pay run (creates balanced journal entries) |
+| `/api/payroll/{id}/process` | POST | Process a verified draft into balanced journal entries; changed paid history returns 409 for review |
+| `/api/payroll/{id}/cancel` | POST | Cancel an unpaid draft, refund verified benefit/loan reservations and release linked time entries |
 | `/api/payroll/{id}/nacha` | POST | Generate NACHA ACH file for direct deposit (needs bank-details access; uses the saved company details) |
 | `/api/payroll/ach-settings` | GET, PUT | Company ACH details — encrypted at rest, masked on read |
 | `/api/payroll/ach-settings/reveal` | POST | Full company ACH details — bank-details access + the caller's password; audited |
@@ -613,11 +614,12 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 |----------|---------|-------------|
 | `/api/audit` | GET | Audit log viewer |
 | `/api/backups` | GET, POST | Backup management |
-| `/api/backups/{id}/download` | GET | Download backup file (administrator) |
+| `/api/backups/download/{filename}` | GET | Download backup file (administrator) |
 | `/api/companies` | GET, POST | Multi-company management |
 | `/api/uploads/logo` | GET, POST, DELETE | Company logo: describe, upload, remove (upload and remove: administrator) |
 | `/api/uploads/logo/{id}` | GET | The logo image, from the company's database |
-| `/api/attachments/{type}/{id}` | GET, POST, DELETE | File attachments CRUD |
+| `/api/attachments/{entity_type}/{entity_id}` | GET, POST | List or upload file attachments |
+| `/api/attachments/{attachment_id}` | DELETE | Delete a file attachment |
 | `/api/bank-rules` | GET, POST, PUT, DELETE | Bank transaction categorization rules |
 | `/api/budgets` | GET, POST, PUT, DELETE | Budget management |
 | `/api/email-templates` | GET, POST, PUT, DELETE | Custom email template management |

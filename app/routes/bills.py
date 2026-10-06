@@ -152,7 +152,16 @@ def _default_bill_number(db: Session, vendor: Vendor, date) -> str:
 def create_bill(data: BillCreate, db: Session = Depends(get_db)):
     check_closing_date(db, data.date)
 
-    vendor = db.query(Vendor).filter(Vendor.id == data.vendor_id).first()
+    # Locked: the duplicate-number check below is check-then-insert with no
+    # unique index behind it, so four bills with one number entered at once
+    # all passed it (two were created). Serializing one vendor's new bills on
+    # the vendor row closes that without touching other vendors' entries.
+    vendor = (
+        db.query(Vendor)
+        .filter(Vendor.id == data.vendor_id)
+        .with_for_update(key_share=True)
+        .first()
+    )
     if not vendor:
         raise HTTPException(status_code=404, detail="Vendor not found")
 

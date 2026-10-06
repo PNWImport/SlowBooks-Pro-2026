@@ -6,7 +6,7 @@
 #   * NY State Disability Insurance (SDI) — 0.5% of gross, capped at $0.60/week
 #   * NY Paid Family Leave (PFL) — % of gross, with an annual maximum
 #
-# Income-tax brackets, the standard deduction, and the PFL rate/cap are
+# Income-tax brackets and the standard deduction are
 # 2026-approximate, simplified figures modelled on the published NY DTF
 # schedule structure. Verify against the current NY withholding tables before
 # relying on these for actual tax filing.
@@ -24,8 +24,9 @@ SDI_RATE = Decimal("0.005")  # 0.5% of gross, employee
 SDI_WEEKLY_CAP = Decimal("0.60")  # statutory weekly maximum
 
 # --- NY Paid Family Leave ---------------------------------------------------
-PFL_RATE = Decimal("0.00388")  # 2026-approximate fraction of gross
-PFL_ANNUAL_MAX = Decimal("354.00")  # 2026-approximate annual premium cap
+PFL_RATE = Decimal("0.00432")  # 2026: 0.432% of gross
+PFL_ANNUAL_MAX = Decimal("411.91")  # 2026 annual employee premium cap
+# https://paidfamilyleave.ny.gov/2026
 
 # --- NY income tax (2026-approximate, simplified) ---------------------------
 STD_DEDUCTION = {
@@ -79,7 +80,9 @@ def _tax_from_brackets(wage: Decimal, brackets) -> Decimal:
 
 class NYEngine(StateEngine):
     state_code: str = "NY"
-    suta_wage_base: Decimal = Decimal("13000")
+    # NY DOL's 2026 base reflects the new average-wage indexing rule.
+    # https://dol.ny.gov/nys-45-quarterly-reporting
+    suta_wage_base: Decimal = Decimal("17600")
 
     def calculate(
         self,
@@ -93,7 +96,7 @@ class NYEngine(StateEngine):
         wc_class_code: str | None,
         **_extra,
     ) -> StateTaxResult:
-        if gross <= 0 or taxable <= 0:
+        if gross <= 0:
             return StateTaxResult()
 
         fs = filing_status if filing_status in _BRACKETS else "single"

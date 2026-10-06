@@ -42,6 +42,10 @@ ZERO = Decimal("0")
 HUNDRED = Decimal("100")
 
 
+class UnsupportedEmployerTaxTreatment(ValueError):
+    """A taxable contribution needs a supported, explicit wage treatment."""
+
+
 def _d(v) -> Decimal:
     if v is None:
         return ZERO
@@ -237,6 +241,48 @@ def resolve_for_employee(
     return sorted(out.values(), key=lambda r: r.sort_key)
 
 
+def codes_missing_rate(
+    db: Session, emp: Employee, period_start: date, period_end: date
+) -> list[BenefitCode]:
+    """Enrolled codes (assignment or group) that are in force for the period
+    but have no dated rate covering its end date. resolve_for_employee skips
+    these, so without this they would be dropped from the stub in silence."""
+    seen: dict[int, BenefitCode] = {}
+    rows = (
+        db.query(EmployeeBenefit)
+        .options(joinedload(EmployeeBenefit.benefit_code).joinedload(BenefitCode.rates))
+        .filter(EmployeeBenefit.employee_id == emp.id, EmployeeBenefit.is_active)
+        .all()
+    )
+    codes = []
+    for a in rows:
+        if a.start_date and a.start_date > period_end:
+            continue
+        if a.end_date and a.end_date < period_start:
+            continue
+        codes.append(a.benefit_code)
+    if emp.employee_group_id:
+        for g in (
+            db.query(EmployeeGroupBenefit)
+            .options(
+                joinedload(EmployeeGroupBenefit.benefit_code).joinedload(
+                    BenefitCode.rates
+                )
+            )
+            .filter(EmployeeGroupBenefit.group_id == emp.employee_group_id)
+            .all()
+        ):
+            codes.append(g.benefit_code)
+    for code in codes:
+        if (
+            code
+            and code_in_force(code, period_start, period_end)
+            and resolve_rate(code, period_end) is None
+        ):
+            seen[code.id] = code
+    return sorted(seen.values(), key=lambda c: (c.sequence or 100, c.code))
+
+
 # ---------------------------------------------------------------------------
 # YTD accumulators
 # ---------------------------------------------------------------------------
@@ -322,6 +368,7 @@ class Line:
     resolved: Resolved
     employee_amount: Decimal = ZERO
     employer_amount: Decimal = ZERO
+    taxable_employer_amount: Decimal = ZERO
     base_before: Decimal = ZERO  # income-tax base before this line
     note: str = ""
 
@@ -371,6 +418,11 @@ class CalcResult:
     @property
     def employer_total(self) -> Decimal:
         return _q(sum((ln.employer_amount for ln in self.lines), ZERO))
+
+    @property
+    def taxable_employer_total(self) -> Decimal:
+        """Noncash employer contributions explicitly taxable in every base."""
+        return _q(sum((ln.taxable_employer_amount for ln in self.lines), ZERO))
 
     # What the tax calculator needs: how much each wage base dropped
     @property
@@ -550,6 +602,33 @@ def compute(
                 er_amt = min(er_amt, max(ZERO, _d(r.employer_annual_cap) - ytd_er))
             er_amt = _q(max(ZERO, er_amt))
 
+        # reported_only: the person has said payroll is not to add this to
+        # wages (group-term life to $50,000), so it is neither blocked nor
+        # taxed here; any taxable value is reported by hand.
+        if (
+            er_amt
+            and code.employer_taxable
+            and code.employer_tax_treatment != "reported_only"
+        ):
+            if code.employer_tax_treatment != "fully_taxable":
+                raise UnsupportedEmployerTaxTreatment(
+                    f"{code.code}: taxable employer contribution has no supported "
+                    "tax treatment. Classify it as an ordinary fully taxable "
+                    "contribution, or as reported only (for group-term life up to "
+                    "$50,000, which is not wages) before payroll; payroll does not "
+                    "value group-term life over $50,000 or other special fringe."
+                )
+            if (
+                code.category == "posttax"
+                and (code.employer_calc_method or code.calc_method) == "match_percent"
+            ):
+                raise UnsupportedEmployerTaxTreatment(
+                    f"{code.code}: a fully taxable employer match on a post-tax "
+                    "deduction is unsupported because available cash can change "
+                    "the match and its tax base."
+                )
+            line.taxable_employer_amount = er_amt
+
         line.employee_amount = emp_amt
         line.employer_amount = er_amt
         if emp_amt or er_amt or code.kind == "benefit":
@@ -570,6 +649,17 @@ def record_on_stub(db: Session, stub: PayStub, result: CalcResult, year: int) ->
     for ln in result.lines:
         code = ln.code
         r = ln.resolved
+        balance_after = None
+        balance_reserved = ZERO
+        if (
+            code.tracks_balance
+            and r.assignment is not None
+            and r.assignment.balance_remaining is not None
+            and ln.employee_amount
+        ):
+            balance_before = _d(r.assignment.balance_remaining)
+            balance_after = _q(max(ZERO, balance_before - ln.employee_amount))
+            balance_reserved = _q(balance_before - balance_after)
         rule = {
             "source": r.source,
             "employer_calc_method": code.employer_calc_method,
@@ -596,6 +686,14 @@ def record_on_stub(db: Session, stub: PayStub, result: CalcResult, year: int) ->
             ),
             "taxable_base_before": str(ln.base_before),
             "employer_taxable": bool(code.employer_taxable),
+            "employer_tax_treatment": code.employer_tax_treatment,
+            "taxable_employer_amount": str(ln.taxable_employer_amount),
+            "draft_reservation": {
+                "version": 1,
+                "year": year,
+                "assignment_id": r.assignment.id if r.assignment is not None else None,
+                "balance_reserved": str(balance_reserved),
+            },
         }
         db.add(
             PayStubBenefit(
@@ -630,15 +728,8 @@ def record_on_stub(db: Session, stub: PayStub, result: CalcResult, year: int) ->
                 ln.employee_amount,
                 ln.employer_amount,
             )
-        if (
-            code.tracks_balance
-            and r.assignment is not None
-            and r.assignment.balance_remaining is not None
-            and ln.employee_amount
-        ):
-            r.assignment.balance_remaining = _q(
-                max(ZERO, _d(r.assignment.balance_remaining) - ln.employee_amount)
-            )
+        if balance_after is not None:
+            r.assignment.balance_remaining = balance_after
     db.flush()
 
 
@@ -945,7 +1036,9 @@ STANDARD_CODES = [
         None,
         (False, False, False),
         90,
-        {"employer_taxable": True},
+        # Group-term life to $50,000 is not wages, so payroll leaves it out
+        # of them; coverage above $50,000 is valued and reported by hand.
+        {"employer_taxable": True, "employer_tax_treatment": "reported_only"},
     ),
 ]
 
@@ -970,6 +1063,7 @@ def seed_standard_codes(db: Session) -> list[BenefitCode]:
             sequence=seq,
             tracks_balance=bool(extra.get("tracks_balance")),
             employer_taxable=bool(extra.get("employer_taxable")),
+            employer_tax_treatment=extra.get("employer_tax_treatment"),
             expense_account_id=expense.id if expense else None,
             liability_account_id=liability.id if liability else None,
         )

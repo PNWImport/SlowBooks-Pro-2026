@@ -246,6 +246,23 @@ def test_app_and_migrate_share_the_same_image():
     assert app_image == job_image
 
 
+def test_kustomize_does_not_replace_the_release_image_with_an_older_tag():
+    """The documented apply command must deploy the current release.
+
+    Matching raw Deployment and Job images is insufficient: Kustomize's
+    image transformer can silently replace both with an outdated tag.
+    """
+    from app import __version__
+
+    kust = yaml.safe_load((K8S / "kustomization.yaml").read_text(encoding="utf-8"))
+    override = next(image for image in kust["images"] if image["name"] == "slowbooks")
+    assert override["newTag"] == __version__
+    assert _app_container()["image"] == f"slowbooks:{__version__}"
+    postgres = _one("postgres.yaml", "StatefulSet")
+    cert_image = postgres["spec"]["template"]["spec"]["initContainers"][0]["image"]
+    assert cert_image == _app_container()["image"]
+
+
 def test_network_policies_isolate_the_database_and_cache():
     """Default-deny ingress; Postgres opens only to the app and the migrate
     Job, Redis only to the app, the app only to the ingress namespace."""

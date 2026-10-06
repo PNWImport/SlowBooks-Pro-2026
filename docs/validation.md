@@ -1,6 +1,15 @@
 # Validation — 2026-09-07
 
-> **Note (2026-10-05):** This file is a historical record of the pre-intake branch state and is kept as written. The branch has since absorbed upstream 2.19.0, with Alembic migration head `m3heads2026105` and a fresh full-suite run of 6,187 passed / 46 skipped.
+Current results: [continued beta validation October 5 2026](beta-continuation-2026-10-05.md),
+6,547 passed / 12 conditional skips / zero failures, 96.92% statement
+coverage, including all 47 browser cases and PostgreSQL/OCR. Final-image
+payroll, Docker, Kubernetes, HTTPS and recovery checks pass; remaining release
+gates are recorded in the checklist. Alembic head: `b7fringe2026105`.
+The first beta audit and dated handoffs below retain their historical provenance.
+
+> **Earlier October 5 snapshot:** After upstream 2.19.0 intake, the branch had
+> 6,187 passed / 46 skipped and Alembic head `m3heads2026105`. The fresh beta
+> results above supersede that validation snapshot; earlier handoffs are retained.
 
 Maintainer record for `claude/main-branch-protection-2tqh90`, starting at
 `25126f25635d3ece42ec38a9b25304112484b154`. This records local validation;

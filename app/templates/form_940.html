@@ -51,7 +51,8 @@
         <tbody>
             <tr><td class="box">&mdash;</td><td>Number of employees who received wages</td><td class="r">{{ data.num_employees }}</td></tr>
             <tr><td class="box">3</td><td>Total payments to all employees</td><td class="r">{{ data.total_payments | currency }}</td></tr>
-            <tr><td class="box">4</td><td>Payments exempt from FUTA (over ${{ "%.0f" | format(data.futa_wage_base) }} wage base)</td><td class="r">{{ data.exempt_payments | currency }}</td></tr>
+            <tr><td class="box">4</td><td>Payments exempt from FUTA</td><td class="r">{{ data.exempt_payments | currency }}</td></tr>
+            <tr><td class="box">5</td><td>Payments over ${{ "%.0f" | format(data.futa_wage_base) }} wage base, after exemptions</td><td class="r">{{ data.excess_payments | currency }}</td></tr>
             <tr><td class="box">7</td><td>Total taxable FUTA wages</td><td class="r">{{ data.futa_taxable_wages | currency }}</td></tr>
             <tr class="total"><td class="box">8</td><td>FUTA tax for the year</td><td class="r">{{ data.total_futa_tax | currency }}</td></tr>
         </tbody>

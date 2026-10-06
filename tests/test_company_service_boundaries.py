@@ -19,6 +19,12 @@ def desktop(monkeypatch, tmp_path):
     return tmp_path
 
 
+@pytest.mark.parametrize("filename", ["live.db\n", "live.db\r", "live.db\r\n"])
+def test_company_paths_reject_trailing_line_breaks(desktop, filename):
+    assert service.safe_company_filename(filename) is None
+    assert service.company_db_path(filename) is None
+
+
 @pytest.mark.parametrize("contents", ["{", "[]", "null"])
 def test_invalid_manifest_falls_back_without_overwriting_file(desktop, contents):
     path = service.manifest_path()

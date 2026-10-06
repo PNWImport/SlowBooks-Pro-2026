@@ -57,6 +57,31 @@ def test_itemization_does_not_double_count_totals_or_employer_costs():
     ]
 
 
+@pytest.mark.parametrize("earning", ["retro_pay", "pto_payout"])
+def test_supplemental_earnings_are_not_printed_as_deductions(earning):
+    stub = PayStub(
+        gross_pay=400,
+        net_pay=Decimal("281.40"),
+        detail_json=json.dumps(
+            {
+                "federal_income_tax": "88.00",
+                "social_security_employee": "24.80",
+                "medicare_employee": "5.80",
+                earning: "400.00",
+            }
+        ),
+    )
+    lines = pdf._deduction_lines(stub, [stub])
+    assert [row["label"] for row in lines] == [
+        "Federal Income Tax",
+        "Social Security",
+        "Medicare",
+    ]
+    assert sum(row["amount"] for row in lines) == Decimal("118.60")
+    assert sum(row["ytd"] for row in lines) == Decimal("118.60")
+    assert stub.gross_pay - sum(row["amount"] for row in lines) == stub.net_pay
+
+
 @pytest.mark.parametrize("raw", [None, "bad", "[]", '{"reimbursements": 100}'])
 def test_reimbursement_is_added_once(raw):
     assert pdf._addition_lines(PayStub(reimbursements=100, detail_json=raw)) == [

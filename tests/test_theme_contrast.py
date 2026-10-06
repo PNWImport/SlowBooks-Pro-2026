@@ -1034,6 +1034,38 @@ def test_every_page_and_notice_meets_aa_in_both_themes(browser, company, books):
         pages = {}
         for route in routes:
             _visit(page, handled, route)
+            if route == "#/iif":
+                # Validate and import can each explain rejected or skipped rows.
+                page.evaluate("""() => {
+                    IIFPage._showValidationReport({
+                        valid: false, sections_found: [], record_counts: {},
+                        errors: ['An IIF row names an unavailable account.'],
+                        warnings: ['An IIF row was skipped.'],
+                    });
+                    IIFPage._showImportResult({
+                        errors: ['An IIF row names an unavailable account.'],
+                        warnings: ['An IIF row was skipped.'],
+                    });
+                }""")
+                for target in ("iif-validation-result", "iif-import-result"):
+                    assert page.locator(f"#{target} .iif-errors").count() == 1
+                    assert page.locator(f"#{target} .iif-warnings").count() == 1
+            if route == "#/qbo":
+                # Both sync directions can return errors and explanatory notes.
+                # Draw those notices explicitly: a prior failed import may be
+                # present in the suite's shared log, but cannot be the only
+                # reason this contrast sweep covers the result surfaces.
+                page.evaluate("""() => {
+                        const result = {
+                            errors: [{entity: 'accounts', message: 'An imported account could not be posted.'}],
+                            notes: ['An invoice discount was combined for QuickBooks.'],
+                        };
+                        QBOPage._showResult('qbo-import-result', result, 'imported');
+                        QBOPage._showResult('qbo-export-result', result, 'exported');
+                    }""")
+                for target in ("qbo-import-result", "qbo-export-result"):
+                    assert page.locator(f"#{target} .iif-errors").count() == 1
+                    assert page.locator(f"#{target} .iif-warnings").count() == 1
             for theme in ("dark", "light"):
                 _theme(page, theme)
                 pages[(theme, route)] = page.evaluate(PAGE_SWEEP)
@@ -1080,6 +1112,12 @@ def test_every_page_and_notice_meets_aa_in_both_themes(browser, company, books):
     texts = {it["text"] for items in pages.values() for it in items}
     shown = {"Expired", "Expires soon", "Active", "Inactive", "Never", "Note:"}
     shown |= {"Click to browse", "Waterfront Gala", "Checking", "See what changed →"}
+    shown |= {
+        "An IIF row names an unavailable account.",
+        "An IIF row was skipped.",
+        "accounts: An imported account could not be",
+        "An invoice discount was combined for Quick",
+    }
     assert shown <= texts, shown - texts
     assert any(t.startswith("Last accessed:") for t in texts)
     assert [len(items) for items in notices.values()] == [3, 3]

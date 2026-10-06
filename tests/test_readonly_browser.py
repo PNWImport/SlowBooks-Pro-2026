@@ -400,6 +400,16 @@ def _sweep_pages(browser, client, role, books):
         }
         for route in routes:
             _visit(page, handled, route)
+            if route == "#/settings":
+                # Settings starts several independent requests after its shell
+                # mounts. A quiet interval between responses can precede their
+                # controls, so wait for the sections the sweep actually reads.
+                page.wait_for_function("""() =>
+                    document.querySelector('#ai-settings-save') &&
+                    ['classes-list', 'cost-codes-list', 'cost-types-list',
+                     'equipment-list'].every(id =>
+                        document.getElementById(id)?.children.length > 0)""")
+                settle(page, handled)
             if route == "#/analytics":
                 # its list of AI analyses arrives after the charts are drawn,
                 # which can outlast the quiet settle waits for
@@ -546,7 +556,7 @@ def test_no_page_offers_a_read_only_sign_in_a_write(
     # none is offered to the read-only sign-in, on any page
     assert _offered_writes(ro) == {}
     # Payroll and HR say whose they are, rather than half loading
-    hr = ro_run["admin_only"]
+    hr = ro_run["admin_only"] - set(REFUSED_READS)
     assert {"#/payroll", "#/employees", "#/hr/onboarding"} <= hr
     assert {
         route: ro_run["headings"][route]

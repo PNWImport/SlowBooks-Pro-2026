@@ -331,3 +331,38 @@ def test_1099_sums_both_payment_paths(client, db_session, seed_accounts):
     mine = [r for r in rows if r["vendor_id"] == v["id"]][0]
     assert mine["total_paid"] == Decimal("700.00")
     assert mine["reportable"] is True
+
+
+def test_contractor_pay_does_not_post_to_the_seeded_workers_comp_account(
+    client, db_session, seed_accounts
+):
+    """The seeded chart's 6130 is Workers Compensation Insurance. Contractor
+    pay posted there misstates insurance expense and Schedule C line 15."""
+    from app.models.accounts import Account, AccountType
+    from app.models.transactions import TransactionLine
+
+    # The shipped chart's 6130 is Workers Compensation Insurance.
+    seed_accounts["6130"].name = "Workers Compensation Insurance"
+    sub = db_session.query(Account).filter_by(account_number="5300").first()
+    if sub is None:
+        sub = Account(
+            account_number="5300",
+            name="Subcontractor Costs",
+            account_type=AccountType.COGS,
+        )
+        db_session.add(sub)
+    db_session.commit()
+    sub_id = sub.id
+
+    v = _create_vendor(client)
+    run = _create_run(client, [{"vendor_id": v["id"], "amount": 1500}])
+    r = client.post(f"/api/contractor-runs/{run['id']}/process")
+    assert r.status_code == 200, r.text
+    debited = [
+        line.account_id
+        for line in db_session.query(TransactionLine).filter_by(
+            transaction_id=r.json()["transaction_id"]
+        )
+        if line.debit
+    ]
+    assert debited == [sub_id]

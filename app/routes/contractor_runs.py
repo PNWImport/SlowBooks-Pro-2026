@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.routes.payroll.ach import AchOriginating
 from app.services import ach_settings
 from app.database import get_db
-from app.models.accounts import Account
+from app.models.accounts import Account, AccountType
 from app.models.bank_accounts import BankAccountKind
 from app.models.contacts import Vendor
 from app.models.contractor_payments import (
@@ -177,8 +177,23 @@ def process_run(run_id: int, db: Session = Depends(get_db)):
             return _acct(fallback)
         return None
 
-    # 6130 Contractor/Subcontractor expense, falling back to generic expense.
-    expense = _acct("6130", "6000")
+    # The contractor expense account, found by what it is called rather than a
+    # number: a hand-built chart numbers "Contractor Expense" 6130, but the
+    # seeded chart's 6130 is Workers Compensation Insurance (and tax_export
+    # maps it to the insurance line of Schedule C), so a fixed number
+    # misstates one or the other. The seeded chart has "Subcontractor Costs".
+    # No such account: the generic expense account.
+    candidate = (
+        db.query(Account)
+        .filter(
+            Account.is_active.is_(True),
+            Account.account_type.in_([AccountType.EXPENSE, AccountType.COGS]),
+            Account.name.ilike("%contract%"),
+        )
+        .order_by(Account.account_number)
+        .first()
+    )
+    expense = candidate.id if candidate else _acct("6000")
     bank = _acct("1000")
     if not expense or not bank:
         raise HTTPException(
@@ -298,7 +313,10 @@ def export_contractor_nacha(
     orig = ach_settings.originating_for_export(
         request, db, originating.model_dump(), run.pay_date
     )
-    nacha = generate_contractor_nacha_file(db, run_id, orig)
+    try:
+        nacha = generate_contractor_nacha_file(db, run_id, orig)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     ach_settings.record_export(db, "contractor_pay_runs", run_id)
     return PlainTextResponse(
         content=nacha,

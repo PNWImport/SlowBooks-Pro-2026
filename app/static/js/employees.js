@@ -29,6 +29,7 @@ const EmployeesPage = {
                         <button class="btn btn-sm btn-secondary" onclick="EmployeesPage.showForm(${e.id})">Edit</button>
                         <button class="btn btn-sm btn-secondary" onclick="EmployeesPage.viewDetails(${e.id})">Details</button>
                         ${e.is_active ? `<button class="btn btn-sm btn-danger" onclick="EmployeesPage.showTerminateForm(${e.id})">Terminate</button>` : ''}
+                        ${!e.is_active && e.termination_date ? `<button class="btn btn-sm btn-secondary" onclick="EmployeesPage.stagePtoPayout(${e.id})">PTO payout</button>` : ''}
                     </td>
                 </tr>`;
             }
@@ -725,6 +726,18 @@ const EmployeesPage = {
     // portal access, resolves the state final-paycheck deadline, and
     // (when required or requested) stages the accrued-PTO payout as a
     // draft off-cycle run. The final regular paycheck stays manual.
+    // Terminate stages the payout on the termination date; if the final
+    // paycheck was paid first that draft cannot be processed. After
+    // cancelling it, this stages the payout again on a date it can be paid.
+    async stagePtoPayout(id) {
+        if (!confirm("Stage this employee's accrued PTO as a payout draft? You review and process it on the Payroll page.")) return;
+        try {
+            const r = await API.post(`/employees/${id}/pto-payout`, {});
+            toast(`PTO payout staged for ${formatDate(r.pay_date)} — review it on the Payroll page`);
+            App.navigate('#/payroll');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
     showTerminateForm(id) {
         openModal('Terminate Employee', `
             <div id="term-form-fields">
@@ -791,9 +804,9 @@ const EmployeesPage = {
                     ${result.pto_payout_staged
                         ? ` — staged as draft run #${result.pto_payout_run_id}`
                         : ' — not staged'}<br>
-                    Deductions deactivated: ${result.deductions_deactivated};
+                    Benefit/deduction code assignments ended: ${result.benefit_assignments_ended ?? result.deductions_deactivated ?? 0};
                     portal token revoked.<br>
-                    Benefit enrollments ended: ${result.benefit_enrollments_ended || 0}
+                    Coverage enrollments ended: ${result.benefit_enrollments_ended || 0}
                     ${result.future_benefit_enrollment_ids?.length
                         ? `; review ${result.future_benefit_enrollment_ids.length} future enrollment(s)`
                         : ''}.

@@ -12,6 +12,8 @@ from typing import Optional
 
 from app.database import get_db
 from app.models.payments import Payment, PaymentAllocation
+from datetime import date as dt_date
+
 from app.models.invoices import Invoice, InvoiceStatus
 from app.models.contacts import Customer
 from app.services.accounting import (
@@ -31,7 +33,7 @@ class BatchAllocation(StrictModel):
 
 
 class BatchPaymentCreate(StrictModel):
-    date: str
+    date: dt_date
     deposit_to_account_id: Optional[int] = None
     method: Optional[str] = None
     reference: Optional[str] = None
@@ -52,11 +54,9 @@ def create_batch_payment(data: BatchPaymentCreate, db: Session = Depends(get_db)
     integrating the 2.17.3 exploratory fixes). It is now refused, naming the
     invoice; a foreign invoice is paid on its own, in its currency, at the
     rate the money came in at. Amounts must be positive, as for a payment."""
-    from datetime import date as date_type
-
     from app.services.currency import document_currency, home_currency
 
-    txn_date = date_type.fromisoformat(data.date)
+    txn_date = data.date
     check_closing_date(db, txn_date)
 
     if not data.allocations:

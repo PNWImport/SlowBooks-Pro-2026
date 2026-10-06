@@ -30,7 +30,7 @@ const PayrollReportsPage = {
                     <div class="form-group"><label>Year</label>
                         <input type="number" id="pr-year" value="${year}" min="2000" max="2100"></div>
                 </div>
-                <button class="btn btn-primary" onclick="PayrollReportsPage.run()">Run Report</button>
+                <button class="btn btn-primary" style="min-height:24px;" onclick="PayrollReportsPage.run()">Run Report</button>
             </div>
             <div id="pr-results" style="margin-top:14px;"></div>`;
     },

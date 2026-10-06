@@ -35,7 +35,7 @@ BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 # class with a known backup extension. NO path separators, NO ".."
 # components -- this is the trust boundary that CodeQL needs to see at the
 # start of restore_backup() before BACKUP_DIR / filename is constructed.
-_BACKUP_FILENAME_RE = re.compile(r"^[A-Za-z0-9_.-]+\.(sql|dump|backup|db)$")
+_BACKUP_FILENAME_RE = re.compile(r"^[A-Za-z0-9_.-]+\.(sql|dump|backup|db)\Z")
 
 # Every company's backups share one folder, and the old names said nothing
 # about whose they were (explore 2.17.3, macbase1 F25: Riverbend x3,
@@ -44,7 +44,7 @@ _BACKUP_FILENAME_RE = re.compile(r"^[A-Za-z0-9_.-]+\.(sql|dump|backup|db)$")
 # desktop, its database name on a server.
 _NAME_RE = re.compile(
     r"^(?P<slug>.+)_(?P<stamp>\d{8}_\d{6})(?:-(?P<tag>[a-z0-9-]+))?"
-    r"\.(?P<ext>sql|dump|backup|db)$"
+    r"\.(?P<ext>sql|dump|backup|db)\Z"
 )
 LEGACY_SLUG = "slowbooks"
 # The copy taken automatically just before a restore replaces the books.

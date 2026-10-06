@@ -23,7 +23,7 @@ const GarnishmentRemittancesPage = {
             </div>
 
             <div class="toolbar">
-                <select id="rem-status" onchange="GarnishmentRemittancesPage.reload()">
+                <select id="rem-status" aria-label="Remittance status" onchange="GarnishmentRemittancesPage.reload()">
                     <option value="pending" ${GarnishmentRemittancesPage._status === 'pending' ? 'selected' : ''}>Pending</option>
                     <option value="remitted" ${GarnishmentRemittancesPage._status === 'remitted' ? 'selected' : ''}>Remitted</option>
                     <option value="all" ${GarnishmentRemittancesPage._status === 'all' ? 'selected' : ''}>All</option>

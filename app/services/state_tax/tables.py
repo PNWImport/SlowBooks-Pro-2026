@@ -88,7 +88,7 @@ def _br(single, married=None, hoh=None):
 
 
 # Social Security wage base — several PFML programs cap at it.
-SS_BASE = D(176100)
+SS_BASE = D(184500)  # 2026 SSA cap; CO/MA/DE follow the federal cap
 
 STATES: dict[str, StateSpec] = {}
 
@@ -939,15 +939,15 @@ DEDICATED = {
         D(7000),
         "Progressive (DE 44 Method B) + SDI — dedicated engine",
     ),
-    "NY": ("New York", D(12800), "Progressive (NYS-50-T) + SDI/PFL — dedicated engine"),
+    "NY": ("New York", D(17600), "Progressive (NYS-50-T) + SDI/PFL — dedicated engine"),
     "OR": (
         "Oregon",
-        D(54300),
+        D(56700),
         "Progressive + statewide transit tax — dedicated engine",
     ),
     "WA": (
         "Washington",
-        D(72800),
+        D(78200),
         "No income tax; PFML, WA Cares, L&I — dedicated engine",
     ),
 }

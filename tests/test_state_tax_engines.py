@@ -96,11 +96,20 @@ def test_engine_singletons_are_reused():
 
 
 # ---------------------------------------------------------------------------
-# Zero / non-positive wages short-circuit everywhere
+# Non-positive gross short-circuits; premiums still apply to positive gross
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("state", ["WA", "CA", "NY", "OR", "ZZ"])
 @pytest.mark.parametrize("gross,taxable", [("0", "0"), ("0", "2000"), ("2000", "0")])
-def test_nonpositive_wages_produce_empty_result(state, gross, taxable):
+def test_nonpositive_wages_and_gross_based_premiums(state, gross, taxable):
+    if state != "ZZ" and Decimal(gross) > 0:
+        # Premiums use gross wages / hours, not income-tax wages.
+        r = _calc(get_engine(state), gross=Decimal(gross), taxable=Decimal(taxable))
+        assert r.income_tax == 0
+        assert r.employee_other > 0
+        if state == "WA":
+            assert r.detail["WA PFML (employee)"] == Decimal("16.14")
+            assert r.detail["WA Cares"] == Decimal("11.60")
+        return
     r = _calc(get_engine(state), gross=Decimal(gross), taxable=Decimal(taxable))
     assert r.income_tax == Decimal("0")
     assert r.employee_other == Decimal("0")
@@ -116,10 +125,10 @@ def test_wa_has_no_income_tax():
 
 
 def test_wa_pfml_split_71_43_28_57():
-    # Total premium 2000 * 0.0074 = 14.80; employee 71.43% / employer 28.57%.
+    # Total premium 2000 * 0.0113 = 22.60; employee 71.43% / employer 28.57%.
     r = _calc(get_engine("WA"))
-    assert r.detail["WA PFML (employee)"] == Decimal("10.57")  # 14.80*0.7143
-    assert r.detail["WA PFML (employer)"] == Decimal("4.23")  # 14.80*0.2857
+    assert r.detail["WA PFML (employee)"] == Decimal("16.14")  # 22.60*0.7143
+    assert r.detail["WA PFML (employer)"] == Decimal("6.46")  # 22.60*0.2857
 
 
 def test_wa_cares_is_058_percent_of_gross_employee_only():
@@ -163,19 +172,19 @@ def test_ca_income_tax_single_progressive():
     assert _calc(get_engine("CA")).detail["CA income tax"] == Decimal("57.62")
 
 
-def test_ca_sdi_is_uncapped_1_1_percent():
-    # No wage ceiling since 2024 — straight 1.1% of gross.
+def test_ca_sdi_is_uncapped_1_3_percent():
+    # No wage ceiling since 2024 — straight 1.3% of gross.
     r = _calc(get_engine("CA"), gross=Decimal("2000"))
-    assert r.detail["CA SDI"] == Decimal("22.00")
+    assert r.detail["CA SDI"] == Decimal("26.00")
     big = _calc(get_engine("CA"), gross=Decimal("50000"), taxable=Decimal("50000"))
-    assert big.detail["CA SDI"] == Decimal("550.00")  # still 1.1%, no cap
+    assert big.detail["CA SDI"] == Decimal("650.00")  # still 1.3%, no cap
 
 
 def test_ca_low_wage_under_deduction_yields_zero_income_tax():
     # taxable*26 below the standard deduction → no income tax, SDI still applies.
     r = _calc(get_engine("CA"), gross=Decimal("100"), taxable=Decimal("100"))
     assert r.detail["CA income tax"] == Decimal("0.00")
-    assert r.detail["CA SDI"] == Decimal("1.10")
+    assert r.detail["CA SDI"] == Decimal("1.30")
 
 
 def test_ca_married_bracket_is_wider_than_single():
@@ -200,13 +209,13 @@ def test_ny_sdi_hits_weekly_cap():
 
 
 def test_ny_pfl_within_annual_max():
-    # 2000 * 0.00388 = 7.76, well under the 354 annual cap at ytd 0.
-    assert _calc(get_engine("NY")).detail["NY PFL"] == Decimal("7.76")
+    # 2000 * 0.00432 = 8.64, under the 411.91 annual cap at ytd 0.
+    assert _calc(get_engine("NY")).detail["NY PFL"] == Decimal("8.64")
 
 
 def test_ny_pfl_caps_at_annual_max():
     # With ytd_gross already past the PFL max wage, the remaining premium is 0.
-    # PFL_ANNUAL_MAX / PFL_RATE = 354 / 0.00388 ≈ 91,237 of wages exhausts it.
+    # PFL_ANNUAL_MAX / PFL_RATE = 411.91 / 0.00432 ≈ 95,350 of wages exhausts it.
     r = _calc(get_engine("NY"), ytd_gross=Decimal("200000"))
     assert r.detail["NY PFL"] == Decimal("0.00")
 

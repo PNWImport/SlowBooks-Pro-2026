@@ -52,8 +52,8 @@ const TaxFormsPage = {
             </div>
 
             <div class="card" style="margin-bottom:16px;padding:16px">
-                <h3>W-2 / W-3</h3>
-                <div class="form-grid">
+                <h3 id="taxforms-h-w2-w3">W-2 / W-3</h3>
+                <div class="form-grid" role="group" aria-labelledby="taxforms-h-w2-w3">
                     <div class="form-group">
                         <label>Year</label>
                         <input id="w2-year" type="number" value="${currentYear}" min="2000" max="2099" style="width:100px">
@@ -71,8 +71,8 @@ const TaxFormsPage = {
             </div>
 
             <div class="card" style="margin-bottom:16px;padding:16px">
-                <h3>Form 940 (FUTA)</h3>
-                <div class="form-grid">
+                <h3 id="taxforms-h-940">Form 940 (FUTA)</h3>
+                <div class="form-grid" role="group" aria-labelledby="taxforms-h-940">
                     <div class="form-group">
                         <label>Year</label>
                         <input id="f940-year" type="number" value="${currentYear}" min="2000" max="2099" style="width:100px">
@@ -84,8 +84,8 @@ const TaxFormsPage = {
             </div>
 
             <div class="card" style="margin-bottom:16px;padding:16px">
-                <h3>Form 941 (Payroll Tax)</h3>
-                <div class="form-grid">
+                <h3 id="taxforms-h-941">Form 941 (Payroll Tax)</h3>
+                <div class="form-grid" role="group" aria-labelledby="taxforms-h-941">
                     <div class="form-group">
                         <label>Year</label>
                         <input id="f941-year" type="number" value="${currentYear}" min="2000" max="2099" style="width:100px">
@@ -106,8 +106,8 @@ const TaxFormsPage = {
             </div>
 
             <div class="card" style="margin-bottom:16px;padding:16px">
-                <h3>Quarterly SUI (State Unemployment)</h3>
-                <div class="form-grid">
+                <h3 id="taxforms-h-sui">Quarterly SUI (State Unemployment)</h3>
+                <div class="form-grid" role="group" aria-labelledby="taxforms-h-sui">
                     <div class="form-group">
                         <label>Year</label>
                         <input id="sui-year" type="number" value="${currentYear}" min="2000" max="2099" style="width:100px">
@@ -151,8 +151,8 @@ const TaxFormsPage = {
             </div>
 
             <div class="card" style="margin-bottom:16px;padding:16px">
-                <h3>1099-NEC E-File (IRS FIRE/IRIS)</h3>
-                <div class="form-grid">
+                <h3 id="taxforms-h-fire">1099-NEC E-File (IRS FIRE/IRIS)</h3>
+                <div class="form-grid" role="group" aria-labelledby="taxforms-h-fire">
                     <div class="form-group">
                         <label>Year</label>
                         <input id="fire-year" type="number" value="${currentYear}" min="2000" max="2099" style="width:100px">

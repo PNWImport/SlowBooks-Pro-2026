@@ -17,7 +17,8 @@ from app.services.accounting import _q
 from app.services.state_tax.base import StateEngine, StateTaxResult
 
 # --- CA State Disability Insurance ------------------------------------------
-SDI_RATE = Decimal("0.011")  # 1.1% of gross, employee only, NO wage cap
+SDI_RATE = Decimal("0.013")  # 2026: 1.3% of gross, employee only, no cap
+# https://edd.ca.gov/en/payroll_taxes/rates_and_withholding/
 
 # --- CA income tax (2026-approximate, simplified) ---------------------------
 # Standard deduction by filing status.
@@ -87,7 +88,7 @@ class CAEngine(StateEngine):
         wc_class_code: str | None,
         **_extra,
     ) -> StateTaxResult:
-        if gross <= 0 or taxable <= 0:
+        if gross <= 0:
             return StateTaxResult()
 
         fs = filing_status if filing_status in _BRACKETS else "single"
@@ -101,7 +102,7 @@ class CAEngine(StateEngine):
         annual_tax = _tax_from_brackets(annual_taxable, _BRACKETS[fs])
         income_tax = _q(annual_tax / pay_periods)
 
-        # SDI — 1.1% of full gross, employee only, no wage cap.
+        # SDI — 1.3% of full gross, employee only, no wage cap.
         sdi = _q(gross * SDI_RATE)
 
         return StateTaxResult(

@@ -9,12 +9,13 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models.payroll import PayRun, PayStub, PayRunStatus
 from app.services.accounting import _q
 from app.services.payroll_service import FUTA_WAGE_BASE
 from app.services.pdf_service import _jinja_env, render_pdf
+from app.services.payroll_wages import fica_wages, gross_wages
 
 
 def _year_stubs(db, year: int) -> list[PayStub]:
@@ -24,7 +25,11 @@ def _year_stubs(db, year: int) -> list[PayStub]:
     return (
         db.query(PayStub)
         .join(PayRun, PayStub.pay_run_id == PayRun.id)
-        .options(joinedload(PayStub.pay_run), joinedload(PayStub.employee))
+        .options(
+            joinedload(PayStub.pay_run),
+            joinedload(PayStub.employee),
+            selectinload(PayStub.benefits),
+        )
         .filter(PayRun.status == PayRunStatus.PROCESSED)
         .filter(PayRun.pay_date >= start)
         .filter(PayRun.pay_date <= end)
@@ -35,50 +40,55 @@ def _year_stubs(db, year: int) -> list[PayStub]:
 def compute_940(db, year: int) -> dict:
     """Aggregate annual Form 940 (FUTA) totals.
 
-    FUTA taxable wages are computed per employee, capped at the $7,000 wage
-    base; payments above the cap are exempt.
+    FUTA taxable wages exclude recorded qualifying employee benefits, then
+    apply each employee's $7,000 base. Benefit exemptions and excess wages
+    are separate IRS lines.
     """
     stubs = _year_stubs(db, year)
 
     total_payments = Decimal("0")
     futa_tax = Decimal("0")
-    # Running gross-paid per employee so the $7,000 cap can be applied as
-    # later stubs push an employee over the wage base.
+    exempt_payments = Decimal("0")
+    # The cap applies to taxable wages after recorded qualified exclusions.
     paid_by_employee: dict[int, Decimal] = {}
     taxable_by_employee: dict[int, Decimal] = {}
 
     # Process in pay_date order so the per-employee wage base fills correctly.
     for s in sorted(stubs, key=lambda x: (x.pay_run.pay_date, x.id)):
         emp_id = s.employee_id
-        gross = Decimal(str(s.gross_pay or 0))
+        gross = gross_wages(s)
+        futa_wages = fica_wages(s)
         total_payments += gross
+        exempt_payments += gross - futa_wages
         futa_tax += Decimal(str(s.futa_tax or 0))
 
         prior = paid_by_employee.get(emp_id, Decimal("0"))
         if prior >= FUTA_WAGE_BASE:
             taxable = Decimal("0")
-        elif prior + gross > FUTA_WAGE_BASE:
+        elif prior + futa_wages > FUTA_WAGE_BASE:
             taxable = FUTA_WAGE_BASE - prior
         else:
-            taxable = gross
-        paid_by_employee[emp_id] = prior + gross
+            taxable = futa_wages
+        paid_by_employee[emp_id] = prior + futa_wages
         taxable_by_employee[emp_id] = (
             taxable_by_employee.get(emp_id, Decimal("0")) + taxable
         )
 
     total_taxable = sum(taxable_by_employee.values(), Decimal("0"))
-    # Payments exempt from FUTA = total payments above the per-employee cap.
-    exempt_payments = total_payments - total_taxable
+    # IRS lines 4 and 5 distinguish qualifying exemptions from wages over cap.
+    excess_payments = total_payments - exempt_payments - total_taxable
 
     return {
         "year": year,
         # Employees who received wages: a $0.00 stub pays no one.
-        "num_employees": sum(1 for paid in paid_by_employee.values() if paid > 0),
+        "num_employees": len({s.employee_id for s in stubs if gross_wages(s) > 0}),
         "num_stubs": len(stubs),
         # Line 3 — total payments to all employees
         "total_payments": _q(total_payments),
-        # Payments exempt from FUTA (over the $7,000 wage base)
+        # Line 4 — qualifying employee benefit exclusions
         "exempt_payments": _q(exempt_payments),
+        # Line 5 — taxable wages paid above the $7,000 per-employee base
+        "excess_payments": _q(excess_payments),
         # Line 7 — total FUTA taxable wages
         "futa_taxable_wages": _q(total_taxable),
         "futa_wage_base": FUTA_WAGE_BASE,

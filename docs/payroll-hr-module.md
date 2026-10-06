@@ -14,7 +14,7 @@ what's in each tier, where each piece lives, and what's still pending.
 | **Tier 3 — Tax forms (PDF)** | WeasyPrint-rendered, employer-branded, audit-hashed | ✅ | ✅ | ✅ |
 | **Tier 3 — Document audit hashes** | Per-document SHA-256 in PDF footer + `document_audits` as a linked hash chain with signed, exportable checkpoints | ✅ | ✅ | ✅ |
 | **Tier 3 — Portal** | Cookie-backed pay stubs, W-4, bank, PTO, documents, time submission | ✅ | n/a | ✅ |
-| **Tier 3 — Portal cookie session** | URL token only at first claim; subsequent navigation is cookieless | ✅ | n/a | ✅ |
+| **Tier 3 — Portal cookie session** | URL token only at first claim; subsequent navigation uses the session cookie without the URL token | ✅ | n/a | ✅ |
 | **Tier 3 — Portal hardening** | Expiration, no-referrer, rate limiting, employer branding | ✅ | ✅ | ✅ |
 | **PTO year-end carryover** | Batch endpoint applies policy carryover caps + resets YTD | ✅ | n/a | ✅ |
 | **Time-entry → pay-run auto-population** | Pay-run form checkbox pulls approved unpaid hours | ✅ | ✅ | ✅ |
@@ -37,20 +37,55 @@ what's in each tier, where each piece lives, and what's still pending.
 | **Payroll reports** | Journal, deduction register, contractor payments | ✅ | ✅ | ✅ |
 | **Migration parity** | `alembic upgrade head` verified against model metadata | ✅ | n/a | ✅ |
 
-~900 tests across the full suite (one skips without PostgreSQL). Exact
-count: `pytest --collect-only -q | tail -1` — prose figures rot on every
-commit, so this one is deliberately approximate.
+Use `pytest --collect-only -q` for the current collection count. Execution
+results and environment-dependent exclusions are recorded in the
+[continued beta checklist](beta-continuation-2026-10-05.md).
 
 State coverage went from 4 states (WA/CA/NY/OR, hand-written) to all 50 plus
-DC. The other 47 are driven by reviewable JSON tables — see
-[state-tax-tables.md](state-tax-tables.md), and note that every table ships
-unverified until an operator checks it against the state's published guide.
+DC. The other 47 use reviewable `StateSpec` entries in
+`app/services/state_tax/tables.py`. See [state-tax-tables.md](state-tax-tables.md)
+for verified selected 2026 rates and remaining limits; deployments still need
+jurisdiction-specific review of schedules, exemptions and employee inputs.
 
 ---
 
 ## State withholding
 
 All 50 states + DC: dedicated engines for WA / CA / NY / OR, a table-driven engine for the rest (`app/services/state_tax/tables.py`). Parameters, sources and the employee inputs (allowances, extra withholding, elected rate, local rate) are in [state-withholding.md](state-withholding.md). Reciprocity in `state_tax/reciprocity.py`.
+
+## Payroll review and cancellation
+
+Review the saved draft's taxes and net before processing. If another check
+changes its paid-history baseline, Process returns 409 and preserves the
+draft's amounts. Use **Cancel draft**, then create a replacement against the
+updated paid history. Cancellation is available only for unpaid drafts and
+refunds their verified benefit/loan reservations and releases linked time.
+Unverifiable legacy reservations require administrator reconciliation.
+
+For employer contributions, choose the code's tax treatment explicitly.
+**Ordinary fully taxable** applies only when the entire employer contribution
+cost equals the applicable ordinary noncash taxable value across all modeled
+wage bases. The contribution increases tax wages but never cash gross or
+take-home pay, and its benefit expense/liability is posted once. Immutable
+`taxable_employer_amount` snapshots supply later wage reporting. Positive
+unclassified taxable contributions return 422; old taxable flags and flag-only
+history are not automatically reclassified. Special fringe valuation,
+cost/value differences, taxable post-tax matches and employee-tax gross-ups
+need separate implementation and tax review. Payroll also refuses a negative
+cash net or a deduction adjustment that changes the taxable fringe amount.
+
+Retro pay reprices processed regular earnings from work periods wholly covered
+by the raise's effective date, using recorded hours or the historical salary
+frequency. Unpaid, voided, nonregular and explicitly override-priced checks do
+not supply arrears; original tips are retained without being paid again.
+Overlapping pending or paid adjustment claims return 409. Partial work
+periods, legacy unverified earnings or claims, prorated salary and a change in
+hourly/salary units also require reconciliation. Applying a lower current
+rate, or offsetting a negative period difference against another period's
+arrears, returns 400 before changing the rate or staging a payout. A cancelled
+unpaid adjustment can be restaged. Applying retro pay changes the current
+employee rate; cancelling its payout leaves that rate in place. See the
+[continued beta checklist](beta-continuation-2026-10-05.md).
 
 ## Tier 1 — Onboarding, time, PTO
 
@@ -106,7 +141,7 @@ All 50 states + DC: dedicated engines for WA / CA / NY / OR, a table-driven engi
 | | `EmployeeGroup`, `EmployeeGroupBenefit` | Templates: a set of codes applied to everyone in the group |
 | | `EmployeeBenefit` | Per-employee assignment with overrides, caps, loan balance (absorbed the old `EmployeeDeduction`) |
 | | `BenefitYTD`, `PayStubBenefit` | YTD accumulators; posted-run snapshots |
-| | `Garnishment` | Court-ordered wage garnishment with priority |
+| `app/models/deductions.py` | `Garnishment` | Court-ordered wage garnishment with priority |
 
 ### Routes
 
@@ -147,11 +182,11 @@ the header and a tamper-evident audit hash in the footer. The SPA's
 
 | Method + Path | Returns |
 |---------------|---------|
-| `POST /api/payroll/forms/w2/{emp_id}?year=YYYY` | W-2 boxes 1-6 + employee/employer identifiers (JSON) |
+| `POST /api/payroll/forms/w2/{emp_id}?year=YYYY` | Modeled W-2 wage/tax boxes, including separately capped Social Security wages and tips, plus employee identifiers (JSON) |
 | `GET, POST /api/payroll/forms/w2/{emp_id}/pdf?year=YYYY` | W-2 PDF + `document_audits` row |
-| `POST /api/payroll/forms/w3/{year}` | W-3 aggregate across all active employees (JSON) |
+| `POST /api/payroll/forms/w3/{year}` | W-3 aggregate across employees with processed wage statements in the year, including former employees (JSON) |
 | `GET, POST /api/payroll/forms/w3/{year}/pdf` | W-3 PDF |
-| `POST /api/payroll/forms/940/{year}` | Form 940 FUTA — first $7K/employee at 0.6% (JSON) |
+| `POST /api/payroll/forms/940/{year}` | Form 940 FUTA — immutable subject wages capped at $7K/employee, qualifying exclusions and stored FUTA tax (JSON) |
 | `GET, POST /api/payroll/forms/940/{year}/pdf` | Form 940 PDF |
 | `POST /api/payroll/forms/941/{year}/{quarter}` | Quarterly FICA aggregation (JSON) |
 | `POST /api/payroll/forms/941/{year}/{quarter}/pdf` | Form 941 PDF |
@@ -172,11 +207,15 @@ the header and a tamper-evident audit hash in the footer. The SPA's
 
 ### Models
 
-`Employee.portal_token` (192-bit, from `secrets.token_urlsafe(24)`),
-plus expiration tracking:
+`Employee.portal_token` is an application property for the 192-bit link token
+generated with `secrets.token_urlsafe(24)`. The database stores its SHA-256
+digest for lookup and an encrypted copy for administrator redisplay; the
+retired plaintext `portal_token` column stays empty. Expiration tracking uses
+the timestamps below:
 
 ```python
-portal_token = Column(String(64), nullable=True, unique=True)
+portal_token_hash = Column(String(64), nullable=True, unique=True, index=True)
+portal_token_enc = Column(Text, nullable=True)
 portal_token_last_used = Column(DateTime(timezone=True), nullable=True)
 portal_token_expires_at = Column(DateTime(timezone=True), nullable=True)
 ```
@@ -188,7 +227,7 @@ portal_token_expires_at = Column(DateTime(timezone=True), nullable=True)
 | `GET /api/employees/{id}/portal-token` | Mint or return existing token + expiry |
 | `POST /api/employees/{id}/portal-token` | Rotate token (resets expiry windows) |
 
-### Routes — employee (token-authed, rate-limited)
+### Routes — employee (cookie-authenticated after token claim, rate-limited)
 
 All return `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 

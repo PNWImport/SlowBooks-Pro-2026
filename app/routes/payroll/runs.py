@@ -21,9 +21,11 @@ from app.models.time_entries import TimeEntry, TimeEntryStatus
 from app.models.deductions import GarnishmentOrder, GarnishmentRemittance
 from app.models.locations import WorkLocation
 from app.models.accounts import Account
+from app.schemas.common import StrictModel
 from app.schemas.payroll import PayRunCreate, PayRunResponse
 from app.schemas.deductions import GrossUpRequest, GrossUpResponse
 from app.services.payroll_service import _q, calculate_withholdings
+from app.services.payroll_wages import federal_wages
 from app.services.accounting import create_journal_entry
 from app.services.garnishment import (
     GarnishmentSpec,
@@ -37,6 +39,14 @@ from app.services.tips import tip_credit_topup
 from app import config
 from app.services.state_tax.reciprocity import withholding_state
 from app.services import benefits_engine
+from app.services.payroll_drafts import (
+    HISTORY_KEY,
+    begin_payroll_write,
+    draft_history,
+    lock_payroll_employees,
+    release_draft_reservations,
+    validate_draft_history,
+)
 
 
 def _with_employee_names(run: PayRun) -> PayRunResponse:
@@ -106,20 +116,21 @@ def _garnishment_specs(db: Session, employee_id: int) -> list:
 
 
 def _last_regular_gross(db: Session, employee_id: int, before: date) -> Decimal:
-    """Most recent regular-run gross pay — the base for aggregate supplemental."""
+    """Most recent paid regular federal wages for aggregate supplemental tax."""
     stub = (
         db.query(PayStub)
         .join(PayRun, PayStub.pay_run_id == PayRun.id)
+        .options(selectinload(PayStub.benefits))
         .filter(
             PayStub.employee_id == employee_id,
             PayRun.run_type == PayRunType.REGULAR,
-            PayRun.status != PayRunStatus.VOID,
-            PayRun.pay_date < before,
+            PayRun.status == PayRunStatus.PROCESSED,
+            PayRun.pay_date <= before,
         )
-        .order_by(PayRun.pay_date.desc())
+        .order_by(PayRun.pay_date.desc(), PayStub.id.desc())
         .first()
     )
-    return Decimal(str(stub.gross_pay)) if stub else Decimal("0")
+    return federal_wages(stub) if stub else Decimal("0")
 
 
 def _unapproved_time(db: Session, employee_id: int, start: date, end: date):
@@ -184,6 +195,33 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             ),
         )
 
+    employee_ids = [stub.employee_id for stub in data.stubs]
+    if len(employee_ids) != len(set(employee_ids)):
+        raise HTTPException(
+            status_code=422, detail="Payroll must have one stub per employee."
+        )
+    employees = lock_payroll_employees(db, employee_ids)
+    for employee_id in employee_ids:
+        if employee_id not in employees:
+            raise HTTPException(
+                status_code=404, detail=f"Employee {employee_id} not found"
+            )
+
+    # A terminated employee may be paid final wages for work up to the
+    # termination date; a period that starts after it is refused.
+    for employee_id in employee_ids:
+        term = employees[employee_id].termination_date
+        if term and data.period_start > term:
+            emp_ = employees[employee_id]
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"{emp_.full_name} was terminated on {term}; the period "
+                    f"starting {data.period_start} is entirely after that "
+                    "date. Leave them out of this run."
+                ),
+            )
+
     run = PayRun(
         period_start=data.period_start,
         period_end=data.period_end,
@@ -205,11 +243,7 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
     warnings: list[str] = []
 
     for stub_input in data.stubs:
-        emp = db.query(Employee).filter(Employee.id == stub_input.employee_id).first()
-        if not emp:
-            raise HTTPException(
-                status_code=404, detail=f"Employee {stub_input.employee_id} not found"
-            )
+        emp = employees[stub_input.employee_id]
 
         reg = ot = dt = Decimal("0")
         rate = Decimal(str(emp.pay_rate or 0))
@@ -360,16 +394,32 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
         # then the group), in sequence, at the rate in force on the period
         # end date. Ad-hoc amounts on the request are added on top and
         # treated as reducing income-tax wages (pre-tax) or nothing (post).
-        ben = benefits_engine.compute(
-            db,
-            emp,
-            gross,
-            total_hours,
-            data.period_start,
-            data.period_end,
-            year,
-            ytd_gross_before=ytd["gross"],
-        )
+        try:
+            ben = benefits_engine.compute(
+                db,
+                emp,
+                gross,
+                total_hours,
+                data.period_start,
+                data.period_end,
+                year,
+                ytd_gross_before=ytd["gross"],
+            )
+        except benefits_engine.UnsupportedEmployerTaxTreatment as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # An enrolled code with no dated rate for this period is skipped by
+        # the engine (no rate, no deduction). Say so rather than leaving a
+        # bare '—' on the stub; a warning, not a refusal, so payroll is not
+        # blocked, matching how unapproved time is reported above.
+        for missing in benefits_engine.codes_missing_rate(
+            db, emp, data.period_start, data.period_end
+        ):
+            warnings.append(
+                f"{emp.full_name}: benefit code {missing.code} has no rate "
+                f"effective for {data.period_start} to {data.period_end}, so "
+                "it was NOT applied. Add a rate dated on or before the period "
+                "end under Benefits > Rates, then recreate this run."
+            )
         adhoc_pretax = _q(Decimal(str(stub_input.pretax_deductions or 0)))
         adhoc_posttax = _q(Decimal(str(stub_input.posttax_deductions or 0)))
         pretax = ben.pretax_total + adhoc_pretax
@@ -384,7 +434,10 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             other_income_annual=emp.other_income_annual or 0,
             deductions_annual=emp.deductions_annual or 0,
             extra_withholding=emp.extra_withholding or 0,
-            ytd_gross=ytd["gross"],
+            ytd_gross=ytd["taxable_gross"],
+            ytd_fica=ytd["fica_wages"],
+            ytd_tips=ytd["tips"],
+            tips=tips_total,
             work_state=work_state,
             withholding_state=wh_state,
             wc_class_code=emp.wc_class_code,
@@ -397,6 +450,7 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             pretax_deductions=ben.pretax_federal + adhoc_pretax,
             pretax_state=ben.pretax_state + adhoc_pretax,
             pretax_fica=ben.pretax_fica,
+            taxable_employer=ben.taxable_employer_total,
             supplemental=bool(stub_input.supplemental),
             supplemental_method=stub_input.supplemental_method or "flat",
             regular_wages=regular_wages,
@@ -420,17 +474,30 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
         # amounts are identical on both passes, so the withholdings stand.
         available = _q(gross - pretax - result["total_employee_tax"] - garnish_total)
         if posttax > available:
-            ben = benefits_engine.compute(
-                db,
-                emp,
-                gross,
-                total_hours,
-                data.period_start,
-                data.period_end,
-                year,
-                ytd_gross_before=ytd["gross"],
-                posttax_available=available,
-            )
+            initial_fringe = ben.taxable_employer_total
+            try:
+                ben = benefits_engine.compute(
+                    db,
+                    emp,
+                    gross,
+                    total_hours,
+                    data.period_start,
+                    data.period_end,
+                    year,
+                    ytd_gross_before=ytd["gross"],
+                    posttax_available=available,
+                )
+            except benefits_engine.UnsupportedEmployerTaxTreatment as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            if ben.taxable_employer_total != initial_fringe:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"{emp.full_name}: trimming voluntary deductions changes taxable "
+                        "employer benefits. Reduce the deductions and review payroll "
+                        "again before processing."
+                    ),
+                )
             adhoc_posttax = _q(
                 max(Decimal("0"), min(adhoc_posttax, available - ben.posttax_total))
             )
@@ -453,6 +520,30 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
         )
 
         detail = {k: str(v) for k, v in result["detail"].items()}
+        detail["_payroll_earnings"] = {
+            "version": 1,
+            "source": (
+                "override"
+                if stub_input.gross_override is not None
+                else emp.pay_type.value
+            ),
+            "pay_frequency": (
+                emp.pay_frequency.value if emp.pay_frequency else "biweekly"
+            ),
+            "prorated_salary": bool(
+                emp.pay_type.value == "salary"
+                and stub_input.gross_override is None
+                and stub_input.rate_change_date
+                and stub_input.old_rate is not None
+            ),
+        }
+        detail[HISTORY_KEY] = draft_history(
+            db,
+            emp.id,
+            data.pay_date,
+            aggregate=bool(stub_input.supplemental)
+            and stub_input.supplemental_method == "aggregate",
+        )
         detail["pretax_deductions"] = str(pretax)
         for gr in garn_results:
             detail[f"garnishment:{gr.garnishment_type}:{gr.order_id}"] = str(gr.amount)
@@ -555,11 +646,13 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
     """Process a pay run — posts the payroll journal entry."""
     from app.services.closing_date import check_closing_date
 
+    begin_payroll_write(db)
     run = (
         db.query(PayRun)
         .options(selectinload(PayRun.stubs).selectinload(PayStub.benefits))
         .filter(PayRun.id == run_id)
         .with_for_update()
+        .populate_existing()
         .first()
     )
     if not run:
@@ -572,6 +665,10 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
     # like every other JE-posting route. Without this, an operator can process
     # a backdated pay run into a closed period.
     check_closing_date(db, run.pay_date)
+    employees = lock_payroll_employees(db, (s.employee_id for s in run.stubs))
+    if any(stub.employee_id not in employees for stub in run.stubs):
+        raise HTTPException(status_code=409, detail="Payroll employee data is missing.")
+    validate_draft_history(db, run)
 
     def _acct(num, fallback=None):
         a = db.query(Account).filter(Account.account_number == num).first()
@@ -786,6 +883,90 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
     }
 
 
+class CancelPayRunRequest(StrictModel):
+    # For a draft staged before loan reservations were recorded: the person
+    # has seen which loan balances cannot be verified and will check them.
+    acknowledge_unverified_loans: bool = False
+
+
+def _undo_retro_rate_change(run: PayRun, employees: dict) -> None:
+    """Staging a retro draft gives the employee the new pay rate at once.
+    Cancelling the draft pays no arrears, so the raise it staged goes too —
+    but only while the rate is still the one that draft set, so a raise made
+    since is never overwritten."""
+    for stub in run.stubs:
+        try:
+            detail = json.loads(stub.detail_json or "null")
+            if not isinstance(detail, dict) or "retro_pay" not in detail:
+                continue
+            previous = Decimal(detail["retro_previous_pay_rate"])
+            staged = Decimal(detail["retro_new_pay_rate"])
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            continue  # a draft staged before the rate was recorded
+        employee = employees.get(stub.employee_id)
+        if employee is not None and Decimal(str(employee.pay_rate)) == staged:
+            employee.pay_rate = previous
+
+
+@router.post("/{run_id}/cancel")
+def cancel_pay_run(
+    run_id: int,
+    db: Session = Depends(get_db),
+    data: CancelPayRunRequest = None,
+):
+    """Cancel unpaid work and release its exact reservations for restaging."""
+    begin_payroll_write(db)
+    run = (
+        db.query(PayRun)
+        .options(selectinload(PayRun.stubs).selectinload(PayStub.benefits))
+        .filter(PayRun.id == run_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Pay run not found")
+    if run.status != PayRunStatus.DRAFT:
+        raise HTTPException(
+            status_code=409, detail="Only a draft pay run can be cancelled."
+        )
+    if (
+        run.transaction_id is not None
+        or run.burden_job_cost_id is not None
+        or (db.query(GarnishmentRemittance.id).filter_by(pay_run_id=run.id).first())
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="This draft has posting records and requires administrator review.",
+        )
+    employees = lock_payroll_employees(db, (s.employee_id for s in run.stubs))
+    if any(stub.employee_id not in employees for stub in run.stubs):
+        raise HTTPException(status_code=409, detail="Payroll employee data is missing.")
+    loan_review = release_draft_reservations(
+        db,
+        run,
+        acknowledge_unverified_loans=bool(data and data.acknowledge_unverified_loans),
+    )
+    _undo_retro_rate_change(run, employees)
+    entries = (
+        db.query(TimeEntry)
+        .filter(TimeEntry.pay_run_id == run.id)
+        .order_by(TimeEntry.id)
+        .with_for_update()
+        .all()
+    )
+    for entry in entries:
+        entry.pay_run_id = None
+    run.status = PayRunStatus.VOID
+    db.commit()
+    return {
+        "status": "cancelled",
+        "pay_run_id": run.id,
+        "released_time_entries": len(entries),
+        "loan_review": loan_review,
+    }
+
+
 @router.post("/gross-up", response_model=GrossUpResponse)
 def gross_up_paycheck(data: GrossUpRequest, db: Session = Depends(get_db)):
     """Net-to-gross: reverse-solve the gross pay that yields a target take-home."""
@@ -813,7 +994,9 @@ def gross_up_paycheck(data: GrossUpRequest, db: Session = Depends(get_db)):
             other_income_annual=emp.other_income_annual or 0,
             deductions_annual=emp.deductions_annual or 0,
             extra_withholding=emp.extra_withholding or 0,
-            ytd_gross=ytd["gross"],
+            ytd_gross=ytd["taxable_gross"],
+            ytd_fica=ytd["fica_wages"],
+            ytd_tips=ytd["tips"],
             work_state=work_state,
             withholding_state=wh_state,
             wc_class_code=emp.wc_class_code,

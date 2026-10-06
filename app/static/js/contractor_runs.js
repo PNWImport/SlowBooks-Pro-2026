@@ -89,17 +89,17 @@ const ContractorRunsPage = {
                 <input type="text" id="cr-memo" placeholder="August contractor payments">
             </div>
             <div id="cr-lines">
-                <div class="form-group" style="display:flex;gap:8px;align-items:end;" data-line="0">
+                <div class="form-group" style="display:flex;gap:8px;align-items:end;" data-line="0" role="group" aria-label="Payee 1">
                     <div style="flex:2;">
-                        <label>Vendor</label>
+                        <label for="cr-vendor-0">Vendor</label>
                         <select id="cr-vendor-0">${vendorOpts}</select>
                     </div>
                     <div style="flex:1;">
-                        <label>Amount</label>
+                        <label for="cr-amt-0">Amount</label>
                         <input type="number" step="0.01" id="cr-amt-0" value="0">
                     </div>
                     <div style="flex:2;">
-                        <label>Description</label>
+                        <label for="cr-desc-0">Description</label>
                         <input type="text" id="cr-desc-0" placeholder="Services rendered">
                     </div>
                 </div>
@@ -126,17 +126,19 @@ const ContractorRunsPage = {
         div.className = 'form-group';
         div.style.cssText = 'display:flex;gap:8px;align-items:end;';
         div.dataset.line = String(i);
+        div.setAttribute('role', 'group');
+        div.setAttribute('aria-label', `Payee ${i + 1}`);
         div.innerHTML = `
             <div style="flex:2;">
-                <label>Vendor</label>
+                <label for="cr-vendor-${i}">Vendor</label>
                 <select id="cr-vendor-${i}">${vendorOpts}</select>
             </div>
             <div style="flex:1;">
-                <label>Amount</label>
+                <label for="cr-amt-${i}">Amount</label>
                 <input type="number" step="0.01" id="cr-amt-${i}" value="0">
             </div>
             <div style="flex:2;">
-                <label>Description</label>
+                <label for="cr-desc-${i}">Description</label>
                 <input type="text" id="cr-desc-${i}" placeholder="Services rendered">
             </div>`;
         box.appendChild(div);

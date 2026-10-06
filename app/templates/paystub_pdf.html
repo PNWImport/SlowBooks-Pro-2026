@@ -112,6 +112,10 @@
                     </tr>
                 </tbody>
             </table>
+            {% if taxable_employer_benefits %}
+            <p>Taxable noncash employer contributions: {{ taxable_employer_benefits | currency }}.
+                Included in tax wages.</p>
+            {% endif %}
         </div>
         <div>
             <div class="section-label">Deductions</div>

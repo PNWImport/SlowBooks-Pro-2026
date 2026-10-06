@@ -161,8 +161,9 @@ def test_pending_and_inactive_accounts_are_not_credited(db_session, payroll):
     banks[0].is_active = False
     banks[1].prenote_status = PrenoteStatus.PENDING
     db_session.commit()
-    lines = assert_structure(nacha.generate_nacha_file(db_session, run.id, ORIGIN))
-    assert not any(line.startswith("6") for line in lines)
+    # An ACH file with zero entries is refused, not returned as a valid file.
+    with pytest.raises(ValueError, match="direct-deposit details"):
+        nacha.generate_nacha_file(db_session, run.id, ORIGIN)
 
 
 def test_prenotes_have_zero_amount_and_correct_account_codes(db_session, payroll):
@@ -222,10 +223,8 @@ def test_contractor_missing_draft_and_zero_amount(db_session):
         ]
     )
     db_session.commit()
-    lines = assert_structure(
+    with pytest.raises(ValueError, match="direct-deposit details"):
         nacha.generate_contractor_nacha_file(db_session, run.id, ORIGIN)
-    )
-    assert not any(line.startswith("6") for line in lines)
 
     # A funded savings account emits the vendor credit and company offset.
     run.payments[0].amount = 12.34

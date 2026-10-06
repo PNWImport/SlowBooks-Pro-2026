@@ -42,6 +42,7 @@ const DeductionsPage = {
             rows += `<tr>
                 <td class="amount">${g.priority}</td>
                 <td>${escapeHtml(g.case_number || '')}</td>
+                <td>${g.agency_name ? escapeHtml(g.agency_name) : '<span class="badge badge-draft" title="No agency on this order">missing</span>'}</td>
                 <td>${escapeHtml(g.garnishment_type.replace(/_/g, ' '))}</td>
                 <td>${g.calc_method === 'percent_disposable' ? '% of disposable' : 'fixed'}</td>
                 <td class="amount">${g.calc_method === 'percent_disposable' ? `${(+g.amount).toFixed(2)}%` : formatCurrency(g.amount)}</td>
@@ -56,6 +57,7 @@ const DeductionsPage = {
             <thead><tr>
                 <th scope="col" class="amount">Priority</th>
                 <th scope="col">Case #</th>
+                <th scope="col">Agency</th>
                 <th scope="col">Order Type</th>
                 <th scope="col">Method</th>
                 <th scope="col" class="amount">Amount</th>
@@ -114,6 +116,13 @@ const DeductionsPage = {
                         <input name="amount" type="number" step="0.01" min="0" required value="0"></div>
                     <div class="form-group"><label>Priority (1 = first)</label>
                         <input name="priority" type="number" min="0" value="1"></div>
+                    <div class="form-group"><label>Agency / payee name</label>
+                        <input name="agency_name" maxlength="200" autocomplete="off"></div>
+                    <div class="form-group"><label>Remit reference (payee case/remit ID)</label>
+                        <input name="remit_reference" maxlength="80" autocomplete="off"></div>
+                    <div class="form-group" style="grid-column:1 / -1;"><label>Agency remittance address</label>
+                        <textarea name="agency_address" rows="2" maxlength="500" autocomplete="off" aria-describedby="garn-agency-help"></textarea>
+                        <div id="garn-agency-help" style="font-size:11px;color:var(--gray-500);">Stored encrypted. Without an agency name the Remittance register shows the order as missing its payee.</div></div>
                 </div>
                 <div style="display:flex;gap:16px;margin:8px 0;">
                     <label><input type="checkbox" name="supports_secondary_family"> Supports a second family (child support)</label>
@@ -136,6 +145,9 @@ const DeductionsPage = {
             amount: parseFloat(f.amount.value) || 0,
             priority: parseInt(f.priority.value) || 0,
             case_number: f.case_number.value || null,
+            agency_name: f.agency_name.value.trim() || null,
+            agency_address: f.agency_address.value.trim() || null,
+            remit_reference: f.remit_reference.value.trim() || null,
             supports_secondary_family: f.supports_secondary_family.checked,
             in_arrears_12_weeks: f.in_arrears_12_weeks.checked,
         };

@@ -11,11 +11,11 @@ the historical record of what the old deduction module lacked.
 | Models | `app/models/benefits.py` (BenefitCode, BenefitRate, EmployeeGroup, EmployeeGroupBenefit, EmployeeBenefit, BenefitYTD, PayStubBenefit) |
 | Engine | `app/services/benefits_engine.py` — `resolve_for_employee()`, `compute()`, `record_on_stub()`, `gl_groups()`, `remittance_rows()`, `create_remittance_bill()` |
 | Routes | `app/routes/benefits.py` under `/api/benefits` (codes + dated rates, groups, enrollments, resolved view, YTD, remittance) |
-| Payroll | `app/routes/payroll/runs.py` — `compute()` feeds the three wage bases into `calculate_withholdings(pretax_deductions, pretax_state, pretax_fica)`; processing posts per-code liability/expense accounts and calls `distribute_payroll_burden()` |
+| Payroll | `app/routes/payroll/runs.py` — `compute()` supplies per-tax employee reductions and explicitly classified noncash employer wages to `calculate_withholdings()`; processing posts per-code liability/expense accounts and calls `distribute_payroll_burden()` |
 | PTO dollars | `app/services/pto_liability.py`; `pto_policies.accrue_liability / valuation / accounts`, `pto_accruals.dollar_balance` |
 | Job costing seam | `cost_types.burden_method` (`flat` \| `payroll`), `BenefitCode.burden_routing` (`fringe_pool` \| `job_burden`), `job_costing.distribute_payroll_burden()` |
 | UI | `app/static/js/benefits.js` (`#/hr/benefits`), garnishments stay on `deductions.js` |
-| Migration | `d5e6f7a8b9c0_benefits_engine` — carries `deduction_types` / `employee_deductions` onto codes and enrollments |
+| Migration | `d5e6f7a8b9c0_benefits_engine` carries deductions onto codes and enrollments; `b7fringe2026105` adds nullable `employer_tax_treatment` without reclassifying existing codes |
 | Tests | `tests/test_benefits_engine.py` |
 
 Decisions made while building:
@@ -28,13 +28,20 @@ Decisions made while building:
   (rate % of the contribution on at most `employer_match_limit_pct` of
   gross) or tiered (`[{"up_to_pct": 3, "match_pct": 100}, {"up_to_pct": 5,
   "match_pct": 50}]`).
-- **Three wage bases** are tracked separately all the way into the tax
-  calculator: a code can reduce federal, state and FICA wages in any
-  combination. Net is gross − taxes − every employee amount − garnishments
-  + reimbursements, computed in the run, not from the calculator.
-- **YTD accumulators** are bumped when a run is created (drafts count, as
-  the tax YTD already does) and there is a rebuild endpoint that
-  recomputes a year from the stub snapshots.
+- **Three employee reduction bases** are tracked separately all the way into
+  the tax calculator: a code can reduce federal, state and FICA wages in any
+  combination. Payroll gross includes reported and paycheck tips. Take-home
+  pay is gross − reported tips already received − taxes − every employee
+  amount − garnishments + reimbursements, computed in the run. A taxable
+  noncash employer contribution increases tax wages without adding cash gross;
+  its resulting employee taxes can reduce take-home pay.
+- **Benefit YTD reservations** are bumped when a draft is created. Tax YTD
+  counts only processed checks through the pay date, including already-paid
+  checks on that date. Processing refuses a draft whose paid-history baseline
+  changed; cancel and recreate it to recalculate. Cancellation refunds exact
+  recorded benefit and loan reservations and releases linked time entries.
+  Unverifiable legacy reservations require reconciliation. The YTD rebuild
+  endpoint is a maintenance operation, not a concurrent payroll repair tool.
 - **PTO dollars**: `current_rate` (revalues on raises via the Revalue
   action) or `average_rate` (historical cost). Relief posts DR liability /
   CR PTO expense because the pay run expenses the wages; carryover caps
@@ -45,20 +52,49 @@ Decisions made while building:
   employee's entries hit, by cost hours; no-job hours keep their share in
   the pool. Credits go to the accounts the payroll entry expensed, so the
   P&L is unchanged and the job carries the real cost.
-- **Employer-taxable benefits** (GTL over $50k) are flagged and reported
-  in the stub detail; imputed-income withholding is not computed.
+- **Employer-taxable benefits** require an explicit treatment before a
+  positive contribution can enter new payroll: `fully_taxable` (below) or
+  `reported_only`. `reported_only` is for group-term life up to $50,000,
+  which is not wages: payroll neither blocks nor taxes it, adds nothing to
+  any wage base, and leaves any taxable value (coverage over $50,000, other
+  special fringe) to be valued and reported by hand. The seeded `GTL` code
+  ships as `reported_only`; an existing unclassified code is changed in the
+  benefit code's form.
+  The `fully_taxable` mode is bounded:
+  requires the entire resolved employer cost to equal the applicable ordinary
+  noncash taxable value across all modeled wage bases. It adds that amount
+  to modeled tax wages, retains cash gross, and posts the benefit's separate
+  expense/liability once. `PayStubBenefit.rule_json` stores the treatment and
+  `taxable_employer_amount` for immutable wage reporting; the paystub identifies
+  the noncash amount. Existing taxable flags remain unclassified and new
+  positive contributions return 422. Old flag-only snapshots are not
+  reinterpreted as ordinary taxable wages. Group-term life insurance, special
+  exclusions, valuation differing from cost, employer tax gross-ups and
+  taxable post-tax matches require separate implementation. Employer cost
+  cannot be replaced with an arbitrary taxable value.
+- **Classification API**: `BenefitCode.employer_tax_treatment` is nullable
+  `String(24)`, accepting only `null`, `"fully_taxable"` or `"reported_only"`. The latter two
+  require `employer_taxable=true` and `kind="benefit"` or `"both"`; inconsistent
+  combinations return 400 and unknown treatments return 422. Partial updates
+  validate the merged code, and an explicit `null` clears the classification.
+  Migration `b7fringe2026105` adds the field without classifying existing rows.
 - **Post-tax codes take what is left** (first macOS lap, 2026-09-04): the
   engine runs once for the pre-tax codes and the wage bases, taxes and
   garnishments are computed, and if the post-tax total would overdraw the
   check the engine runs again with the real room (`posttax_available`).
   Post-tax codes are trimmed in sequence, the shortfall is noted on the
-  stub, and net pay never goes negative; a garnishment stack that still
-  exceeds pay is refused with a 422 instead of posting an unbalanced entry.
+  stub. A negative cash net after taxes, benefits and garnishments is refused
+  with 422. If trimming changes taxable employer value, payroll also returns
+  422 and requires revised deductions rather than using stale withholding.
+
 - **Remittance vendor follows the code** when the stub snapshot has none:
   the vendor changes who gets paid, not what was withheld, so assigning
   one after a run still lets the report and the bill find that run.
 
-## Operational notes (from Keith's macOS lap, 2026-09-04)
+Current verification and remaining release limits are recorded in the
+[continued beta checklist](../beta-continuation-2026-10-05.md).
+
+## Operational notes (2026-09-04 observations, updated 2026-10-05)
 
 - **PTO relief timing.** Relief posts on the request's start date at
   approval time, while the wages hit on the pay date. Same month in the
@@ -77,15 +113,20 @@ Decisions made while building:
 - **Pre-tax codes can take the whole check** before taxes; FICA still
   applies. Real plans cap elections at 100% of compensation, and a check
   that goes negative is now refused (422).
-- **No pay-run void exists**, so nothing reverses a burden Job Cost Entry
-  or a BenefitYTD bump. A pre-v2.8 gap that the engine makes bigger; on
-  the list.
+- **Unpaid draft cancellation exists**: it marks the run `VOID`, refunds
+  verified benefit/loan reservations and releases linked time entries.
+  Unverifiable legacy reservations return 409 for reconciliation. Reversal
+  of a processed payroll and its burden Job Cost Entry remains unsupported;
+  draft cancellation is not a posted-payroll reversal.
 
 Source: field ask from a Sage 50 evaluator (Matt Beebe, @TheMattBeebe)
 who has "been thinking about this for a long time across several
 systems" — the entity design below is substantially his, shared
 publicly on X, 2026-08-25. His reference point for getting-it-right
 (if cumbersomely): Acumatica. His dealbreaker gap: job costing.
+
+The remaining sections preserve the original field proposal and historical
+gap analysis. They are not the current implementation contract described above.
 
 ## The core idea: a benefit is a CODE, not a feature
 

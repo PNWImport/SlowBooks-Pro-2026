@@ -37,7 +37,7 @@ const QBOPage = {
         const importEntityTypes = [...entityTypes, ['sales_receipts', 'Sales Receipts'], ['journal_entries', 'Journal Entries'], ['ledger', 'Posted Ledger Activity']];
 
         const checkboxHtml = types => types.map(([value, label]) =>
-            `<label style="display:inline-flex; align-items:center; gap:4px; margin-right:12px;">
+            `<label style="display:inline-flex; align-items:center; gap:4px; margin-right:12px; min-height:24px;">
                 <input type="checkbox" value="${value}" checked> ${label}
             </label>`
         ).join('');
@@ -68,16 +68,16 @@ const QBOPage = {
                                <div class="form-grid">
                                    <div class="form-group">
                                        <label for="qbo-authorization-code">Authorization Code</label>
-                                       <input id="qbo-authorization-code" type="password" autocomplete="off" required
+                                       <input id="qbo-authorization-code" type="password" autocomplete="off" required style="min-height:24px;"
                                            placeholder="Paste code or full callback URL" oninput="QBOPage.extractCallbackUrl()">
                                    </div>
                                    <div class="form-group">
                                        <label for="qbo-realm-id">Realm ID</label>
-                                       <input id="qbo-realm-id" type="text" autocomplete="off" required
+                                       <input id="qbo-realm-id" type="text" autocomplete="off" required style="min-height:24px;"
                                            placeholder="Paste realmId from redirect URL">
                                    </div>
                                </div>
-                               <button class="btn btn-secondary" type="submit">Finish QBO connection</button>
+                               <button class="btn btn-secondary" type="submit" style="min-height:24px;">Finish QBO connection</button>
                            </form>`
                     }
                 </div>

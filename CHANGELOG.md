@@ -7,6 +7,77 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+- Production verification (October 6; see
+  [the record](docs/production-verification-2026-10-06.md)). Fixed:
+  - Two people depositing the same payment, writing off the same invoice or
+    entering the same bill number at once no longer post twice, and payments
+    and bills entered at the same time no longer fail with a database
+    deadlock. These only showed on PostgreSQL.
+  - Contractor payments post to a contractor expense account instead of
+    Workers Compensation Insurance.
+  - An item created with a starting quantity is valued at its cost, with a
+    stock movement and an Opening Balance Equity entry, so sales carry their
+    cost of goods sold.
+  - Cancelling a retro-pay draft takes back the pay raise it staged.
+  - The 1099 summary includes contractor runs and matches the 1099-NEC form;
+    the dashboard Payables card matches A/P aging; the Profit and Loss by Class
+    total row shows cost of goods sold and gross profit.
+  - A termination PTO payout that the final paycheck blocked can be staged
+    again ("PTO payout" on a terminated employee), and a draft staged before
+    reservations were recorded can be cancelled (loan balances it cannot
+    verify are listed for review). Group-term life can be classified "reported
+    only" so it no longer blocks payroll; the seeded code ships that way.
+  - Input that used to be a server error is now a clear refusal: NUL bytes,
+    NaN or Infinity amounts, impossible dates and years, over-long text, and a
+    bad status filter. A NaN rate can no longer break the workers' comp list.
+  - An invoice emailed with no address defaults to the customer's address;
+    deleting a recurring invoice that has already created invoices is refused;
+    a non-OFX bank file, a bad batch-payment date and a missing `pg_dump` are
+    answered clearly.
+  - An ACH file with no entries is refused; the Schedule C CSV writes a loss
+    as a number; benefit rates honor their Effective-from date and a pay run
+    warns when an enrolled benefit has no rate; terminated employees can be
+    paid final wages; Reconcile no longer discards a typed balance; excluded
+    and matched bank lines can be restored or unmatched; the garnishment form
+    takes the agency's details.
+  - Claiming or removing the SimpleFIN bank-feed credential needs an
+    administrator.
+- Hold payroll drafts when paid history changes and serialize payroll writes
+  per employee. Add Cancel draft with exact recorded benefit/loan refunds and
+  time-entry release; recreate cancelled drafts to recalculate annual caps.
+- Add explicit ordinary fully taxable employer-contribution treatment and a
+  nullable classification migration. Include classified noncash amounts in
+  withholding and immutable wage reports while preserving cash gross, net
+  calculation and separate benefit posting. Refuse unclassified positive
+  taxable contributions; display noncash tax wages on paystubs.
+- Restrict retro pay to processed earnings from eligible work periods, reserve
+  their adjustment claims to prevent repeated payouts, and hold ambiguous
+  legacy or partial-period pricing for review. Preserve fixed tips and recorded
+  earnings sources. Exclude retro/PTO earnings metadata from paystub deductions.
+- Correct federal withholding to the published 2026 IRS schedules, including
+  their printed base tax amounts; update state premium rates and wage caps,
+  exclude tips from Washington premiums, and preserve gross-based deductions
+  when federal taxable wages are zero. Termination payouts use YTD wages only
+  through their payout date.
+- Use immutable paycheck benefit snapshots for FICA/FUTA wage bases and annual
+  thresholds; count only processed checks, including checks already paid on
+  the same pay date. Add standard Oregon Paid Leave contributions and its cap.
+- Align W-2/W-3, EFW2, Form 941 and Form 940 wage bases with benefit exclusions;
+  report capped Social Security tips separately. Retain historical posted taxes
+  and document unsupported payroll processing and employer classifications.
+- Restore the initial HR Team view and accessible names for contractor payee
+  fields, benefit and remittance filters, AI action pickers, and tax-form date
+  sections. Keep the audit page restricted to administrators in the interface.
+  Increase target spacing for CSV import, QBO and payroll report controls.
+- Use theme colors for shared QBO/IIF import and export error/warning notices;
+  exercise those result states in the existing both-theme contrast regression.
+- Reject trailing newlines in company database names and backup filenames;
+  require the patched OAuth library when installing runtime dependencies.
+- Correct the Kubernetes image override so the documented deployment selects
+  2.19.0 instead of silently deploying 2.18.0.
+- Allow the isolated Compose volume initializer to traverse private cache
+  directories, so recreating an app with existing QBO cache files succeeds.
+  The application continues to run without Linux capabilities.
 - ACH File button on processed pay runs: downloads the NACHA direct-deposit
   file from `/api/payroll/{id}/nacha`. The endpoint existed but had no UI.
 - Every payroll and tax document names the company from Settings (company

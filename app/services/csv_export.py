@@ -4,6 +4,7 @@
 # ============================================================================
 
 import csv
+import re
 from decimal import ROUND_HALF_UP, Decimal
 import io
 
@@ -37,11 +38,21 @@ def _money_cell(value) -> Decimal:
     return Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+_PLAIN_NUMBER = re.compile(r"[+-]?\d+(\.\d+)?")
+
+
 def _csv_safe(value: str) -> str:
     """Neutralize spreadsheet formula injection. A cell beginning with
     =, +, -, @, TAB, or CR is treated as a formula by Excel/Sheets; prefixing
     with an apostrophe forces plain text without changing the displayed value.
-    A customer named `=HYPERLINK(...)` otherwise executes on open."""
+    A customer named `=HYPERLINK(...)` otherwise executes on open.
+
+    A cell that is entirely a plain signed decimal ("-5220.53", a net loss
+    formatted by the app) is a number, not text: it cannot carry a formula,
+    and the apostrophe would turn it into text in Excel. Anything with more
+    than digits and one point after the sign ("-1+cmd", "=1+1") is guarded."""
+    if value and _PLAIN_NUMBER.fullmatch(value):
+        return value
     if value and value[0] in _FORMULA_LEADS:
         return "'" + value
     return value

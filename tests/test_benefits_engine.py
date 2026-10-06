@@ -9,7 +9,7 @@ GL mapping, remittance), groups vs assignments, YTD accumulators, PTO
 dollar liability, and the job-costing burden seam.
 """
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import func
 
@@ -189,7 +189,9 @@ def test_per_period_cap_annual_cap_and_wage_base_ceiling_are_three_rules(
     ]
     got = []
     for s, e, p in periods:
-        stub = _run(client, emp["id"], start=s, end=e, pay=p)["stubs"][0]
+        # Annual wage bases are paid wages; merely staging a draft does
+        # not consume the employee's payroll tax or wage-base allowance.
+        stub = _run(client, emp["id"], start=s, end=e, pay=p, process=True)["stubs"][0]
         got.append(
             {
                 k: _benefit(stub, k)["employee_amount"] if _benefit(stub, k) else 0.0
@@ -790,13 +792,15 @@ def test_payroll_burden_distributes_to_jobs_by_hours(
     run = _run(client, emp["id"], use_time_entries=True, process=True)
     stub = run["stubs"][0]
     assert stub["hours"] == 48.0
-    taxes = round(
-        stub["employer_ss_tax"]
-        + stub["employer_medicare_tax"]
-        + stub["futa_tax"]
-        + stub["suta_tax"]
-        + stub["state_other_employer"],
-        2,
+    taxes = sum(
+        Decimal(str(stub[key]))
+        for key in (
+            "employer_ss_tax",
+            "employer_medicare_tax",
+            "futa_tax",
+            "suta_tax",
+            "state_other_employer",
+        )
     )
     assert taxes > 0
     assert run["burden_job_cost_id"], run
@@ -805,11 +809,21 @@ def test_payroll_burden_distributes_to_jobs_by_hours(
     by_job = {}
     for ln in jc["lines"]:
         assert ln["is_burden"]
-        by_job[ln["job_id"]] = by_job.get(ln["job_id"], 0) + float(ln["amount"])
+        by_job[ln["job_id"]] = by_job.get(ln["job_id"], Decimal("0")) + Decimal(
+            str(ln["amount"])
+        )
     # 18/48 and 6/48 of (taxes + 300); the 24 no-job hours stay in the pool
-    assert round(by_job[job_a["id"]], 2) == round((taxes + 300) * 18 / 48, 2)
-    assert round(by_job[job_b["id"]], 2) == round((taxes + 300) * 6 / 48, 2)
-    assert round(sum(by_job.values()), 2) == round((taxes + 300) * 0.5, 2)
+    assert by_job[job_a["id"]] == ((taxes + 300) * 18 / 48).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    assert by_job[job_b["id"]] == ((taxes + 300) * 6 / 48).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    # 2026 premiums expose a half-cent here: $540.31 / 2 = $270.155,
+    # which rounds to $270.16 for currency, rather than binary float $270.15.
+    assert sum(by_job.values()) == ((taxes + 300) * Decimal("0.5")).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
     assert not any(
         "GTL" in (ln["description"] or "") for ln in jc["lines"]
     )  # fringe pool stays put
@@ -823,11 +837,13 @@ def test_payroll_burden_distributes_to_jobs_by_hours(
                 str(ln.credit)
             )
     assert credits[seed_accounts["6150"].id] == Decimal("150.00")
-    assert credits[seed_accounts["6120"].id] == Decimal(str(round(taxes * 0.5, 2)))
+    assert credits[seed_accounts["6120"].id] == (taxes * Decimal("0.5")).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
     tree = client.get(f"/api/jobs/{job_a['id']}/cost-tree").json()
     labor = next(t for t in tree["types"] if t["cost_type"] == "labor")
-    assert round(labor["figures"]["actual"], 2) == round(
-        900 + (taxes + 300) * 18 / 48, 2
+    assert (
+        Decimal(str(labor["figures"]["actual"])) == Decimal("900") + by_job[job_a["id"]]
     )
 
 

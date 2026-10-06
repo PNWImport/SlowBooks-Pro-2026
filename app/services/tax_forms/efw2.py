@@ -131,6 +131,7 @@ def generate_efw2(db, year: int, company: dict) -> tuple[str, list[str]]:
         "ss_tax": Decimal("0"),
         "medicare_wages": Decimal("0"),
         "medicare_tax": Decimal("0"),
+        "ss_tips": Decimal("0"),
     }
     for w2 in w2s:
         emp = w2["employee"]
@@ -157,6 +158,7 @@ def generate_efw2(db, year: int, company: dict) -> tuple[str, list[str]]:
         rw.place(221, 11, _money(w2["box4_ss_tax_withheld"]))
         rw.place(232, 11, _money(w2["box5_medicare_wages"]))
         rw.place(243, 11, _money(w2["box6_medicare_tax_withheld"]))
+        rw.place(254, 11, _money(w2["box7_ss_tips"]))
         records.append(rw.render())
 
         totals["wages"] += w2["box1_federal_wages"]
@@ -165,6 +167,7 @@ def generate_efw2(db, year: int, company: dict) -> tuple[str, list[str]]:
         totals["ss_tax"] += w2["box4_ss_tax_withheld"]
         totals["medicare_wages"] += w2["box5_medicare_wages"]
         totals["medicare_tax"] += w2["box6_medicare_tax_withheld"]
+        totals["ss_tips"] += w2["box7_ss_tips"]
 
     # --- RT: totals across the RW records ---
     rt = _Record("RT")
@@ -175,6 +178,7 @@ def generate_efw2(db, year: int, company: dict) -> tuple[str, list[str]]:
     rt.place(55, 15, _money(totals["ss_tax"], 15))
     rt.place(70, 15, _money(totals["medicare_wages"], 15))
     rt.place(85, 15, _money(totals["medicare_tax"], 15))
+    rt.place(100, 15, _money(totals["ss_tips"], 15))
     records.append(rt.render())
 
     # --- RF: final ---

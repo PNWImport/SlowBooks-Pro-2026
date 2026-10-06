@@ -295,6 +295,20 @@ def _statement_out(rows: list, db: Session) -> list[dict]:
         if ids
         else {}
     )
+    from app.models.transactions import TransactionLine
+
+    line_ids = {r.transaction_line_id for r in rows if r.transaction_line_id}
+    locked = (
+        {
+            lid
+            for (lid,) in db.query(TransactionLine.id).filter(
+                TransactionLine.id.in_(line_ids),
+                TransactionLine.reconciliation_id.isnot(None),
+            )
+        }
+        if line_ids
+        else set()
+    )
     return [
         {
             "id": r.id,
@@ -311,6 +325,7 @@ def _statement_out(rows: list, db: Session) -> list[dict]:
             "transaction_line_id": r.transaction_line_id,
             "import_source": r.import_source,
             "reconciled": bool(r.reconciled),
+            "line_reconciled": r.transaction_line_id in locked,
             "created_at": r.created_at,
         }
         for r in rows

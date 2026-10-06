@@ -17,6 +17,7 @@ HOSTILE_NAMES = [
     "1starts_with_digit",
     "",
     "a" * 64,  # one over the 63-char limit
+    "company\n",
 ]
 
 

@@ -7,11 +7,18 @@ received wages, when only one had. The W-3 also printed `2400.00` where the
 W-2 prints `$2,400.00`.
 """
 
+import json
+from datetime import date
 from decimal import Decimal
 
 import pytest
 
 from app.models.payroll import Employee, PayStub
+from app.services.payroll_drafts import (
+    HISTORY_KEY,
+    draft_history,
+    lock_payroll_employees,
+)
 
 
 @pytest.fixture
@@ -40,6 +47,10 @@ def one_paid_one_zero(client, db_session, seed_accounts):
     hana = Employee(first_name="Hana", last_name="Lee", pay_type="hourly", pay_rate=22)
     db_session.add(hana)
     db_session.flush()
+    # The counting scenario retains the explicit legacy zero amount, but
+    # stages it against verified history under the same employee lock as
+    # normal payroll. Processing must retain its stale-draft protection.
+    lock_payroll_employees(db_session, [hana.id])
     db_session.add(
         PayStub(
             pay_run_id=run["id"],
@@ -47,6 +58,13 @@ def one_paid_one_zero(client, db_session, seed_accounts):
             hours=Decimal("0"),
             gross_pay=Decimal("0"),
             net_pay=Decimal("0"),
+            detail_json=json.dumps(
+                {
+                    HISTORY_KEY: draft_history(
+                        db_session, hana.id, date.fromisoformat(run["pay_date"])
+                    )
+                }
+            ),
         )
     )
     db_session.commit()

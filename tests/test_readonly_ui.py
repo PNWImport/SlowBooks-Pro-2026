@@ -181,6 +181,8 @@ def test_a_read_only_sign_in_on_a_fake_page():
     # and when the role arrives while it is still loading, as on a first page
     assert got["payroll_role_arrives_late"] is True
     # the Audit Log by its address says it isn't open to a read-only sign-in
-    # (skytech, 2.18.0 round 6: "Couldn't load this page"); a bookkeeper's opens
+    # (skytech, 2.18.0 round 6: "Couldn't load this page"); historical payroll
+    # and benefits values now keep it closed to bookkeepers as well.
     assert got["audit_readonly"] == {"says": True, "rendered": []}
-    assert got["audit_bookkeeper"] == {"rendered": ["audit"], "page": "<audit>"}
+    assert got["audit_bookkeeper"]["rendered"] == []
+    assert "Audit Log is for administrators" in got["audit_bookkeeper"]["page"]

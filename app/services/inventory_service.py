@@ -348,6 +348,71 @@ def record_adjustment(
     )
 
 
+def record_opening_stock(
+    db: Session,
+    item: Item,
+    quantity: Decimal,
+    unit_cost: Decimal,
+    txn_date=None,
+) -> Optional[InventoryMovement]:
+    """Stock an item already has when it is first created.
+
+    Without this the quantity is stored on the item and nothing else: no
+    movement, no cost, no Dr Inventory. Every sale then posts $0 of cost of
+    goods sold, and on-hand disagrees with the movement ledger. The offset is
+    Opening Balance Equity, not an adjustment account: stock you already own
+    is not a gain. The caller refuses a valued opening with no inventory
+    asset account before getting here.
+    """
+    if not item.track_inventory:
+        return None
+    quantity = Decimal(str(quantity))
+    unit_cost = Decimal(str(unit_cost))
+    if quantity <= 0:
+        return None
+    amount = _q(quantity * unit_cost)
+    txn_id = None
+    asset_id = get_inventory_asset_account_id(db, item)
+    if amount > 0 and asset_id:
+        from datetime import date as _date
+
+        from app.services.accounting import get_opening_balance_equity_id
+
+        txn = create_journal_entry(
+            db,
+            txn_date or _date.today(),
+            f"Opening stock — {item.name}",
+            [
+                {
+                    "account_id": asset_id,
+                    "debit": amount,
+                    "credit": Decimal("0"),
+                    "description": f"Opening stock: {item.name}",
+                },
+                {
+                    "account_id": get_opening_balance_equity_id(db),
+                    "debit": Decimal("0"),
+                    "credit": amount,
+                    "description": f"Opening stock: {item.name}",
+                },
+            ],
+            source_type="adjustment",
+            source_id=item.id,
+        )
+        txn_id = txn.id
+    return _append_movement(
+        db,
+        item,
+        MovementType.ADJUSTMENT,
+        quantity=quantity,
+        unit_cost=unit_cost,
+        source_type="adjustment",
+        source_id=item.id,
+        transaction_id=txn_id,
+        memo="Opening stock",
+    )
+
+
 def reverse_sale(
     db: Session,
     item: Item,

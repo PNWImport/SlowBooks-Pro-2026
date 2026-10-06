@@ -1,7 +1,9 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
+
+from app.services.payroll_wages import fica_wages, gross_wages
 
 from app.models.payroll import (
     PayRun,
@@ -16,25 +18,34 @@ from app.models.payroll import (
 # the Social Security wage-base cap could never fire).
 # ---------------------------------------------------------------------------
 def _ytd_stubs(db: Session, employee_id: int, year: int, before: date = None):
+    """Processed checks through the inclusive pay-date cutoff.
+
+    An already paid check on the same date consumes annual wage bases. The
+    check currently being drafted and other unpaid drafts never do.
+    """
     q = (
         db.query(PayStub)
         .join(PayRun, PayStub.pay_run_id == PayRun.id)
+        .options(selectinload(PayStub.benefits))
         .filter(
             PayStub.employee_id == employee_id,
-            PayRun.status != PayRunStatus.VOID,
+            PayRun.status == PayRunStatus.PROCESSED,
             PayRun.pay_date >= date(year, 1, 1),
             PayRun.pay_date <= date(year, 12, 31),
         )
     )
     if before is not None:
-        q = q.filter(PayRun.pay_date < before)
+        q = q.filter(PayRun.pay_date <= before)
     return q.all()
 
 
 def employee_ytd(db: Session, employee_id: int, year: int, before: date = None) -> dict:
-    """Aggregate an employee's pay-stub figures for a calendar year."""
+    """Aggregate an employee's processed pay-stub figures for a calendar year."""
     totals = {
         "gross": Decimal("0"),
+        "taxable_gross": Decimal("0"),
+        "fica_wages": Decimal("0"),
+        "tips": Decimal("0"),
         "federal": Decimal("0"),
         "state": Decimal("0"),
         "state_other": Decimal("0"),
@@ -49,6 +60,9 @@ def employee_ytd(db: Session, employee_id: int, year: int, before: date = None) 
     }
     for s in _ytd_stubs(db, employee_id, year, before):
         totals["gross"] += s.gross_pay or 0
+        totals["taxable_gross"] += gross_wages(s)
+        totals["fica_wages"] += fica_wages(s)
+        totals["tips"] += (s.reported_tips or 0) + (s.paycheck_tips or 0)
         totals["federal"] += s.federal_tax or 0
         totals["state"] += s.state_tax or 0
         totals["state_other"] += s.state_other_employee or 0
@@ -73,5 +87,5 @@ def _ytd_supplemental(
     total = Decimal("0")
     for s in _ytd_stubs(db, employee_id, year, before):
         if s.pay_run and s.pay_run.run_type == PayRunType.BONUS:
-            total += s.gross_pay or 0
+            total += gross_wages(s)
     return total

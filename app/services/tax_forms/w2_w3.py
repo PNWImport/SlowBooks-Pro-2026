@@ -9,11 +9,17 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models.payroll import Employee, PayRun, PayStub, PayRunStatus
 from app.services.accounting import _q
 from app.services.payroll_service import SS_WAGE_BASE
+from app.services.payroll_wages import (
+    federal_wages,
+    fica_wages,
+    social_security_wage_parts,
+    state_wages,
+)
 from app.services.pdf_service import _jinja_env, render_pdf
 
 
@@ -24,7 +30,11 @@ def _year_stubs(db, year: int, employee_id: int | None = None) -> list[PayStub]:
     query = (
         db.query(PayStub)
         .join(PayRun, PayStub.pay_run_id == PayRun.id)
-        .options(joinedload(PayStub.pay_run), joinedload(PayStub.employee))
+        .options(
+            joinedload(PayStub.pay_run),
+            joinedload(PayStub.employee),
+            selectinload(PayStub.benefits),
+        )
         .filter(PayRun.status == PayRunStatus.PROCESSED)
         .filter(PayRun.pay_date >= start)
         .filter(PayRun.pay_date <= end)
@@ -44,9 +54,14 @@ def _employee_box_totals(stubs: list[PayStub]) -> dict:
     state_tax = Decimal("0")
     local_tax = Decimal("0")
     medicare_wages = Decimal("0")
+    federal_wage_total = Decimal("0")
+    state_wage_total = Decimal("0")
+    ss_wages = Decimal("0")
+    ss_tips = Decimal("0")
+    ytd_fica = Decimal("0")
     localities = set()
 
-    for s in stubs:
+    for s in sorted(stubs, key=lambda stub: (stub.pay_run.pay_date, stub.id)):
         gross += Decimal(str(s.gross_pay or 0))
         pretax += Decimal(str(s.pretax_deductions or 0))
         federal_tax += Decimal(str(s.federal_tax or 0))
@@ -54,30 +69,35 @@ def _employee_box_totals(stubs: list[PayStub]) -> dict:
         medicare_tax += Decimal(str(s.medicare_tax or 0))
         state_tax += Decimal(str(s.state_tax or 0))
         local_tax += Decimal(str(s.local_tax or 0))
-        medicare_wages += Decimal(str(s.gross_pay or 0))
+        federal_wage_total += federal_wages(s)
+        state_wage_total += state_wages(s)
+        fica = fica_wages(s)
+        medicare_wages += fica
+        # Tips already form part of gross_pay. They belong in box 7, not
+        # box 3, and share the annual Social Security base with wages.
+        current_ss_wages, current_ss_tips = social_security_wage_parts(
+            s, ytd_fica, SS_WAGE_BASE
+        )
+        ss_wages += current_ss_wages
+        ss_tips += current_ss_tips
+        ytd_fica += fica
         if s.work_locality:
             localities.add(s.work_locality)
 
-    # Box 1 — federal wages are gross less pre-tax deductions.
-    box1 = gross - pretax
-    if box1 < 0:
-        box1 = Decimal("0")
-    # Box 3 — Social Security wages are capped at the annual wage base.
-    box3 = min(gross, SS_WAGE_BASE)
-
     return {
-        "box1_federal_wages": _q(box1),
+        "box1_federal_wages": _q(federal_wage_total),
         "box2_federal_tax_withheld": _q(federal_tax),
-        "box3_ss_wages": _q(box3),
+        "box3_ss_wages": _q(ss_wages),
         "box4_ss_tax_withheld": _q(ss_tax),
         "box5_medicare_wages": _q(medicare_wages),
         "box6_medicare_tax_withheld": _q(medicare_tax),
-        "box16_state_wages": _q(box1),
+        "box7_ss_tips": _q(ss_tips),
+        "box16_state_wages": _q(state_wage_total),
         "box17_state_income_tax": _q(state_tax),
         # Boxes 18-20 — local wages piggyback on the income-tax wage base.
         # Multiple localities in one year are joined; a per-locality split
         # (real W-2s print one row per locality) is future work.
-        "box18_local_wages": _q(box1) if local_tax else Decimal("0.00"),
+        "box18_local_wages": (_q(federal_wage_total) if local_tax else Decimal("0.00")),
         "box19_local_income_tax": _q(local_tax),
         "box20_locality_name": ", ".join(sorted(localities)),
         "gross_pay": _q(gross),
@@ -161,6 +181,7 @@ _AMOUNT_KEYS = (
     "box4_ss_tax_withheld",
     "box5_medicare_wages",
     "box6_medicare_tax_withheld",
+    "box7_ss_tips",
     "box16_state_wages",
     "box17_state_income_tax",
 )
@@ -181,6 +202,7 @@ def compute_w3(db, year: int) -> dict:
         "box4_ss_tax_withheld": Decimal("0"),
         "box5_medicare_wages": Decimal("0"),
         "box6_medicare_tax_withheld": Decimal("0"),
+        "box7_ss_tips": Decimal("0"),
         "box16_state_wages": Decimal("0"),
         "box17_state_income_tax": Decimal("0"),
         "box18_local_wages": Decimal("0"),

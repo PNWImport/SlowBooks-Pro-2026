@@ -3,8 +3,8 @@
 # PostgreSQL in server mode, per-company SQLite files in desktop mode.
 # ============================================================================
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from starlette.requests import HTTPConnection
 
 from app.config import DATABASE_URL
@@ -60,6 +60,35 @@ if _is_sqlite:
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _locked_reads_refresh_what_they_lock(state):
+    """A SELECT ... FOR UPDATE must return the row as it is NOW.
+
+    The lock makes a request wait for the transaction that holds the row. By
+    the time it gets the lock that transaction has committed, but an object
+    this session loaded before waiting is still in its identity map, and
+    SQLAlchemy hands it back unchanged: the "was this already deposited?"
+    check that follows the lock reads stale attributes and passes. Two
+    parallel deposits of one payment then both succeed (found by driving the
+    live app with parallel requests on PostgreSQL; SQLite serializes writes,
+    so tests never saw it). Refreshing every locked read closes the whole
+    class, including the sites that forget populate_existing().
+    """
+    if (
+        state.is_select
+        and getattr(state.statement, "_for_update_arg", None) is not None
+    ):
+        # Sessions here do not autoflush, and routes change an object and then
+        # lock the next row. Refreshing without writing first would overwrite
+        # that unsaved change with what is in the database (a credit memo void
+        # applied to one invoice twice lost its first subtraction). Flushing
+        # first is what lock_accounts() already does for the same reason.
+        session = state.session
+        if session.new or session.dirty or session.deleted:
+            session.flush()
+        state.update_execution_options(populate_existing=True)
 
 
 def get_db(request: HTTPConnection = None):

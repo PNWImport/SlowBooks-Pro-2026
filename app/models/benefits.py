@@ -58,6 +58,11 @@ CALC_METHODS = (
 # contribution (401(k) match) capped at a percent of gross.
 EMPLOYER_CALC_METHODS = CALC_METHODS + ("match_percent",)
 BURDEN_ROUTINGS = ("fringe_pool", "job_burden")
+# fully_taxable: an ordinary contribution whose whole value is wages; payroll
+# adds it to the wage bases. reported_only: payroll leaves it out of wages
+# (group-term life up to $50,000 is not wages) and the person reports any
+# taxable value (coverage over $50,000, special fringe) themselves.
+EMPLOYER_TAX_TREATMENTS = ("fully_taxable", "reported_only")
 
 
 class BenefitCode(Base):
@@ -78,9 +83,12 @@ class BenefitCode(Base):
     reduces_federal = Column(Boolean, nullable=False, default=False)
     reduces_state = Column(Boolean, nullable=False, default=False)
     reduces_fica = Column(Boolean, nullable=False, default=False)
-    # Employer contributions that are taxable income to the employee (group
-    # term life over $50k, some fringe) — reported, not withheld from here.
+    # The legacy flag includes fringe with different tax treatments (such as
+    # group-term life). It cannot select wage bases by itself. An ordinary
+    # fully taxable contribution requires an explicit classification; its
+    # entire employer cost must also be the applicable taxable value.
     employer_taxable = Column(Boolean, nullable=False, default=False)
+    employer_tax_treatment = Column(String(24), nullable=True)
 
     # Pre-tax codes apply in this order; each changes the taxable base for
     # the next. Never rely on insertion order.

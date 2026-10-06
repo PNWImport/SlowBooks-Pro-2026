@@ -16,6 +16,7 @@ from decimal import Decimal
 
 from app.services.accounting import _q
 from app.services.pdf_service import _jinja_env, render_pdf
+from app.services.payroll_wages import taxable_employer_wages
 
 # detail_json keys that are deductions (withheld from the employee). Anything
 # else in the blob is an employer-side or informational line we skip on the
@@ -47,6 +48,9 @@ _EMPLOYER_KEYS = {
 _ADDITION_KEYS = {
     "reimbursements": "Reimbursements (non-taxable)",
 }
+
+# Earnings already included in gross, not amounts withheld from the employee.
+_EARNING_KEYS = {"retro_pay", "pto_payout"}
 
 
 def _humanize(key: str) -> str:
@@ -116,7 +120,7 @@ def _deduction_items(stub) -> list[tuple[str, str, Decimal]]:
         )
         itemized_state = any(_is_state_income_line(k) for k in parsed)
         for key, amount in parsed.items():
-            if _is_employer_key(key) or key in _ADDITION_KEYS:
+            if _is_employer_key(key) or key in _ADDITION_KEYS or key in _EARNING_KEYS:
                 continue
             if key.endswith(":note"):
                 continue
@@ -237,6 +241,7 @@ def generate_paystub_pdf(
         "additions": additions,
         "total_additions": _q(total_additions),
         "gross_pay": _q(stub.gross_pay),
+        "taxable_employer_benefits": _q(taxable_employer_wages(stub)),
         "net_pay": _q(stub.net_pay),
         "regular_hours": _q(stub.regular_hours),
         "overtime_hours": _q(stub.overtime_hours),

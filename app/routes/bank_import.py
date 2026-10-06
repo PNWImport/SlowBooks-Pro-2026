@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.banking import BankAccount
-from app.services.ofx_import import parse_ofx, import_transactions
+from app.services.ofx_import import OfxFormatError, parse_ofx, import_transactions
 from app.services.bank_csv_import import parse_csv, import_csv_transactions
 from app.services.upload_limits import read_limited
 
@@ -28,7 +28,10 @@ async def preview_ofx(file: UploadFile = File(...)):
     except UnicodeDecodeError:
         text = content.decode("latin-1")
 
-    transactions = parse_ofx(text)
+    try:
+        transactions = parse_ofx(text)
+    except OfxFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "count": len(transactions),
         "transactions": [
@@ -59,7 +62,10 @@ async def import_ofx(
     except UnicodeDecodeError:
         text = content.decode("latin-1")
 
-    transactions = parse_ofx(text)
+    try:
+        transactions = parse_ofx(text)
+    except OfxFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     result = import_transactions(db, bank_account_id, transactions)
     return result
 

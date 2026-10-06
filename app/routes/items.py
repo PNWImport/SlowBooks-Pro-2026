@@ -15,7 +15,12 @@ from app.schemas.items import (
     LowStockResponse,
 )
 from app.routes._helpers import get_or_404
-from app.services.inventory_service import record_adjustment, current_valuation
+from app.services.inventory_service import (
+    current_valuation,
+    get_inventory_asset_account_id,
+    record_adjustment,
+    record_opening_stock,
+)
 
 router = APIRouter(prefix="/api/items", tags=["items"])
 
@@ -196,8 +201,28 @@ def adjust_inventory(
 @router.post("", response_model=ItemResponse, status_code=201)
 def create_item(data: ItemCreate, db: Session = Depends(get_db)):
     _refuse_duplicate_name(db, data.name)
-    item = Item(**data.model_dump())
+    values = data.model_dump()
+    # Quantity and average cost belong to the inventory ledger: an opening
+    # quantity becomes a movement (and a journal entry), not a bare column.
+    opening_qty = Decimal(str(values.pop("quantity_on_hand", 0) or 0))
+    values.pop("avg_cost", None)
+    item = Item(**values)
+    if item.track_inventory and opening_qty > 0:
+        if Decimal(str(item.cost or 0)) > 0 and not get_inventory_asset_account_id(
+            db, item
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Choose an inventory asset account for this item (or add "
+                    "account 1300 Inventory) before entering opening stock: "
+                    "stock with a cost has to be valued somewhere."
+                ),
+            )
     db.add(item)
+    db.flush()
+    if item.track_inventory and opening_qty > 0:
+        record_opening_stock(db, item, opening_qty, Decimal(str(item.cost or 0)))
     db.commit()
     db.refresh(item)
     return item

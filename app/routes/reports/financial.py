@@ -441,6 +441,8 @@ def profit_loss_by_class(
         "end_date": end_date.isoformat(),
         "classes": columns,
         "total_income": sum(c["income"] for c in columns),
+        "total_cogs": sum(c["cogs"] for c in columns),
+        "total_gross_profit": sum(c["gross_profit"] for c in columns),
         "total_expenses": sum(c["expenses"] for c in columns),
         "total_net_income": sum(c["net_income"] for c in columns),
     }

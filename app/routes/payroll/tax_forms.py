@@ -52,6 +52,7 @@ def generate_w2_form(
         "box_4": str(data["box4_ss_tax_withheld"]),
         "box_5": str(data["box5_medicare_wages"]),
         "box_6": str(data["box6_medicare_tax_withheld"]),
+        "box_7": str(data["box7_ss_tips"]),
         "box_16": str(data["box16_state_wages"]),
         "box_17": str(data["box17_state_income_tax"]),
         "employee_ssn": (
@@ -87,6 +88,7 @@ def generate_w3_form(
         "box_4": str(data["box4_ss_tax_withheld"]),
         "box_5": str(data["box5_medicare_wages"]),
         "box_6": str(data["box6_medicare_tax_withheld"]),
+        "box_7": str(data["box7_ss_tips"]),
         "box_16": str(data["box16_state_wages"]),
         "box_17": str(data["box17_state_income_tax"]),
         "number_of_w2s": str(data["num_w2"]),
@@ -118,6 +120,7 @@ def generate_form_940(
         "box_2": str(data["total_futa_tax"]),  # FUTA tax for the year
         "total_payments": str(data["total_payments"]),
         "exempt_payments": str(data["exempt_payments"]),
+        "excess_payments": str(data["excess_payments"]),
         "employer_ein": company["ein"] or "XX-XXXXXXX",
         "employer_name": company["name"],
         "tax_year": str(year),
@@ -152,6 +155,8 @@ def generate_form_941(
         "box_2": str(data["federal_income_tax_withheld"]),  # Federal income tax
         "box_3": str(data["social_security_wages"]),  # Social security wages
         "box_4": str(data["social_security_tax"]),  # Social security tax
+        "box_5b": str(data["social_security_tips"]),  # Social security tips
+        "box_5b_tax": str(data["social_security_tip_tax"]),
         "box_5": str(data["medicare_wages"]),  # Medicare wages and tips
         "box_6": str(data["medicare_tax"]),  # Medicare tax
         "box_12": str(data["total_tax_liability"]),  # Total tax after adjustments

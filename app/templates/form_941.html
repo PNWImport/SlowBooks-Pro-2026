@@ -54,6 +54,8 @@
             <tr><td class="box">3</td><td>Federal income tax withheld from wages</td><td class="r">{{ data.federal_income_tax_withheld | currency }}</td></tr>
             <tr><td class="box">5a</td><td>Taxable Social Security wages</td><td class="r">{{ data.social_security_wages | currency }}</td></tr>
             <tr><td class="box">5a</td><td>Social Security tax (wages &times; 12.4%)</td><td class="r">{{ data.social_security_tax | currency }}</td></tr>
+            <tr><td class="box">5b</td><td>Taxable Social Security tips</td><td class="r">{{ data.social_security_tips | currency }}</td></tr>
+            <tr><td class="box">5b</td><td>Social Security tax (tips &times; 12.4%)</td><td class="r">{{ data.social_security_tip_tax | currency }}</td></tr>
             <tr><td class="box">5c</td><td>Taxable Medicare wages</td><td class="r">{{ data.medicare_wages | currency }}</td></tr>
             <tr><td class="box">5c</td><td>Medicare tax (wages &times; 2.9%)</td><td class="r">{{ data.medicare_tax | currency }}</td></tr>
             {% if data.additional_medicare_wages %}

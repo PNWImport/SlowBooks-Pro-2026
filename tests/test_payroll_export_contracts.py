@@ -144,3 +144,49 @@ def test_nacha_export_supplies_company_defaults_and_translates_errors(
     assert calls[1][1]["effective_date"] == date(2026, 2, 1)
     assert calls[1][1]["company_name"] == "Acme Payroll"
     assert calls[1][1]["company_id"] == "12-3456789"
+
+
+def _save_ach_details(db_session):
+    from app.services import ach_settings
+
+    ach_settings.save(
+        db_session,
+        {
+            "immediate_destination": "021000021",
+            "immediate_origin": "123456789",
+            "originating_dfi_id": "02100002",
+            "company_account": "987654321",
+        },
+    )
+    db_session.commit()
+
+
+def test_payroll_nacha_refuses_file_with_no_entries(client, db_session):
+    """No employee has a bank account: 400, not a 200 'file' of zero entries."""
+    run, _, _ = _run_with_stub(db_session, status=PayRunStatus.PROCESSED)
+    _save_ach_details(db_session)
+    r = client.post(f"/api/payroll/{run.id}/nacha", json=_originating())
+    assert r.status_code == 400
+    assert "direct-deposit details" in r.json()["detail"]
+
+
+def test_contractor_nacha_refuses_file_with_no_entries(client, db_session):
+    from app.models.contacts import Vendor
+    from app.models.contractor_payments import (
+        ContractorPayment,
+        ContractorPayRun,
+        ContractorRunStatus,
+    )
+
+    vendor = Vendor(name="Unbanked contractor")
+    run = ContractorPayRun(
+        pay_date=date(2026, 1, 20), status=ContractorRunStatus.PROCESSED
+    )
+    db_session.add_all([vendor, run])
+    db_session.flush()
+    db_session.add(ContractorPayment(run_id=run.id, vendor_id=vendor.id, amount=50))
+    db_session.commit()
+    _save_ach_details(db_session)
+    r = client.post(f"/api/contractor-runs/{run.id}/nacha", json=_originating())
+    assert r.status_code == 400
+    assert "direct-deposit details" in r.json()["detail"]

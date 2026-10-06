@@ -1,4 +1,5 @@
 import re
+from datetime import date as _date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated, Optional
 
@@ -10,6 +11,8 @@ from pydantic import (
     Field,
     PlainSerializer,
     StringConstraints,
+    field_validator,
+    model_validator,
 )
 
 # A required display name that cannot be blank.
@@ -86,6 +89,22 @@ def validate_non_negative_line(quantity, rate) -> None:
         raise ValueError("rate must be non-negative; use a credit memo for refunds")
 
 
+# The window within which a date is believable. 1900 covers any employee or
+# historical record; 2200 is far past any schedule. Outside it is a typo.
+DATE_MIN = _date(1900, 1, 1)
+DATE_MAX = _date(2200, 12, 31)
+
+
+def _contains_nul(value) -> bool:
+    if isinstance(value, str):
+        return "\x00" in value
+    if isinstance(value, dict):
+        return any(_contains_nul(k) or _contains_nul(v) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_nul(v) for v in value)
+    return False
+
+
 class StrictModel(BaseModel):
     """Base for every request body: unknown fields are a 422, not silence.
 
@@ -98,7 +117,34 @@ class StrictModel(BaseModel):
     default; only what the client sends is checked.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # allow_inf_nan=False: a NaN or Infinity amount (Python's JSON reader
+    # accepts the bare words, and 1e999 overflows to Infinity) is stored,
+    # cannot be serialised back, and then every list of that table answers
+    # 500 until someone deletes the row in SQL (workers-comp rates did).
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_nul_bytes(cls, data):
+        """A NUL (0x00) in text cannot be stored: PostgreSQL's driver raises
+        and the request became a 500 — on login, before any sign-in."""
+        if _contains_nul(data):
+            raise ValueError("Text cannot contain a NUL (0x00) character.")
+        return data
+
+    @field_validator("*", mode="after")
+    @classmethod
+    def _plausible_dates(cls, value):
+        """A year typed as 0202 or 9999 posted into the books (22 posting
+        endpoints accepted it) or overflowed date arithmetic into a 500.
+        Nothing real is dated outside this window."""
+        if isinstance(value, _date) and not (
+            DATE_MIN.year <= value.year <= DATE_MAX.year
+        ):
+            raise ValueError(
+                f"Date must be between {DATE_MIN.year} and {DATE_MAX.year}."
+            )
+        return value
 
 
 def _as_percent(value) -> str:

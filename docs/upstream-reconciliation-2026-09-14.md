@@ -607,7 +607,7 @@ and whitespace checks passed. Not a full browser AA audit. `0d67176` platform-te
 portions remain for the OCR/packaging group.
 
 ### Per-commit status
- 
+
 Sidebar/encoding follow-up: `65e905e` moves the update banner and running version
 to the sidebar header while retaining the footer version and nonblocking empty
 state. Its OCR fixture is integrated; release metadata is superseded. `81416c0`

@@ -2,6 +2,7 @@ import json
 from datetime import date
 from decimal import Decimal
 from typing import Optional
+from pydantic import Field, model_validator
 
 from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -14,18 +15,29 @@ from app.models.payroll import (
     PayStub,
     PayRunStatus,
     PayRunType,
-    Employee,
 )
 from app.services.payroll_service import calculate_withholdings
 from app.services.state_tax.reciprocity import withholding_state
-from app.schemas.common import StrictModel
+from app.services.payroll_drafts import (
+    HISTORY_KEY,
+    draft_history,
+    lock_payroll_employees,
+)
+from app.schemas.common import Money, StrictModel
+from app.services.retro_pay import RetroPayConflict
 
 
 class RetroPayRequest(StrictModel):
     employee_id: int
-    new_rate: float
+    new_rate: Money = Field(gt=0, max_digits=15)
     effective_date: date
     pay_date: Optional[date] = None
+
+    @model_validator(mode="after")
+    def validate_payment_date(self):
+        if (self.pay_date or date.today()) < self.effective_date:
+            raise ValueError("pay_date cannot be before effective_date")
+        return self
 
 
 @router.post("/retro-pay/preview")
@@ -36,6 +48,8 @@ def retro_pay_preview(data: RetroPayRequest, db: Session = Depends(get_db)):
         return compute_retro_pay(
             db, data.employee_id, Decimal(str(data.new_rate)), data.effective_date
         )
+    except RetroPayConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -44,22 +58,36 @@ def retro_pay_preview(data: RetroPayRequest, db: Session = Depends(get_db)):
 def retro_pay_apply(data: RetroPayRequest, db: Session = Depends(get_db)):
     from app.services.retro_pay import compute_retro_pay
 
+    emp = lock_payroll_employees(db, [data.employee_id]).get(data.employee_id)
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    if data.new_rate < (emp.pay_rate or 0):
+        raise HTTPException(
+            status_code=400,
+            detail="Retro pay cannot lower the current pay rate. Reconcile rate decreases separately.",
+        )
     try:
         preview = compute_retro_pay(
             db, data.employee_id, Decimal(str(data.new_rate)), data.effective_date
         )
+    except RetroPayConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     amount = Decimal(str(preview["retro_pay_due"]))
+    if any(period["difference"] < 0 for period in preview["periods"]):
+        raise HTTPException(
+            status_code=400,
+            detail="Retro pay cannot subtract previously paid wages from another period's arrears. Reconcile the affected periods separately.",
+        )
     if amount <= 0:
         raise HTTPException(
             status_code=400,
             detail="Retro amount is not positive — nothing to pay out",
         )
 
-    emp = db.query(Employee).filter(Employee.id == data.employee_id).first()
-    if not emp:
-        raise HTTPException(status_code=404, detail="Employee not found")
+    # Remembered on the draft so cancelling it can undo the raise it staged.
+    previous_rate = emp.pay_rate
     emp.pay_rate = Decimal(str(data.new_rate))
 
     pay_date = data.pay_date or date.today()
@@ -78,7 +106,9 @@ def retro_pay_apply(data: RetroPayRequest, db: Session = Depends(get_db)):
         amount,
         pay_frequency=emp.pay_frequency.value if emp.pay_frequency else "biweekly",
         filing_status=emp.filing_status.value if emp.filing_status else "single",
-        ytd_gross=ytd["gross"],
+        ytd_gross=ytd["taxable_gross"],
+        ytd_fica=ytd["fica_wages"],
+        ytd_tips=ytd["tips"],
         work_state=(emp.work_state or "WA").upper(),
         withholding_state=withholding_state(
             (emp.work_state or "WA").upper(), emp.residence_state
@@ -109,7 +139,18 @@ def retro_pay_apply(data: RetroPayRequest, db: Session = Depends(get_db)):
         state_other_employer=result["state_other_employer"],
         detail_json=json.dumps(
             {k: str(v) for k, v in result["detail"].items()}
-            | {"retro_pay": str(amount), "effective_date": str(data.effective_date)}
+            | {
+                "retro_pay": str(amount),
+                "retro_previous_pay_rate": str(previous_rate),
+                "retro_new_pay_rate": str(Decimal(str(data.new_rate))),
+                "effective_date": str(data.effective_date),
+                "retro_source_run_ids": [
+                    period["pay_run_id"]
+                    for period in preview["periods"]
+                    if period["difference"] > 0
+                ],
+                HISTORY_KEY: draft_history(db, emp.id, pay_date),
+            }
         ),
     )
     db.add(stub)

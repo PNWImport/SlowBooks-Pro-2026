@@ -108,6 +108,18 @@ def email_invoice(
     inv = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    # Who it goes to: the address typed, else the customer's own. With neither
+    # there is no one to send to — and nothing to log: the email log's
+    # recipient column cannot be empty, so this used to be a 500.
+    recipient = (data.recipient or "").strip() or (
+        getattr(inv.customer, "email", None) or ""
+    ).strip()
+    if not recipient:
+        raise HTTPException(
+            status_code=400,
+            detail="There is no email address to send this to. Enter one, or add "
+            "an email address to the customer.",
+        )
     company = get_settings(db)
     from app.services.email_service import invoice_email_label
 
@@ -145,7 +157,7 @@ def email_invoice(
         # or every send produces two rows.
         sent = send_email(
             db=db,
-            to_email=data.recipient,
+            to_email=recipient,
             subject=subject,
             html_body=html_body,
             attachment_bytes=pdf_bytes,
@@ -179,7 +191,7 @@ def email_invoice(
         log = EmailLog(
             entity_type="invoice",
             entity_id=inv.id,
-            recipient=data.recipient,
+            recipient=recipient,
             subject=subject,
             status="failed",
             error_message=message,

@@ -166,7 +166,14 @@ def lock_accounts(db: Session, account_ids) -> dict[int, Account]:
             db.query(Account)
             .filter(Account.id.in_({i for i in account_ids if i is not None}))
             .order_by(Account.id)
-            .with_for_update()
+            # FOR NO KEY UPDATE, not FOR UPDATE: a request has usually already
+            # inserted rows that reference these accounts (bill lines, payment
+            # records), which took a FOR KEY SHARE lock on each. Asking for
+            # FOR UPDATE then makes two such requests each wait to upgrade a
+            # lock the other holds: PostgreSQL's DeadlockDetected, seen as a
+            # 500 on 5 of 6 parallel payments. NO KEY UPDATE does not conflict
+            # with KEY SHARE and still serializes balance changes.
+            .with_for_update(key_share=True)
             .populate_existing()
             .all()
         )

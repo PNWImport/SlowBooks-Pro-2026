@@ -127,20 +127,26 @@ control accounts are renamed in place, never duplicated. Asked for by
   synthetic 50,000-invoice/150,000-line workload completed 192 page reads without
   errors. This is a bounded test, not enterprise capacity certification.
 
-**Local validation — September 26, 2026:** 4,959 Linux tests (SQLite plus a
-PostgreSQL 17 migration database), none failing after stale migration-head
-pins were updated; 18 documented skips; all 32 frontend tests passed. A copy of
-an existing PostgreSQL company upgraded to the 2.18.0 build and passed a 28-step live
-HTTP walkthrough; browser acceptance remains open. Detailed evidence and
-remaining release gates are recorded in [current validation](docs/validation.md);
-this is not release certification.
+**Continued beta validation — October 5, 2026:** 6,547 passed, 12
+documented conditional skips, zero failures; 96.92% statement coverage
+with SQLite, PostgreSQL 17, native OCR and all 47 Chromium cases passing.
+The rebuilt beta passed stale payroll-cap handling, exact draft cancellation,
+ordinary taxable employer contributions and retro-pay boundary checks. Actual
+image checks passed backup recovery across all 101 tables, strict HTTPS,
+native OCR and Kubernetes deployment. Alembic head: `b7fringe2026105`.
+The [current beta checklist](docs/beta-continuation-2026-10-05.md) records exact
+source/image hashes, final results, evidence and remaining gates. The
+[first beta audit](docs/beta-readiness-2026-10-05.md) retains its broader
+accounting, nonprofit and frontend observations, including 85 Node tests,
+11 live workflows and 154 axe audit occurrences, with their original build
+provenance. Earlier snapshots remain in [validation history](docs/validation.md).
 
-**Latest full-suite run — October 5, 2026:** 6,187 passed, 46 skipped (Playwright and PostgreSQL-only tests) on the branch with upstream 2.19.0 merged; Alembic head `m3heads2026105`.
-
-**Still required before public release:** accessibility remediation and
-keyboard/screen-reader testing, deployment-specific capacity acceptance,
-payroll jurisdiction verification, native signed-platform checks, live-provider
-acceptance, and hosted CI/code-owner review. Existing installs should follow the
+**Still required before public release:** unsupported special fringe and
+historical payroll reconciliation; state/local classification verification;
+supporting release-image updates; signed native-platform and live-provider
+acceptance; human accessibility, deployment capacity and independent security
+review; hosted CI/code-owner review and author signoffs.
+Existing installs should follow the
 [concurrency-fix upgrade checks](docs/operations.md#concurrency-fix-upgrade-checks);
 these fixes do not repair historical balance drift or audit-chain damage.
 Feature details: [payroll/HR guide](docs/payroll-hr-module.md).
@@ -199,7 +205,7 @@ a native `.app` in a DMG, no Docker or Python required.
 [SimpleFIN](https://www.simplefin.org/) — you hold the bank credential,
 no middleman server, dedup + bank rules on arrival
 ([docs/setup-bank-feeds.md](docs/setup-bank-feeds.md)). Every install
-also serves a self-documenting local REST API (574 operations in this branch); point
+also serves a self-documenting local REST API (617 operations in this branch); point
 Claude Code or any agentic CLI at it —
 [slowbookspro.com/ai](https://www.slowbookspro.com/ai/) has the
 paste-prompt.

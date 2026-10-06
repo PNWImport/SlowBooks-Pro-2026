@@ -301,7 +301,9 @@ def write_off_invoice(
     from app.services.numbering import next_credit_memo_number
 
     check_closing_date(db, data.date)
-    inv = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    # Locked before the balance is read: two write-offs at once would each see
+    # the whole balance and each forgive it, crediting A/R twice.
+    inv = db.query(Invoice).filter(Invoice.id == invoice_id).with_for_update().first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     if inv.status == InvoiceStatus.VOID:
@@ -342,14 +344,16 @@ def write_off_invoice(
             status=CreditMemoStatus.APPLIED,
             is_write_off=True,
         )
-        db.add(cm)
         try:
-            db.flush()
+            # A savepoint, not db.rollback(): a rollback here would release
+            # the invoice lock taken above.
+            with db.begin_nested():
+                db.add(cm)
+                db.flush()
             break
         except IntegrityError as e:
             if "memo_number" not in str(e.orig).lower():
                 raise
-            db.rollback()
             cm = None
     if cm is None:
         raise HTTPException(

@@ -816,9 +816,9 @@ const AnalyticsPage = {
 
     let dropdown;
     if (!groups) {
-      dropdown = '<select disabled><option>Loading analyses…</option></select>';
+      dropdown = '<select aria-label="Analysis" disabled><option>Loading analyses…</option></select>';
     } else if (groups.length === 0) {
-      dropdown = '<select disabled><option>(none available)</option></select>';
+      dropdown = '<select aria-label="Analysis" disabled><option>(none available)</option></select>';
     } else {
       const opts = groups
         .map(

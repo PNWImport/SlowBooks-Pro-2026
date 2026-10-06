@@ -905,7 +905,8 @@ ReportsPage.profitLossByClass = async function () {
                 <tfoot><tr style="font-weight:700; background:var(--gray-50);">
                     <td>Total</td>
                     <td class="amount">${formatCurrency(data.total_income)}</td>
-                    <td></td><td></td>
+                    <td class="amount">${formatCurrency(data.total_cogs)}</td>
+                    <td class="amount">${formatCurrency(data.total_gross_profit)}</td>
                     <td class="amount">${formatCurrency(data.total_expenses)}</td>
                     <td class="amount">${formatCurrency(data.total_net_income)}</td>
                 </tr></tfoot>

@@ -7,8 +7,9 @@
 #   * WA Cares Fund — long-term-care premium, % of gross, employee only
 #   * WA L&I workers' compensation — assessed PER HOUR worked, by risk class
 #
-# Rates are 2026-approximate. Verify against the WA ESD / L&I rate notices
-# before relying on these for actual tax filing.
+# PFML / Cares rates follow ESD's 2026 employer guidance. Employer-size
+# exemptions and employee Cares exemptions require separate configuration;
+# this engine uses the standard employer share. L&I uses the risk-class rate.
 # ============================================================================
 
 from decimal import Decimal
@@ -18,7 +19,9 @@ from app.services.accounting import _q
 from app.services.state_tax.base import StateEngine, StateTaxResult
 
 # --- WA Paid Family & Medical Leave -----------------------------------------
-PFML_TOTAL_RATE = Decimal("0.0074")  # total premium as a fraction of gross
+PFML_TOTAL_RATE = Decimal("0.0113")  # 2026 total premium, excluding tips
+PFML_WAGE_BASE = Decimal("184500")  # 2026 Social Security cap
+# https://paidleave.wa.gov/employer-roles-responsibilities/
 PFML_EMPLOYEE_SHARE = Decimal("0.7143")  # employee pays 71.43% of the premium
 PFML_EMPLOYER_SHARE = Decimal("0.2857")  # employer pays 28.57% of the premium
 
@@ -40,18 +43,26 @@ class WAEngine(StateEngine):
         hours: Decimal,
         filing_status: str,
         wc_class_code: str | None,
+        tips: Decimal = Decimal("0"),
+        ytd_tips: Decimal = Decimal("0"),
         **_extra,
     ) -> StateTaxResult:
-        if gross <= 0 or taxable <= 0:
+        if gross <= 0:
             return StateTaxResult()
 
-        # PFML — total premium split between employee and employer.
-        pfml_total = gross * PFML_TOTAL_RATE
+        # Both premiums use gross wages before income-tax deductions, excluding
+        # reported and paycheck tips. Only Paid Leave has an annual cap.
+        premium_wages = max(Decimal("0"), gross - Decimal(str(tips)))
+        ytd_premium_wages = max(Decimal("0"), ytd_gross - Decimal(str(ytd_tips)))
+        pfml_wages = max(
+            Decimal("0"), min(premium_wages, PFML_WAGE_BASE - ytd_premium_wages)
+        )
+        pfml_total = pfml_wages * PFML_TOTAL_RATE
         pfml_employee = _q(pfml_total * PFML_EMPLOYEE_SHARE)
         pfml_employer = _q(pfml_total * PFML_EMPLOYER_SHARE)
 
         # WA Cares — employee-only long-term-care premium.
-        wa_cares = _q(gross * WA_CARES_RATE)
+        wa_cares = _q(premium_wages * WA_CARES_RATE)
 
         # L&I workers' comp — per-hour rates by risk classification.
         rate = get_lni_rate(wc_class_code)

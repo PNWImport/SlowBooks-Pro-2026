@@ -1659,10 +1659,10 @@ tr.clickable { cursor: pointer; }
     overflow-y: auto;
     font-size: 10px;
     font-family: var(--font-mono);
-    background: #fff8f8;
-    border: 1px solid #fca5a5;
+    background: var(--panel-bg);
+    border: 1px solid var(--text-danger);
     padding: 6px 8px;
-    color: var(--qb-red);
+    color: var(--text-danger);
 }
 
 .iif-warnings {
@@ -1671,10 +1671,10 @@ tr.clickable { cursor: pointer; }
     overflow-y: auto;
     font-size: 10px;
     font-family: var(--font-mono);
-    background: #fffbf0;
-    border: 1px solid #fbbf24;
+    background: var(--panel-bg);
+    border: 1px solid var(--text-warning);
     padding: 6px 8px;
-    color: var(--qb-orange);
+    color: var(--text-warning);
 }
 
 /* "Change ALL-CAPS names" on the IIF import (#195): the box, and a few of

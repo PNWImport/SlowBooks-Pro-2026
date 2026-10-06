@@ -61,6 +61,17 @@ def _get_code(db: Session, code_id: int) -> BenefitCode:
 
 
 # --- Codes -----------------------------------------------------------------
+def _validate_employer_tax_treatment(kind, employer_taxable, treatment):
+    if treatment in ("fully_taxable", "reported_only") and (
+        not employer_taxable or kind not in ("benefit", "both")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="An employer tax treatment requires a taxable employer "
+            "contribution with kind benefit or both.",
+        )
+
+
 @router.get("/codes", response_model=list[BenefitCodeResponse])
 def list_codes(
     include_inactive: bool = Query(default=False), db: Session = Depends(get_db)
@@ -75,6 +86,9 @@ def list_codes(
 
 @router.post("/codes", response_model=BenefitCodeResponse, status_code=201)
 def create_code(data: BenefitCodeCreate, db: Session = Depends(get_db)):
+    _validate_employer_tax_treatment(
+        data.kind, data.employer_taxable, data.employer_tax_treatment
+    )
     code_str = data.code.strip().upper()
     if db.query(BenefitCode).filter(BenefitCode.code == code_str).first():
         raise HTTPException(status_code=409, detail=f"Code {code_str} already exists")
@@ -117,6 +131,11 @@ def get_code(code_id: int, db: Session = Depends(get_db)):
 def update_code(code_id: int, data: BenefitCodeUpdate, db: Session = Depends(get_db)):
     code = _get_code(db, code_id)
     changes = data.model_dump(exclude_unset=True)
+    _validate_employer_tax_treatment(
+        changes.get("kind", code.kind),
+        changes.get("employer_taxable", code.employer_taxable),
+        changes.get("employer_tax_treatment", code.employer_tax_treatment),
+    )
     if "code" in changes and changes["code"]:
         new = changes["code"].strip().upper()
         dup = (

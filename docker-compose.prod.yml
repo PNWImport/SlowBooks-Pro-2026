@@ -25,7 +25,9 @@ services:
     network_mode: none
     read_only: true
     cap_drop: [ALL]
-    cap_add: [CHOWN]
+    # Traverse uid-1000 private cache directories during recursive chown.
+    # The application itself continues to drop all capabilities.
+    cap_add: [CHOWN, DAC_READ_SEARCH]
     security_opt: [no-new-privileges:true]
     entrypoint: ["chown", "-R", "1000:1000", "/app/backups", "/app/app/static/uploads"]
     volumes:

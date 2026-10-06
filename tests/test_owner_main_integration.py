@@ -37,9 +37,10 @@ def test_single_merge_head_preserves_both_histories():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["m3heads2026105"]
+    assert script.get_heads() == ["b7fringe2026105"]
     revisions = {revision.revision for revision in script.walk_revisions()}
     assert {
+        "m3heads2026105",
         "fa12bc34de56",
         "d6e7f8a9b0c1",
         "ff00aabb1122",

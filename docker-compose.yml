@@ -13,7 +13,10 @@ services:
     network_mode: none
     read_only: true
     cap_drop: [ALL]
-    cap_add: [CHOWN]
+    # Private cache/upload subdirectories may be mode 0700, owned by uid 1000.
+    # CHOWN alone cannot traverse them; read/search permits recursive ownership
+    # repair without granting file-write bypass to this networkless helper.
+    cap_add: [CHOWN, DAC_READ_SEARCH]
     security_opt: [no-new-privileges:true]
     entrypoint: ["chown", "-R", "1000:1000", "/app/backups", "/app/app/static/uploads"]
     volumes:

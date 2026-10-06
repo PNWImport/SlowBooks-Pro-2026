@@ -199,6 +199,32 @@ def test_profit_loss_by_class_reconciles(client, db_session, seed_accounts):
     assert abs(data["total_net_income"] - plain["net_income"]) < 0.01
 
 
+def test_profit_loss_by_class_totals_carry_cogs_and_gross_profit(
+    client, db_session, seed_accounts
+):
+    from app.models.accounts import Account, AccountType
+
+    income, _ = _income_expense(db_session)
+    cogs = db_session.query(Account).filter(Account.account_type == AccountType.COGS)
+    cogs = cogs.first()
+    create_journal_entry(
+        db_session,
+        date(2026, 7, 10),
+        "sale with cost",
+        [
+            {"account_id": cogs.id, "debit": Decimal("40"), "credit": Decimal("0")},
+            {"account_id": income.id, "debit": Decimal("0"), "credit": Decimal("100")},
+            {"account_id": cogs.id, "debit": Decimal("60"), "credit": Decimal("0")},
+        ],
+    )
+    db_session.commit()
+    q = "?start_date=2026-07-01&end_date=2026-07-31"
+    data = client.get("/api/reports/profit-loss-by-class" + q).json()
+    plain = client.get("/api/reports/profit-loss" + q).json()
+    assert data["total_cogs"] == plain["total_cogs"] == 100.0
+    assert data["total_gross_profit"] == plain["gross_profit"] == 0.0
+
+
 # ── IIF CLASS column ─────────────────────────────────────────────────────
 
 

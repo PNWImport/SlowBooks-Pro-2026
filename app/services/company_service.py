@@ -34,12 +34,12 @@ logger = logging.getLogger(__name__)
 
 # Strict pattern for Postgres database names: alphanumeric, underscores,
 # hyphens only.
-_VALID_DB_NAME = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,62}$")
+_VALID_DB_NAME = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,62}\Z")
 
 # Strict allow-list for company .db filenames. Same trust-boundary shape as
 # backup_service._BACKUP_FILENAME_RE: safe character class, known extension,
 # NO path separators, NO ".." — validated before any path is constructed.
-_COMPANY_FILENAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}\.db$")
+_COMPANY_FILENAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}\.db\Z")
 
 
 def _is_sqlite() -> bool:

@@ -10,6 +10,7 @@ from app.models.benefits import (
     BURDEN_ROUTINGS,
     CALC_METHODS,
     EMPLOYER_CALC_METHODS,
+    EMPLOYER_TAX_TREATMENTS,
 )
 
 
@@ -70,6 +71,11 @@ class _CodeValidators(StrictModel):
     def _routing(cls, v):
         return _one_of(v, BURDEN_ROUTINGS, "burden_routing")
 
+    @field_validator("employer_tax_treatment", check_fields=False)
+    @classmethod
+    def _employer_tax_treatment(cls, v):
+        return _one_of(v, EMPLOYER_TAX_TREATMENTS, "employer_tax_treatment")
+
 
 class BenefitCodeBase(_CodeValidators):
     code: str
@@ -82,6 +88,7 @@ class BenefitCodeBase(_CodeValidators):
     reduces_state: bool = False
     reduces_fica: bool = False
     employer_taxable: bool = False
+    employer_tax_treatment: Optional[str] = None
     sequence: int = 100
     expense_account_id: Optional[int] = None
     liability_account_id: Optional[int] = None
@@ -109,6 +116,7 @@ class BenefitCodeUpdate(_CodeValidators):
     reduces_state: Optional[bool] = None
     reduces_fica: Optional[bool] = None
     employer_taxable: Optional[bool] = None
+    employer_tax_treatment: Optional[str] = None
     sequence: Optional[int] = None
     expense_account_id: Optional[int] = None
     liability_account_id: Optional[int] = None

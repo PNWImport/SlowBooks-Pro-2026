@@ -363,6 +363,13 @@ def generate_nacha_file(db: Session, pay_run_id: int, originating: dict) -> str:
             entry_hash += int(_routing_prefix(routing))
             total_credit += amount_cents
 
+    if not entries:
+        raise ValueError(
+            "No employee in this run has direct-deposit details (an active "
+            "bank account that is not awaiting prenote), so there is nothing "
+            "to send to the bank."
+        )
+
     # The debit side: a single offsetting debit to the company account funds
     # all the credits. Banks typically expect a balanced file.
     if entries:
@@ -566,6 +573,13 @@ def generate_contractor_nacha_file(db: Session, run_id: int, originating: dict) 
         )
         entry_hash += int(_routing_prefix(routing))
         total_credit += amount_cents
+
+    if not entries:
+        raise ValueError(
+            "No contractor in this run has direct-deposit details (an active "
+            "bank account and a payment above zero), so there is nothing to "
+            "send to the bank."
+        )
 
     if entries:
         trace_seq += 1

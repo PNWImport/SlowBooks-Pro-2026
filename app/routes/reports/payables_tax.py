@@ -360,9 +360,11 @@ def report_1099_summary(
     if not year:
         year = date.today().year
 
-    from app.models.bills import BillPayment, BillPaymentAllocation
-
-    from app.services.form_1099 import is_1099_vendor
+    from app.services.form_1099 import (
+        NEC_THRESHOLD,
+        _vendor_payment_totals,
+        is_1099_vendor,
+    )
 
     # The same rule as the 1099-NEC / 1096, so a vendor on this summary is
     # on those forms too (NEC type).
@@ -370,21 +372,9 @@ def report_1099_summary(
     if not vendors_1099:
         return {"year": year, "items": [], "total": 0, "vendors_above_threshold": 0}
 
-    # Single query: sum bill payment allocations grouped by vendor for the year.
-    # Replaces a query-per-vendor loop that made this O(N) in DB round-trips.
-    totals_by_vendor = dict(
-        db.query(
-            BillPayment.vendor_id,
-            sqlfunc.coalesce(sqlfunc.sum(BillPaymentAllocation.amount), 0),
-        )
-        .join(
-            BillPaymentAllocation,
-            BillPaymentAllocation.bill_payment_id == BillPayment.id,
-        )
-        .filter(sqlfunc.extract("year", BillPayment.date) == year)
-        .group_by(BillPayment.vendor_id)
-        .all()
-    )
+    # The 1099-NEC's own totals (bill payments + processed contractor runs,
+    # voids excluded), so this summary and the form always agree.
+    totals_by_vendor = _vendor_payment_totals(db, year)
 
     items = []
     total = Decimal(0)
@@ -393,7 +383,7 @@ def report_1099_summary(
     for vendor in vendors_1099:
         vendor_total = Decimal(str(totals_by_vendor.get(vendor.id, 0) or 0))
         total += vendor_total
-        flagged = vendor_total >= 600
+        flagged = vendor_total >= NEC_THRESHOLD
         if flagged:
             above_threshold += 1
 

@@ -75,7 +75,7 @@ const BenefitsPage = {
             <td><strong>${escapeHtml(c.code)}</strong><br><span style="font-size:12px;">${escapeHtml(c.name)}</span></td>
             <td>${escapeHtml(c.kind)} · ${c.category === 'pretax' ? 'pre-tax' : 'post-tax'}</td>
             <td>${escapeHtml(c.calc_method)}${c.employer_calc_method ? ` / ${escapeHtml(c.employer_calc_method)}` : ''}</td>
-            <td style="font-size:12px;">${c.category === 'pretax' ? ['reduces_federal', 'reduces_state', 'reduces_fica'].filter(k => c[k]).map(k => k.replace('reduces_', '')).join(', ') || 'none' : '—'}</td>
+            <td style="font-size:12px;">${c.category === 'pretax' ? ['reduces_federal', 'reduces_state', 'reduces_fica'].filter(k => c[k]).map(k => k.replace('reduces_', '')).join(', ') || 'none' : '—'}<br>Employer: ${c.employer_taxable ? (c.employer_tax_treatment === 'fully_taxable' ? 'fully taxable' : c.employer_tax_treatment === 'reported_only' ? 'reported only (not added to wages)' : 'unclassified — payroll blocked') : 'configured non-taxable'}</td>
             <td>${BenefitsPage._fmtRate(c)}</td>
             <td>${c.burden_routing === 'job_burden' ? 'job burden' : 'fringe pool'}${c.tracks_balance ? ' · balance' : ''}</td>
             <td class="actions">
@@ -103,14 +103,15 @@ const BenefitsPage = {
     async showCodeForm(id = null) {
         const { accounts, vendors } = await BenefitsPage._lookups();
         let c = { code: '', name: '', kind: 'deduction', category: 'pretax', calc_method: 'fixed_amount', employer_calc_method: '',
-                  reduces_federal: true, reduces_state: true, reduces_fica: false, employer_taxable: false, sequence: 100,
+                  reduces_federal: true, reduces_state: true, reduces_fica: false, employer_taxable: false, employer_tax_treatment: null, sequence: 100,
                   expense_account_id: '', liability_account_id: '', remittance_vendor_id: '', burden_routing: 'fringe_pool',
                   tracks_balance: false, effective_from: '', effective_to: '', notes: '' };
         if (id) c = await API.get(`/benefits/codes/${id}`);
-        const sel = (name, options, value) => `<select name="${name}">${options.map(([v, l]) => `<option value="${v}" ${String(value) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+        const sel = (name, options, value, attributes = '') => `<select name="${name}" ${attributes}>${options.map(([v, l]) => `<option value="${v}" ${String(value) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+        const employerTreatment = c.employer_taxable ? (c.employer_tax_treatment || 'unclassified') : 'not_taxable';
         const methods = [['fixed_amount', 'Fixed amount per period'], ['percent_of_gross', 'Percent of gross'], ['percent_of_taxable', 'Percent of taxable (after earlier codes)'], ['amount_per_hour', 'Amount per hour'], ['tiered', 'Tiered bands']];
         const rateBlock = id ? '' : `
-            <h3 style="margin:16px 0 8px;font-size:14px;">Initial rate (effective today; add dated changes later under Rates)</h3>
+            <h3 style="margin:16px 0 8px;font-size:14px;">Initial rate (dated from the Effective from above, or today if blank; add dated changes later under Rates)</h3>
             <div class="form-grid">
                 <div class="form-group"><label>Employee rate</label><input name="rate_employee_rate" type="number" step="0.0001" value="0"></div>
                 <div class="form-group"><label>Employer rate</label><input name="rate_employer_rate" type="number" step="0.0001" value="0"></div>
@@ -142,8 +143,12 @@ const BenefitsPage = {
                     <label><input type="checkbox" name="reduces_federal" ${c.reduces_federal ? 'checked' : ''}> Reduces federal wages</label>
                     <label><input type="checkbox" name="reduces_state" ${c.reduces_state ? 'checked' : ''}> Reduces state wages</label>
                     <label><input type="checkbox" name="reduces_fica" ${c.reduces_fica ? 'checked' : ''}> Reduces FICA wages</label>
-                    <label><input type="checkbox" name="employer_taxable" ${c.employer_taxable ? 'checked' : ''}> Employer side is taxable to employee</label>
                     <label><input type="checkbox" name="tracks_balance" ${c.tracks_balance ? 'checked' : ''}> Tracks a balance (loan)</label>
+                </div>
+                <div class="form-group">
+                    <label for="benefit-employer-tax-treatment">Employer tax treatment</label>
+                    ${sel('employer_tax_treatment', [['not_taxable', 'Configured non-taxable contribution'], ['unclassified', 'Unclassified taxable contribution — payroll blocked'], ['fully_taxable', 'Ordinary fully taxable contribution'], ['reported_only', 'Reported only — not added to wages (group-term life up to $50,000)']], employerTreatment, 'id="benefit-employer-tax-treatment" aria-describedby="employer-tax-treatment-help"')}
+                    <p id="employer-tax-treatment-help" style="font-size:12px;color:var(--gray-400);margin:6px 0;">The entire employer contribution is added to modeled wage bases only when its cost and taxable value are the same. Confirm valuation, exclusions and employee payments before choosing fully taxable. Group-term life and other special tax treatments are unsupported. A positive unclassified taxable contribution blocks payroll.</p>
                 </div>
                 <div class="form-group"><label>Notes</label><input name="notes" value="${escapeHtml(c.notes || '')}"></div>
                 ${rateBlock}
@@ -169,11 +174,13 @@ const BenefitsPage = {
             remittance_vendor_id: raw.remittance_vendor_id ? parseInt(raw.remittance_vendor_id) : null,
             effective_from: raw.effective_from || null, effective_to: raw.effective_to || null,
             notes: raw.notes || null,
+            employer_taxable: raw.employer_tax_treatment !== 'not_taxable',
+            employer_tax_treatment: ['fully_taxable', 'reported_only'].includes(raw.employer_tax_treatment) ? raw.employer_tax_treatment : null,
         };
-        for (const k of ['reduces_federal', 'reduces_state', 'reduces_fica', 'employer_taxable', 'tracks_balance']) data[k] = f[k].checked;
+        for (const k of ['reduces_federal', 'reduces_state', 'reduces_fica', 'tracks_balance']) data[k] = f[k].checked;
         if (!id) {
             data.rate = {
-                effective_from: todayISO(),
+                effective_from: raw.effective_from || todayISO(),
                 employee_rate: parseFloat(raw.rate_employee_rate) || 0,
                 employer_rate: parseFloat(raw.rate_employer_rate) || 0,
                 per_period_cap: BenefitsPage._num(raw.rate_per_period_cap),

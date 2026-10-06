@@ -16,9 +16,14 @@ from app.services.payroll_service import (
     MEDICARE_ADDITIONAL_RATE,
     MEDICARE_ADDITIONAL_THRESHOLD,
     SS_WAGE_BASE,
-    _capped_wages,
 )
 from app.services.pdf_service import _jinja_env, render_pdf
+from app.services.payroll_wages import (
+    federal_wages,
+    gross_wages,
+    fica_wages as _fica_wages,
+    social_security_wage_parts,
+)
 
 # 941 combines the employee + employer FICA share into a single line and
 # expresses it as a rate applied to wages: 12.4% Social Security, 2.9% Medicare,
@@ -61,29 +66,14 @@ def _stubs_through_quarter(db, year: int, quarter: int) -> list[PayStub]:
     return sorted(stubs, key=lambda s: (s.pay_run.pay_date, s.id))
 
 
-def _fica_wages(stub: PayStub) -> Decimal:
-    """Gross less the pre-tax benefit amounts that reduce FICA wages
-    (Section 125 cafeteria plans, HSA): the base the paycheck's Social
-    Security and Medicare were figured on."""
-    reduced = sum(
-        (
-            Decimal(str(b.employee_amount or 0))
-            for b in stub.benefits
-            if b.category == "pretax" and b.reduces_fica
-        ),
-        Decimal("0"),
-    )
-    return max(Decimal("0"), Decimal(str(stub.gross_pay or 0)) - reduced)
-
-
-def _additional_medicare_wages(fica_wages: Decimal, ytd_gross: Decimal) -> Decimal:
+def _additional_medicare_wages(fica_wages: Decimal, ytd_fica: Decimal) -> Decimal:
     """The part of this paycheck's Medicare wages above the $200,000 an
     employee is paid in the year before Additional Medicare is withheld —
     the same measure the paycheck used (payroll_service.medicare)."""
-    annual = ytd_gross + fica_wages
+    annual = ytd_fica + fica_wages
     if annual <= MEDICARE_ADDITIONAL_THRESHOLD:
         return Decimal("0")
-    if ytd_gross >= MEDICARE_ADDITIONAL_THRESHOLD:
+    if ytd_fica >= MEDICARE_ADDITIONAL_THRESHOLD:
         return fica_wages
     return annual - MEDICARE_ADDITIONAL_THRESHOLD
 
@@ -112,37 +102,42 @@ def compute_941(db, year: int, quarter: int) -> dict:
     medicare_employee = Decimal("0")
     medicare_employer = Decimal("0")
     ss_wages = Decimal("0")
+    ss_tips = Decimal("0")
     medicare_wages = Decimal("0")
     additional_wages = Decimal("0")
-    # Gross paid to each employee earlier in the year: the basis the
-    # paycheck used for the wage base and the Additional Medicare threshold.
-    ytd_gross: dict[int, Decimal] = {}
+    # Taxable FICA wages, including tips, from the immutable benefit snapshots.
+    ytd_fica: dict[int, Decimal] = {}
 
     for s in _stubs_through_quarter(db, year, quarter):
-        gross = Decimal(str(s.gross_pay or 0))
-        before = ytd_gross.get(s.employee_id, Decimal("0"))
-        ytd_gross[s.employee_id] = before + gross
+        gross = gross_wages(s)
+        fica = _fica_wages(s)
+        before = ytd_fica.get(s.employee_id, Decimal("0"))
+        ytd_fica[s.employee_id] = before + fica
         if s.pay_run.pay_date < start:
             continue
         stub_count += 1
         # Line 1 counts employees who received wages; a $0.00 stub pays no one.
         if s.employee_id is not None and gross > 0:
             employee_ids.add(s.employee_id)
-        total_wages += gross
+        total_wages += federal_wages(s)
         federal_withheld += Decimal(str(s.federal_tax or 0))
         ss_employee += Decimal(str(s.ss_tax or 0))
         ss_employer += Decimal(str(s.employer_ss_tax or 0))
         medicare_employee += Decimal(str(s.medicare_tax or 0))
         medicare_employer += Decimal(str(s.employer_medicare_tax or 0))
-        fica = _fica_wages(s)
-        ss_wages += _capped_wages(fica, before, SS_WAGE_BASE)
+        current_ss_wages, current_ss_tips = social_security_wage_parts(
+            s, before, SS_WAGE_BASE
+        )
+        ss_wages += current_ss_wages
+        ss_tips += current_ss_tips
         medicare_wages += fica
         additional_wages += _additional_medicare_wages(fica, before)
 
     ss_tax = _q(ss_wages * SS_COMBINED_RATE)  # line 5a, column 2
+    ss_tip_tax = _q(ss_tips * SS_COMBINED_RATE)  # line 5b, column 2
     medicare_tax = _q(medicare_wages * MEDICARE_COMBINED_RATE)  # line 5c
     additional_tax = _q(additional_wages * MEDICARE_ADDITIONAL_RATE)  # line 5d
-    total_fica = ss_tax + medicare_tax + additional_tax  # line 5e
+    total_fica = ss_tax + ss_tip_tax + medicare_tax + additional_tax  # line 5e
     total_before = federal_withheld + total_fica  # line 6
     withheld_and_matched = (
         ss_employee + ss_employer + medicare_employee + medicare_employer
@@ -162,6 +157,9 @@ def compute_941(db, year: int, quarter: int) -> dict:
         # Line 5a — taxable Social Security wages x 12.4%
         "social_security_wages": _q(ss_wages),
         "social_security_tax": ss_tax,
+        # Line 5b — taxable Social Security tips x 12.4%
+        "social_security_tips": _q(ss_tips),
+        "social_security_tip_tax": ss_tip_tax,
         "social_security_tax_employee": _q(ss_employee),
         "social_security_tax_employer": _q(ss_employer),
         # Line 5c — taxable Medicare wages x 2.9%

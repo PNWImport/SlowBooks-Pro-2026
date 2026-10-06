@@ -12,7 +12,15 @@ from app.services import backup_service as service
 
 
 @pytest.mark.parametrize(
-    "filename", ["", "a" * 256 + ".db", ".hidden.db", "snapshot..db", "snapshot.txt"]
+    "filename",
+    [
+        "",
+        "a" * 256 + ".db",
+        ".hidden.db",
+        "snapshot..db",
+        "snapshot.txt",
+        "snapshot.db\n",
+    ],
 )
 def test_invalid_backup_names_are_rejected(filename, monkeypatch, db_session):
     def unexpected_restore(*args, **kwargs):
@@ -23,6 +31,10 @@ def test_invalid_backup_names_are_rejected(filename, monkeypatch, db_session):
         "success": False,
         "error": "Invalid filename",
     }
+
+
+def test_backup_identity_rejects_trailing_line_break():
+    assert service.parse_backup_name("company_20261005_120000.db\n") is None
 
 
 @pytest.mark.parametrize("operation", ["backup", "restore"])

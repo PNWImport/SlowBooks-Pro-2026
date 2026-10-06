@@ -380,6 +380,11 @@ const BankingPage = {
         let review = [];
         // the whole queue: a year fetched from a feed can be more than a page
         if (feed) review = await fetchAllPages(`/banking/transactions?bank_account_id=${feed.bank_account_id}&status=unmatched`);
+        let handled = [];
+        if (feed) {
+            const all = await fetchAllPages(`/banking/transactions?bank_account_id=${feed.bank_account_id}`);
+            handled = all.filter(t => t.match_status && t.match_status !== 'unmatched');
+        }
         BankingPage._ctx = { accountId: id, feedId: feed ? feed.bank_account_id : null, kind, lastReconciled: info.last_reconciled || null };
 
         let html = `
@@ -405,6 +410,7 @@ const BankingPage = {
             </div>`;
 
         if (review.length) html += BankingPage._reviewPanel(review, feed.bank_account_id, id, kind);
+        if (handled.length) html += BankingPage._handledPanel(handled, id);
 
         if (!reg.entries.length) {
             html += `<div class="empty-state"><p>Nothing posted to this account yet</p></div>`;
@@ -467,6 +473,40 @@ const BankingPage = {
                 <strong>Match</strong> links it to something you already entered.
                 A ${kind === 'credit_card' ? 'card payment' : 'transfer'} is a line whose category is another bank or card account.
             </div>
+        </div>`;
+    },
+
+    // Lines already dealt with (excluded, matched, added). An excluded line
+    // can be restored to the review queue; a match can be undone unless the
+    // line was posted from the feed or sits in a completed reconciliation.
+    _handledAction(t, accountId) {
+        if (t.match_status === 'excluded') {
+            return `<button class="btn btn-sm btn-secondary" onclick="BankingPage.restoreLine(${t.id}, ${accountId})" aria-label="Restore excluded line ${escapeHtml(t.payee || t.description || '')}">Restore</button>`;
+        }
+        let why = '';
+        if (t.match_status === 'added') why = 'Posted from the feed; void the entry instead';
+        else if (t.line_reconciled) why = 'In a completed reconciliation; the match is locked';
+        if (why) {
+            return `<span style="font-size:11px; color:var(--text-muted);" role="note">Unmatch unavailable: ${escapeHtml(why)}</span>`;
+        }
+        return `<button class="btn btn-sm btn-secondary" onclick="BankingPage.unmatchLine(${t.id}, ${accountId})" aria-label="Unmatch statement line ${escapeHtml(t.payee || t.description || '')}">Unmatch</button>`;
+    },
+
+    _handledPanel(handled, accountId) {
+        const label = { excluded: 'Excluded', auto: 'Matched (auto)', manual: 'Matched', added: 'Added' };
+        const rows = handled.slice(0, 100).map(t => `
+            <tr>
+                <td>${formatDate(t.date)}</td>
+                <td>${escapeHtml(t.payee || '')}<div style="font-size:10px; color:var(--gray-400);">${escapeHtml(t.description || '')}</div></td>
+                <td class="amount">${formatCurrency(t.amount)}</td>
+                <td>${escapeHtml(label[t.match_status] || t.match_status)}</td>
+                <td style="white-space:nowrap;" data-write>${BankingPage._handledAction(t, accountId)}</td>
+            </tr>`).join('');
+        return `<div class="card" style="margin-bottom:16px;">
+            <div class="card-header">Handled statement lines — ${handled.length}</div>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">Date</th><th scope="col">Bank says</th><th scope="col" class="amount">Amount</th><th scope="col">Status</th><th scope="col"></th></tr></thead>
+                <tbody>${rows}</tbody></table></div>
         </div>`;
     },
 
@@ -753,7 +793,16 @@ const BankingPage = {
             BankingPage.showReconcileView(recon.id);
         } catch (err) {
             const existing = err && err.detail && err.detail.existing_id;
-            if (existing) { closeModal(); BankingPage.showReconcileView(existing); return; }
+            if (existing) {
+                // Never swallow what was typed: say it was not applied, show
+                // it, and resume the open reconciliation (abandon it there
+                // to start over with the new statement).
+                const typed = `${form.statement_date.value} / ${form.statement_balance.value}`;
+                closeModal();
+                toast(`A reconciliation is already in progress for this account, so it was resumed. The statement you just entered (${typed}) was not applied; abandon the open one to start over.`, 'error');
+                BankingPage.showReconcileView(existing);
+                return;
+            }
             toast(err.message, 'error');
         }
     },

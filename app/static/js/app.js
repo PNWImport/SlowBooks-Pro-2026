@@ -226,12 +226,13 @@ const App = {
     // Why a page is the administrator's; payroll and HR unless named here.
     _ADMIN_ONLY_WHY: {
         migrate: "Bringing books in from another program is open to an administrator's sign-in only.",
+        audit: "Audit history can contain payroll and benefits records, so it is open to an administrator's sign-in only.",
     },
 
     _notForReadOnlyHtml(label) {
         return `<div class="empty-state">
             <h3>${escapeHtml(label)} isn't open to a read-only sign-in</h3>
-            <p>It keeps every earlier value of every record, so it is for administrators and bookkeepers.
+            <p>It keeps every earlier value of every record, so it is for administrators only.
                An administrator can change your role under Settings → Users.</p>
             <p style="margin-top:12px;">
                 <a href="#/" class="btn btn-secondary">Return to Dashboard</a>
@@ -852,7 +853,7 @@ const App = {
                             </select></div>
                         <div class="form-group"><label>CSV File</label>
                             <input type="file" name="file" accept=".csv" required></div>
-                        <button type="submit" class="btn btn-primary">Import</button>
+                        <button type="submit" class="btn btn-primary" style="min-height:24px;">Import</button>
                     </form>
                     <div id="csv-import-results" style="margin-top:12px;"></div>
                 </div>
@@ -1070,7 +1071,7 @@ const App = {
         'hr-tax-forms', 'users', 'migrate', 'hr-benefit-coverage', 'payroll-contractors',
         'payroll-remittances', 'payroll-schedules', 'payroll-locations', 'hr-team',
         'payroll-deposit-calendar', 'payroll-workers-comp', 'payroll-reports',
-        'compliance',
+        'compliance', 'audit',
     ],
     // Pages the server refuses a read-only sign-in, reads included.
     NOT_FOR_READONLY_PAGES: ['audit'],

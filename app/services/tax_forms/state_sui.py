@@ -6,13 +6,33 @@
 # unemployment-insurance wage reports. Optionally filtered to a single state.
 # ============================================================================
 
+import json
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models.payroll import Employee, PayRun, PayStub, PayRunStatus
 from app.services.accounting import _q
+from app.services.payroll_wages import gross_wages
+
+
+def _recorded_suta_wages(stub, gross: Decimal, tax: Decimal) -> Decimal:
+    """New checks store the actual capped base, including zero-rate checks.
+
+    Legacy/imported checks retain the previous gross-if-tax-positive report
+    approximation when that immutable calculation diagnostic is unavailable.
+    """
+    try:
+        detail = json.loads(stub.detail_json or "{}")
+    except (TypeError, ValueError):
+        detail = {}
+    if isinstance(detail, dict) and "employer_suta_wages" in detail:
+        wages = Decimal(str(detail["employer_suta_wages"]))
+        if not wages.is_finite() or wages < 0 or wages > gross:
+            raise ValueError("Invalid immutable SUTA wage base")
+        return wages
+    return gross if tax > 0 else Decimal("0")
 
 
 def _quarter_bounds(year: int, quarter: int) -> tuple[date, date]:
@@ -40,7 +60,11 @@ def compute_sui(db, year: int, quarter: int, state: str | None = None) -> dict:
         db.query(PayStub)
         .join(PayRun, PayStub.pay_run_id == PayRun.id)
         .join(Employee, PayStub.employee_id == Employee.id)
-        .options(joinedload(PayStub.pay_run), joinedload(PayStub.employee))
+        .options(
+            joinedload(PayStub.pay_run),
+            joinedload(PayStub.employee),
+            selectinload(PayStub.benefits),
+        )
         .filter(PayRun.status == PayRunStatus.PROCESSED)
         .filter(PayRun.pay_date >= start)
         .filter(PayRun.pay_date <= end)
@@ -49,9 +73,8 @@ def compute_sui(db, year: int, quarter: int, state: str | None = None) -> dict:
         stubs = stubs.filter(Employee.work_state == state)
     stubs = stubs.all()
 
-    # Accumulate per employee. SUTA-taxable wages are taken as the wages that
-    # actually produced SUTA tax — we report gross alongside the SUTA tax that
-    # the payroll calculator recorded on each stub.
+    # Noncash compensation increases wages without changing the cash payment.
+    # New checks retain their actual capped SUTA base independently of tax rate.
     by_employee: dict[int, dict] = {}
     total_wages = Decimal("0")
     total_suta_tax = Decimal("0")
@@ -59,7 +82,7 @@ def compute_sui(db, year: int, quarter: int, state: str | None = None) -> dict:
     for s in stubs:
         emp = s.employee
         emp_id = s.employee_id
-        gross = Decimal(str(s.gross_pay or 0))
+        gross = gross_wages(s)
         suta = Decimal(str(s.suta_tax or 0))
         total_wages += gross
         total_suta_tax += suta
@@ -77,10 +100,7 @@ def compute_sui(db, year: int, quarter: int, state: str | None = None) -> dict:
             }
             by_employee[emp_id] = entry
         entry["total_wages"] += gross
-        # A stub contributes to SUTA-taxable wages only when it produced
-        # SUTA tax (i.e. the employee was still under the state wage base).
-        if suta > 0:
-            entry["suta_taxable_wages"] += gross
+        entry["suta_taxable_wages"] += _recorded_suta_wages(s, gross, suta)
         entry["suta_tax"] += suta
 
     breakdown = []

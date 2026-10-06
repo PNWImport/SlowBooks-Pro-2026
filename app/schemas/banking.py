@@ -112,6 +112,9 @@ class BankTransactionResponse(BaseModel):
     transaction_line_id: Optional[int] = None
     import_source: Optional[str] = None
     reconciled: bool
+    # The matched ledger line sits in a completed reconciliation, so the
+    # match is locked (unmatch is refused).
+    line_reconciled: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

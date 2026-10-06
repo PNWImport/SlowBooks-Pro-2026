@@ -323,7 +323,8 @@ def test_compose_prepares_writable_data_volumes_without_privileging_app(compose_
     assert init["network_mode"] == "none"
     assert init["read_only"] is True
     assert init["cap_drop"] == ["ALL"]
-    assert init["cap_add"] == ["CHOWN"]
+    # Ownership repair also needs traversal of app-owned mode-0700 caches.
+    assert set(init["cap_add"]) == {"CHOWN", "DAC_READ_SEARCH"}
     assert "no-new-privileges:true" in init["security_opt"]
     assert init["entrypoint"] == [
         "chown",

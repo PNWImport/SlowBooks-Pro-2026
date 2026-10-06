@@ -124,11 +124,11 @@ def active_customers(db: Session) -> dict:
 
 
 def payables(db: Session) -> dict:
-    total = (
-        db.query(func.coalesce(func.sum(Bill.balance_due), 0))
-        .filter(Bill.status.in_(OPEN_BILL))
-        .scalar()
-    )
+    # The A/P aging total: open bills net of unapplied vendor credits, so the
+    # card, the aging report, the vendors page and the balance sheet agree.
+    from app.routes.reports.payables_tax import ap_aging_report
+
+    total = ap_aging_report(db, date.today())["totals"]["total"]
     overdue = (
         db.query(func.count(Bill.id))
         .filter(*_bills_owing(), _past_due(Bill.due_date))

@@ -46,7 +46,7 @@ const BenefitCoveragePage = {
 
             <h3 style="margin-top:18px;">Enrollments</h3>
             <div class="toolbar">
-                <select id="enroll-emp" onchange="BenefitCoveragePage.loadEnrollments()">
+                <select id="enroll-emp" aria-label="Enrollment employee" onchange="BenefitCoveragePage.loadEnrollments()">
                     <option value="">All employees</option>
                     ${BenefitCoveragePage.employeeOptions()}
                 </select>

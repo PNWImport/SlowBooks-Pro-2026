@@ -12,6 +12,8 @@ const HRViewsPage = {
     async render() {
         const employees = await API.get('/employees?active_only=false');
         HRViewsPage._employees = employees;
+        // The tab needs its shell in the DOM before its data can be drawn.
+        setTimeout(() => HRViewsPage.showTab(HRViewsPage._tab), 0);
         return `
             <div class="page-header">
                 <h2>HR Team</h2>

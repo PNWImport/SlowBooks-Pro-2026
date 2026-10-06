@@ -18,7 +18,10 @@ import time as _time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from decimal import InvalidOperation
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from sqlalchemy.exc import DataError, StatementError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -492,10 +495,38 @@ async def lifespan(app: FastAPI):
 # FastAPI 0.121+ serializes return values to JSON bytes directly via Pydantic
 # (fast, and the reason ORJSONResponse was deprecated in 0.136). We let it use
 # its default response class rather than pinning the now-deprecated ORJSON one.
+
+# ---- Year parameter (422, not 500) ----
+# A year of -1, 0 or 99999999999 in a path or query reached `date(year, 1, 1)`
+# in ~20 tax, payroll and report routes and became a 500 (ValueError /
+# OverflowError). One check here covers every route that takes one.
+# Only `year`: the routes that take a quarter already refuse a bad one with a
+# 400 of their own (a contract callers and tests rely on); a year had no check.
+_PERIOD_LIMITS = {"year": (1900, 2200)}
+
+
+def _sane_period_params(request: Request):
+    for source in (request.path_params, request.query_params):
+        for name, (low, high) in _PERIOD_LIMITS.items():
+            raw = source.get(name)
+            if raw is None:
+                continue
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                continue  # not a number: the route's own validation says so
+            if not low <= value <= high:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{name.capitalize()} must be between {low} and {high}.",
+                )
+
+
 app = FastAPI(
     title="Slowbooks Pro 2026",
     version=__version__,
     lifespan=lifespan,
+    dependencies=[Depends(_sane_period_params)],
     description=(
         "Local bookkeeping API. Conventions an agent needs before writing:\n\n"
         "- **Unknown fields are rejected** (422 naming the field); nothing is "
@@ -645,6 +676,43 @@ async def _request_validation_handler(request: Request, exc: RequestValidationEr
 
 
 app.add_exception_handler(RequestValidationError, _request_validation_handler)
+
+
+# ---- Values the database refuses (422, not 500) ----
+# Over-long text (StringDataRightTruncation), a number too large for its
+# column, an enum filter like ?status=-1, a NUL byte: each is the caller's
+# input being unusable, and each was an opaque 500 on PostgreSQL (SQLite is
+# lenient, so the test suite never saw them). The values are not echoed.
+async def _bad_value_handler(request: Request, exc: Exception):
+    text = str(getattr(exc, "orig", None) or exc)
+    if isinstance(exc, DataError) or "NUL (0x00)" in text:
+        logging.getLogger(__name__).warning(
+            "refused a value the database cannot store (%s) on %s %s",
+            type(getattr(exc, "orig", None) or exc).__name__,
+            request.method,
+            request.url.path,
+        )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": "A value is too long, out of range or the wrong type for "
+                "its field. Nothing was saved."
+            },
+        )
+    raise exc  # any other statement failure is a real error: the usual 500
+
+
+app.add_exception_handler(StatementError, _bad_value_handler)
+
+
+async def _number_too_large_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "A number is too large or not a valid amount."},
+    )
+
+
+app.add_exception_handler(InvalidOperation, _number_too_large_handler)
 
 # gzip responses larger than 1 KB. Analytics JSON payloads compress ~70%,
 # which is a big win over LAN for /api/analytics/dashboard and friends.
@@ -858,6 +926,11 @@ _ADMIN_WRITE_PREFIXES = (
     "/api/companies",
     "/api/migration",
     "/api/qbo/connect-manual",
+    # The bank-feed credential: claiming a setup token stores it, and
+    # disconnecting removes it. Syncing and mapping stay with the bookkeeper
+    # (that is the daily bank-feed import).
+    "/api/simplefin/claim",
+    "/api/simplefin/disconnect",
     # Staff records carry SSN, pay rate and W-4 elections: creating or
     # editing one is HR, not daily books (GHSA-rh75-6834-f66j).
     "/api/employees",
